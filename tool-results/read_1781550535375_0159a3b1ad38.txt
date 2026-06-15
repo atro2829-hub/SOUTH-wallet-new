@@ -1,0 +1,501 @@
+  1580→                  border: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'}`,
+  1581→                }}
+  1582→              >
+  1583→                <label className="text-xs font-medium block mb-2" style={{ color: isDark ? '#AAA' : '#666' }}>طريقة السحب</label>
+  1584→                <div className="space-y-2">
+  1585→                  {withdrawMethods.map((method) => {
+  1586→                    const Icon = method.icon;
+  1587→                    return (
+  1588→                      <button
+  1589→                        key={method.id}
+  1590→                        onClick={() => setWithdrawMethod(method.id)}
+  1591→                        className="w-full flex items-center gap-3 p-3 rounded-xl transition-all"
+  1592→                        style={{
+  1593→                          background: withdrawMethod === method.id ? 'rgba(92,26,27,0.08)' : (isDark ? '#1A1A1A' : '#F8F8F8'),
+  1594→                          border: withdrawMethod === method.id ? '1px solid rgba(92,26,27,0.2)' : '1px solid transparent',
+  1595→                        }}
+  1596→                      >
+  1597→                        <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: withdrawMethod === method.id ? 'rgba(92,26,27,0.12)' : (isDark ? '#222' : '#F0F0F0') }}>
+  1598→                          <Icon size={16} strokeWidth={1.5} color={withdrawMethod === method.id ? '#5C1A1B' : (isDark ? '#666' : '#AAA')} />
+  1599→                        </div>
+  1600→                        <div className="text-right flex-1">
+  1601→                          <p className="text-sm font-medium" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>{method.label}</p>
+  1602→                          <p className="text-[10px]" style={{ color: isDark ? '#666' : '#AAA' }}>{method.desc}</p>
+  1603→                        </div>
+  1604→                        <div className="w-5 h-5 rounded-full border-2 flex items-center justify-center" style={{ borderColor: withdrawMethod === method.id ? '#5C1A1B' : (isDark ? '#333' : '#DDD') }}>
+  1605→                          {withdrawMethod === method.id && <div className="w-2.5 h-2.5 rounded-full" style={{ background: '#5C1A1B' }} />}
+  1606→                        </div>
+  1607→                      </button>
+  1608→                    );
+  1609→                  })}
+  1610→                </div>
+  1611→              </div>
+  1612→
+  1613→              {/* Bank Details for bank transfer */}
+  1614→              {withdrawMethod === 'bank_transfer' && (
+  1615→                <motion.div
+  1616→                  initial={{ opacity: 0, height: 0 }}
+  1617→                  animate={{ opacity: 1, height: 'auto' }}
+  1618→                  exit={{ opacity: 0, height: 0 }}
+  1619→                  className="rounded-2xl p-4"
+  1620→                  style={{
+  1621→                    background: isDark ? 'rgba(30,30,30,0.6)' : 'rgba(255,255,255,0.7)',
+  1622→                    backdropFilter: 'blur(20px)',
+  1623→                    border: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'}`,
+  1624→                  }}
+  1625→                >
+  1626→                  <div className="flex items-center gap-2 mb-3">
+  1627→                    <Building2 size={14} color="#5C1A1B" strokeWidth={1.5} />
+  1628→                    <span className="text-xs font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>بيانات السحب البنكي</span>
+  1629→                  </div>
+  1630→
+  1631→                  {banksLoading ? (
+  1632→                    <div className="flex items-center justify-center py-6">
+  1633→                      <div className="w-6 h-6 border-2 border-red-500/30 border-t-red-500 rounded-full animate-spin" />
+  1634→                    </div>
+  1635→                  ) : banks.length === 0 ? (
+  1636→                    <>
+  1637→                      <label className="text-xs font-medium block mb-2" style={{ color: isDark ? '#AAA' : '#666' }}>اسم البنك</label>
+  1638→                      <input
+  1639→                        type="text"
+  1640→                        value={bankName}
+  1641→                        onChange={(e) => setBankName(e.target.value)}
+  1642→                        placeholder="مثال: بنك الكريمي"
+  1643→                        className="w-full bg-transparent outline-none text-sm p-2.5 rounded-xl mb-3"
+  1644→                        style={{
+  1645→                          color: isDark ? '#FFF' : '#1a1a1a',
+  1646→                          background: isDark ? '#1A1A1A' : '#F8F8F8',
+  1647→                        }}
+  1648→                      />
+  1649→                      <label className="text-xs font-medium block mb-2" style={{ color: isDark ? '#AAA' : '#666' }}>رقم الحساب</label>
+  1650→                      <input
+  1651→                        type="text"
+  1652→                        value={bankAccountNumber}
+  1653→                        onChange={(e) => setBankAccountNumber(e.target.value)}
+  1654→                        placeholder="أدخل رقم الحساب البنكي"
+  1655→                        className="w-full bg-transparent outline-none text-sm p-2.5 rounded-xl"
+  1656→                        style={{
+  1657→                          color: isDark ? '#FFF' : '#1a1a1a',
+  1658→                          background: isDark ? '#1A1A1A' : '#F8F8F8',
+  1659→                        }}
+  1660→                        dir="ltr"
+  1661→                      />
+  1662→                    </>
+  1663→                  ) : (
+  1664→                    <>
+  1665→                      {/* Bank Selector for Withdraw */}
+  1666→                      <label className="text-xs font-medium block mb-2" style={{ color: isDark ? '#AAA' : '#666' }}>اختر البنك</label>
+  1667→                      <div className="space-y-2 mb-4">
+  1668→                        {banks.map((bank) => {
+  1669→                          const bankColor = bank.color || '#5C1A1B';
+  1670→                          const bankFirstLetter = bank.bankName ? bank.bankName.charAt(0) : 'B';
+  1671→                          return (
+  1672→                            <button
+  1673→                              key={bank.id}
+  1674→                              onClick={() => {
+  1675→                                setSelectedWithdrawBankId(bank.id);
+  1676→                                setBankName(bank.bankName);
+  1677→                              }}
+  1678→                              className="w-full flex items-center gap-3 p-3 rounded-xl transition-all"
+  1679→                              style={{
+  1680→                                background: selectedWithdrawBankId === bank.id ? `${bankColor}15` : (isDark ? '#1A1A1A' : '#F8F8F8'),
+  1681→                                border: selectedWithdrawBankId === bank.id ? `1px solid ${bankColor}40` : '1px solid transparent',
+  1682→                              }}
+  1683→                            >
+  1684→                              {bank.icon ? (
+  1685→                                <img src={bank.icon} alt={bank.bankName} className="w-10 h-10 rounded-xl object-cover" />
+  1686→                              ) : (
+  1687→                                <div
+  1688→                                  className="w-10 h-10 rounded-xl flex items-center justify-center text-white text-sm font-bold"
+  1689→                                  style={{ backgroundColor: bankColor }}
+  1690→                                >
+  1691→                                  {bankFirstLetter}
+  1692→                                </div>
+  1693→                              )}
+  1694→                              <div className="text-right flex-1">
+  1695→                                <p className="text-sm font-medium" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>{bank.bankName}</p>
+  1696→                              </div>
+  1697→                              <div className="w-5 h-5 rounded-full border-2 flex items-center justify-center" style={{ borderColor: selectedWithdrawBankId === bank.id ? bankColor : (isDark ? '#333' : '#DDD') }}>
+  1698→                                {selectedWithdrawBankId === bank.id && <div className="w-2.5 h-2.5 rounded-full" style={{ background: bankColor }} />}
+  1699→                              </div>
+  1700→                            </button>
+  1701→                          );
+  1702→                        })}
+  1703→                      </div>
+  1704→
+  1705→                      {/* Bank name (auto-filled from selection, editable) */}
+  1706→                      <label className="text-xs font-medium block mb-2" style={{ color: isDark ? '#AAA' : '#666' }}>اسم البنك</label>
+  1707→                      <input
+  1708→                        type="text"
+  1709→                        value={bankName}
+  1710→                        onChange={(e) => { setBankName(e.target.value); setSelectedWithdrawBankId(''); }}
+  1711→                        placeholder="مثال: بنك الكريمي"
+  1712→                        className="w-full bg-transparent outline-none text-sm p-2.5 rounded-xl mb-3"
+  1713→                        style={{
+  1714→                          color: isDark ? '#FFF' : '#1a1a1a',
+  1715→                          background: isDark ? '#1A1A1A' : '#F8F8F8',
+  1716→                        }}
+  1717→                      />
+  1718→                      <label className="text-xs font-medium block mb-2" style={{ color: isDark ? '#AAA' : '#666' }}>رقم الحساب</label>
+  1719→                      <input
+  1720→                        type="text"
+  1721→                        value={bankAccountNumber}
+  1722→                        onChange={(e) => setBankAccountNumber(e.target.value)}
+  1723→                        placeholder="أدخل رقم الحساب البنكي"
+  1724→                        className="w-full bg-transparent outline-none text-sm p-2.5 rounded-xl"
+  1725→                        style={{
+  1726→                          color: isDark ? '#FFF' : '#1a1a1a',
+  1727→                          background: isDark ? '#1A1A1A' : '#F8F8F8',
+  1728→                        }}
+  1729→                        dir="ltr"
+  1730→                      />
+  1731→                    </>
+  1732→                  )}
+  1733→                </motion.div>
+  1734→              )}
+  1735→
+  1736→              {/* Crypto Withdraw Method */}
+  1737→              {withdrawMethod === 'crypto' && (
+  1738→                <motion.div
+  1739→                  initial={{ opacity: 0, height: 0 }}
+  1740→                  animate={{ opacity: 1, height: 'auto' }}
+  1741→                  exit={{ opacity: 0, height: 0 }}
+  1742→                  className="rounded-2xl p-4"
+  1743→                  style={{
+  1744→                    background: isDark ? 'rgba(30,30,30,0.6)' : 'rgba(255,255,255,0.7)',
+  1745→                    backdropFilter: 'blur(20px)',
+  1746→                    border: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'}`,
+  1747→                  }}
+  1748→                >
+  1749→                  <div className="flex items-center gap-2 mb-3">
+  1750→                    <Coins size={14} color="#26A17B" strokeWidth={1.5} />
+  1751→                    <span className="text-xs font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>سحب عملات رقمية</span>
+  1752→                  </div>
+  1753→
+  1754→                  {cryptoLoading ? (
+  1755→                    <div className="flex items-center justify-center py-6">
+  1756→                      <div className="w-6 h-6 border-2 border-green-500/30 border-t-green-500 rounded-full animate-spin" />
+  1757→                    </div>
+  1758→                  ) : cryptoCurrencies.length === 0 ? (
+  1759→                    <div className="flex flex-col items-center py-6">
+  1760→                      <Coins size={24} strokeWidth={1.5} color={isDark ? '#333' : '#DDD'} />
+  1761→                      <p className="text-xs mt-2" style={{ color: isDark ? '#555' : '#AAA' }}>لا توجد عملات رقمية متاحة حالياً</p>
+  1762→                    </div>
+  1763→                  ) : (
+  1764→                    <>
+  1765→                      {/* Crypto Currency Selector */}
+  1766→                      <label className="text-xs font-medium block mb-2" style={{ color: isDark ? '#AAA' : '#666' }}>اختر العملة</label>
+  1767→                      <div className="space-y-2 mb-4">
+  1768→                        {cryptoCurrencies.map((crypto) => {
+  1769→                          const availableNetworks = crypto.networks?.filter(n => n.isActive) || [];
+  1770→                          const legacyFallback = crypto.network ? [{ networkName: crypto.network, walletAddress: '', isActive: true }] : [];
+  1771→                          const allNetworks = availableNetworks.length > 0 ? availableNetworks : legacyFallback;
+  1772→                          return (
+  1773→                            <button
+  1774→                              key={crypto.id}
+  1775→                              onClick={() => { setSelectedWithdrawCryptoId(crypto.id); setSelectedWithdrawCryptoNetwork(''); }}
+  1776→                              className="w-full flex items-center gap-3 p-3 rounded-xl transition-all"
+  1777→                              style={{
+  1778→                                background: selectedWithdrawCryptoId === crypto.id ? `${crypto.color}15` : (isDark ? '#1A1A1A' : '#F8F8F8'),
+  1779→                                border: selectedWithdrawCryptoId === crypto.id ? `1px solid ${crypto.color}40` : '1px solid transparent',
+  1780→                              }}
+  1781→                            >
+  1782→                              <div
+  1783→                                className="w-10 h-10 rounded-xl flex items-center justify-center text-white text-xs font-bold"
+  1784→                                style={{ backgroundColor: crypto.color }}
+  1785→                              >
+  1786→                                {crypto.icon && crypto.icon.length > 5 ? (
+  1787→                                  <img src={crypto.icon} alt={crypto.symbol} className="w-6 h-6 rounded object-cover" />
+  1788→                                ) : (
+  1789→                                  <span>{crypto.symbol.substring(0, 2)}</span>
+  1790→                                )}
+  1791→                              </div>
+  1792→                              <div className="text-right flex-1">
+  1793→                                <p className="text-sm font-medium" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>{crypto.name}</p>
+  1794→                                <p className="text-[10px]" style={{ color: isDark ? '#666' : '#AAA' }}>
+  1795→                                  {allNetworks.length > 1
+  1796→                                    ? `${allNetworks.length} شبكات متاحة`
+  1797→                                    : allNetworks.length === 1
+  1798→                                      ? `شبكة: ${allNetworks[0].networkName}`
+  1799→                                      : 'لا توجد شبكات'}
+  1800→                                </p>
+  1801→                              </div>
+  1802→                              <div className="w-5 h-5 rounded-full border-2 flex items-center justify-center" style={{ borderColor: selectedWithdrawCryptoId === crypto.id ? crypto.color : (isDark ? '#333' : '#DDD') }}>
+  1803→                                {selectedWithdrawCryptoId === crypto.id && <div className="w-2.5 h-2.5 rounded-full" style={{ background: crypto.color }} />}
+  1804→                              </div>
+  1805→                            </button>
+  1806→                          );
+  1807→                        })}
+  1808→                      </div>
+  1809→
+  1810→                      {/* Wallet Address Input */}
+  1811→                      {selectedWithdrawCrypto && (
+  1812→                        <motion.div
+  1813→                          initial={{ opacity: 0, y: 10 }}
+  1814→                          animate={{ opacity: 1, y: 0 }}
+  1815→                          className="space-y-3"
+  1816→                        >
+  1817→                          {/* Network Selector for withdraw (if multiple networks) */}
+  1818→                          {selectedWithdrawCryptoNetworks.length > 1 && (
+  1819→                            <div>
+  1820→                              <label className="text-xs font-medium block mb-2" style={{ color: isDark ? '#AAA' : '#666' }}>اختر الشبكة</label>
+  1821→                              <div className="space-y-2 mb-3">
+  1822→                                {selectedWithdrawCryptoNetworks.map((net) => (
+  1823→                                  <button
+  1824→                                    key={net.networkName}
+  1825→                                    onClick={() => setSelectedWithdrawCryptoNetwork(net.networkName)}
+  1826→                                    className="w-full flex items-center gap-3 p-2.5 rounded-xl transition-all"
+  1827→                                    style={{
+  1828→                                      background: selectedWithdrawCryptoNetwork === net.networkName ? `${selectedWithdrawCrypto.color}15` : (isDark ? '#1A1A1A' : '#F8F8F8'),
+  1829→                                      border: selectedWithdrawCryptoNetwork === net.networkName ? `1px solid ${selectedWithdrawCrypto.color}40` : '1px solid transparent',
+  1830→                                    }}
+  1831→                                  >
+  1832→                                    <div
+  1833→                                      className="w-8 h-8 rounded-lg flex items-center justify-center text-white text-[10px] font-bold"
+  1834→                                      style={{ backgroundColor: selectedWithdrawCrypto.color }}
+  1835→                                    >
+  1836→                                      {net.networkName.substring(0, 3)}
+  1837→                                    </div>
+  1838→                                    <div className="text-right flex-1">
+  1839→                                      <p className="text-xs font-medium" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>{net.networkName}</p>
+  1840→                                    </div>
+  1841→                                    <div className="w-4 h-4 rounded-full border-2 flex items-center justify-center" style={{ borderColor: selectedWithdrawCryptoNetwork === net.networkName ? selectedWithdrawCrypto.color : (isDark ? '#333' : '#DDD') }}>
+  1842→                                      {selectedWithdrawCryptoNetwork === net.networkName && <div className="w-2 h-2 rounded-full" style={{ background: selectedWithdrawCrypto.color }} />}
+  1843→                                    </div>
+  1844→                                  </button>
+  1845→                                ))}
+  1846→                              </div>
+  1847→                            </div>
+  1848→                          )}
+  1849→
+  1850→                          {(() => {
+  1851→                            const withdrawNetwork = selectedWithdrawCryptoNetwork || (selectedWithdrawCryptoNetworks.length === 1 ? selectedWithdrawCryptoNetworks[0].networkName : '') || selectedWithdrawCrypto.network;
+  1852→                            return (
+  1853→                              <>
+  1854→                                <div>
+  1855→                                  <label className="text-xs font-medium block mb-2" style={{ color: isDark ? '#AAA' : '#666' }}>
+  1856→                                    عنوان محفظتك ({withdrawNetwork})
+  1857→                                  </label>
+  1858→                                  <input
+  1859→                                    type="text"
+  1860→                                    value={cryptoWalletAddress}
+  1861→                                    onChange={(e) => setCryptoWalletAddress(e.target.value)}
+  1862→                                    placeholder={`أدخل عنوان محفظة ${selectedWithdrawCrypto.symbol}`}
+  1863→                                    className="w-full bg-transparent outline-none text-sm p-2.5 rounded-xl"
+  1864→                                    style={{
+  1865→                                      color: isDark ? '#FFF' : '#1a1a1a',
+  1866→                                      background: isDark ? '#1A1A1A' : '#F8F8F8',
+  1867→                                    }}
+  1868→                                    dir="ltr"
+  1869→                                  />
+  1870→                                </div>
+  1871→
+  1872→                                {/* Min withdraw info */}
+  1873→                                {selectedWithdrawCrypto.minWithdraw > 0 && (
+  1874→                                  <div className="flex items-center gap-1.5">
+  1875→                                    <Info size={10} color={selectedWithdrawCrypto.color} />
+  1876→                                    <span className="text-[10px]" style={{ color: isDark ? '#666' : '#AAA' }}>
+  1877→                                      الحد الأدنى للسحب: {selectedWithdrawCrypto.minWithdraw} {selectedWithdrawCrypto.symbol}
+  1878→                                    </span>
+  1879→                                  </div>
+  1880→                                )}
+  1881→
+  1882→                                <div className="flex items-start gap-1.5 p-2 rounded-lg" style={{ background: `${selectedWithdrawCrypto.color}10` }}>
+  1883→                                  <AlertCircle size={12} color={selectedWithdrawCrypto.color} className="flex-shrink-0 mt-0.5" />
+  1884→                                  <span className="text-[10px]" style={{ color: isDark ? '#AAA' : '#666' }}>
+  1885→                                    تأكد من إدخال عنوان صحيح على شبكة {withdrawNetwork}. الإرسال لعنوان خاطئ قد يؤدي لفقدان أموالك.
+  1886→                                  </span>
+  1887→                                </div>
+  1888→                              </>
+  1889→                            );
+  1890→                          })()}
+  1891→                        </motion.div>
+  1892→                      )}
+  1893→                    </>
+  1894→                  )}
+  1895→                </motion.div>
+  1896→              )}
+  1897→
+  1898→              {/* Balance After Withdraw */}
+  1899→              {withdrawAmountNum > 0 && (
+  1900→                <motion.div
+  1901→                  initial={{ opacity: 0, y: 10 }}
+  1902→                  animate={{ opacity: 1, y: 0 }}
+  1903→                  className="rounded-2xl p-4"
+  1904→                  style={{
+  1905→                    background: balanceAfterWithdraw >= 0
+  1906→                      ? 'linear-gradient(145deg, #5C1A1B 0%, #3D0F10 100%)'
+  1907→                      : 'linear-gradient(145deg, #3D0F10 0%, #2D0A0A 100%)',
+  1908→                  }}
+  1909→                >
+  1910→                  <div className="flex items-center justify-between">
+  1911→                    <div>
+  1912→                      <p className="text-white/50 text-[10px]">الرصيد بعد السحب</p>
+  1913→                      <p className="text-white text-xl font-bold">{formatNumber(Math.max(0, balanceAfterWithdraw))} {currencySymbols[withdrawCurrency]}</p>
+  1914→                      {balanceAfterWithdraw < 0 && (
+  1915→                        <p className="text-[10px] mt-1" style={{ color: '#FCA5A5' }}>المبلغ يتجاوز الرصيد المتاح</p>
+  1916→                      )}
+  1917→                    </div>
+  1918→                    <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'rgba(255,255,255,0.15)' }}>
+  1919→                      <Wallet size={18} color="#FFF" strokeWidth={1.5} />
+  1920→                    </div>
+  1921→                  </div>
+  1922→                </motion.div>
+  1923→              )}
+  1924→
+  1925→              {/* Submit Button */}
+  1926→              <button
+  1927→                onClick={handleSubmitWithdraw}
+  1928→                disabled={
+  1929→                  !withdrawAmountNum || withdrawAmountNum <= 0 || withdrawAmountNum > withdrawBalance || isSubmitting ||
+  1930→                  (withdrawMethod === 'crypto' && (!selectedWithdrawCryptoId || !cryptoWalletAddress.trim()))
+  1931→                }
+  1932→                className="w-full py-4 rounded-2xl text-sm font-bold flex items-center justify-center gap-2 transition-all"
+  1933→                style={{
+  1934→                  background: withdrawAmountNum > 0 && withdrawAmountNum <= withdrawBalance ? '#5C1A1B' : (isDark ? '#1A1A1A' : '#EEE'),
+  1935→                  color: withdrawAmountNum > 0 && withdrawAmountNum <= withdrawBalance ? '#FFF' : (isDark ? '#444' : '#AAA'),
+  1936→                  boxShadow: withdrawAmountNum > 0 && withdrawAmountNum <= withdrawBalance ? '0 4px 16px rgba(92,26,27,0.3)' : 'none',
+  1937→                }}
+  1938→              >
+  1939→                {isSubmitting ? (
+  1940→                  <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+  1941→                ) : (
+  1942→                  <>
+  1943→                    <CheckCircle2 size={16} strokeWidth={2} />
+  1944→                    تأكيد طلب السحب
+  1945→                  </>
+  1946→                )}
+  1947→              </button>
+  1948→            </div>
+  1949→          </motion.div>
+  1950→        )}
+  1951→      </AnimatePresence>
+  1952→
+  1953→      {/* History Section */}
+  1954→      <div className="px-5 mt-6">
+  1955→        <h3 className="text-sm font-bold mb-3" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>السجل</h3>
+  1956→
+  1957→        <AnimatePresence mode="wait">
+  1958→          {activeTab === 'deposit' ? (
+  1959→            <motion.div
+  1960→              key="deposit-history"
+  1961→              initial={{ opacity: 0 }}
+  1962→              animate={{ opacity: 1 }}
+  1963→              className="space-y-2"
+  1964→            >
+  1965→              {depositRequests.length === 0 ? (
+  1966→                <div
+  1967→                  className="rounded-2xl p-6 flex flex-col items-center"
+  1968→                  style={{
+  1969→                    background: isDark ? 'rgba(30,30,30,0.6)' : 'rgba(255,255,255,0.7)',
+  1970→                    backdropFilter: 'blur(20px)',
+  1971→                    border: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'}`,
+  1972→                  }}
+  1973→                >
+  1974→                  <Receipt size={28} strokeWidth={1.5} color={isDark ? '#333' : '#DDD'} />
+  1975→                  <p className="text-xs mt-2" style={{ color: isDark ? '#555' : '#AAA' }}>لا توجد طلبات إيداع</p>
+  1976→                </div>
+  1977→              ) : (
+  1978→                depositRequests.map((req, index) => {
+  1979→                  const status = statusConfig[req.status] || statusConfig.pending;
+  1980→                  const StatusIcon = status.icon;
+  1981→                  return (
+  1982→                    <motion.div
+  1983→                      key={req.id}
+  1984→                      initial={{ opacity: 0, y: 10 }}
+  1985→                      animate={{ opacity: 1, y: 0 }}
+  1986→                      transition={{ delay: 0.03 * index }}
+  1987→                      className="flex items-center gap-3 p-3 rounded-2xl"
+  1988→                      style={{
+  1989→                        background: isDark ? 'rgba(30,30,30,0.6)' : 'rgba(255,255,255,0.7)',
+  1990→                        backdropFilter: 'blur(10px)',
+  1991→                        border: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'}`,
+  1992→                      }}
+  1993→                    >
+  1994→                      <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: status.bgColor }}>
+  1995→                        <StatusIcon size={16} strokeWidth={1.5} color={status.color} />
+  1996→                      </div>
+  1997→                      <div className="flex-1 min-w-0">
+  1998→                        <div className="flex items-center gap-2">
+  1999→                          <p className="text-sm font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
+  2000→                            {formatNumber(req.amount)} {currencySymbols[req.currency]}
+  2001→                          </p>
+  2002→                          <span className="text-[9px] px-1.5 py-0.5 rounded font-bold text-white" style={{ background: currencyBadgeColors[req.currency] }}>
+  2003→                            {req.currency}
+  2004→                          </span>
+  2005→                        </div>
+  2006→                        <p className="text-[10px]" style={{ color: isDark ? '#666' : '#AAA' }}>{methodLabel(req.method)}</p>
+  2007→                      </div>
+  2008→                      <span className="text-[10px] px-2 py-1 rounded-full font-medium" style={{ background: status.bgColor, color: status.color }}>
+  2009→                        {status.label}
+  2010→                      </span>
+  2011→                    </motion.div>
+  2012→                  );
+  2013→                })
+  2014→              )}
+  2015→            </motion.div>
+  2016→          ) : (
+  2017→            <motion.div
+  2018→              key="withdraw-history"
+  2019→              initial={{ opacity: 0 }}
+  2020→              animate={{ opacity: 1 }}
+  2021→              className="space-y-2"
+  2022→            >
+  2023→              {withdrawRequests.length === 0 ? (
+  2024→                <div
+  2025→                  className="rounded-2xl p-6 flex flex-col items-center"
+  2026→                  style={{
+  2027→                    background: isDark ? 'rgba(30,30,30,0.6)' : 'rgba(255,255,255,0.7)',
+  2028→                    backdropFilter: 'blur(20px)',
+  2029→                    border: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'}`,
+  2030→                  }}
+  2031→                >
+  2032→                  <Receipt size={28} strokeWidth={1.5} color={isDark ? '#333' : '#DDD'} />
+  2033→                  <p className="text-xs mt-2" style={{ color: isDark ? '#555' : '#AAA' }}>لا توجد طلبات سحب</p>
+  2034→                </div>
+  2035→              ) : (
+  2036→                withdrawRequests.map((req, index) => {
+  2037→                  const status = statusConfig[req.status] || statusConfig.pending;
+  2038→                  const StatusIcon = status.icon;
+  2039→                  return (
+  2040→                    <motion.div
+  2041→                      key={req.id}
+  2042→                      initial={{ opacity: 0, y: 10 }}
+  2043→                      animate={{ opacity: 1, y: 0 }}
+  2044→                      transition={{ delay: 0.03 * index }}
+  2045→                      className="flex items-center gap-3 p-3 rounded-2xl"
+  2046→                      style={{
+  2047→                        background: isDark ? 'rgba(30,30,30,0.6)' : 'rgba(255,255,255,0.7)',
+  2048→                        backdropFilter: 'blur(10px)',
+  2049→                        border: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'}`,
+  2050→                      }}
+  2051→                    >
+  2052→                      <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: status.bgColor }}>
+  2053→                        <StatusIcon size={16} strokeWidth={1.5} color={status.color} />
+  2054→                      </div>
+  2055→                      <div className="flex-1 min-w-0">
+  2056→                        <div className="flex items-center gap-2">
+  2057→                          <p className="text-sm font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
+  2058→                            {formatNumber(req.amount)} {currencySymbols[req.currency]}
+  2059→                          </p>
+  2060→                          <span className="text-[9px] px-1.5 py-0.5 rounded font-bold text-white" style={{ background: currencyBadgeColors[req.currency] }}>
+  2061→                            {req.currency}
+  2062→                          </span>
+  2063→                        </div>
+  2064→                        <p className="text-[10px]" style={{ color: isDark ? '#666' : '#AAA' }}>{methodLabel(req.method)}</p>
+  2065→                      </div>
+  2066→                      <span className="text-[10px] px-2 py-1 rounded-full font-medium" style={{ background: status.bgColor, color: status.color }}>
+  2067→                        {status.label}
+  2068→                      </span>
+  2069→                    </motion.div>
+  2070→                  );
+  2071→                })
+  2072→              )}
+  2073→            </motion.div>
+  2074→          )}
+  2075→        </AnimatePresence>
+  2076→      </div>
+  2077→    </div>
+  2078→  );
+  2079→}
+  2080→

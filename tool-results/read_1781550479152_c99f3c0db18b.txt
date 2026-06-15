@@ -1,0 +1,890 @@
+     1→/**
+     2→ * Supabase Client for South Wallet - PRIMARY DATA SOURCE
+     3→ *
+     4→ * Supabase handles: ALL data (users, transactions, orders, sections, providers, etc.)
+     5→ * Firebase handles: Auth only (authentication, FCM push notifications, Storage)
+     6→ */
+     7→
+     8→import { createClient } from '@supabase/supabase-js';
+     9→
+    10→const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://kifmxseonkdsxuanznny.supabase.co';
+    11→const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtpZm14c2Vvbmtkc3h1YW56bm55Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE0Njk3NzAsImV4cCI6MjA5NzA0NTc3MH0.4KbBtMruP_xrPiHe_XtcoHG7NVQhlflhUUkJFWgQxkM';
+    12→
+    13→export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+    14→  auth: {
+    15→    autoRefreshToken: true,
+    16→    persistSession: true,
+    17→  },
+    18→  realtime: {
+    19→    params: {
+    20→      eventsPerSecond: 10,
+    21→    },
+    22→  },
+    23→});
+    24→
+    25→// =====================================================
+    26→// TYPE DEFINITIONS
+    27→// =====================================================
+    28→
+    29→export interface DbUser {
+    30→  id: string;
+    31→  firebase_uid: string | null;
+    32→  email: string | null;
+    33→  phone: string | null;
+    34→  first_name: string;
+    35→  second_name: string;
+    36→  third_name: string;
+    37→  family_name: string;
+    38→  display_name: string;
+    39→  balance_yer: number;
+    40→  balance_sar: number;
+    41→  balance_usd: number;
+    42→  card_type: string;
+    43→  card_number: string;
+    44→  national_id: string;
+    45→  governorate: string;
+    46→  avatar_url: string;
+    47→  role: 'user' | 'admin' | 'owner' | 'agent';
+    48→  kyc_status: 'pending' | 'submitted' | 'verified' | 'rejected';
+    49→  is_blocked: boolean;
+    50→  is_active: boolean;
+    51→  id_front_url: string;
+    52→  id_back_url: string;
+    53→  id_selfie_url: string;
+    54→  id_verified_at: string | null;
+    55→  id_rejection_reason: string;
+    56→  fcm_token: string;
+    57→  theme: 'light' | 'dark' | 'system';
+    58→  language: string;
+    59→  pin_code: string;
+    60→  login_attempts: number;
+    61→  last_login_at: string | null;
+    62→  created_at: string;
+    63→  updated_at: string;
+    64→}
+    65→
+    66→export interface DbTransaction {
+    67→  id: string;
+    68→  user_id: string;
+    69→  from_user_id: string | null;
+    70→  to_user_id: string | null;
+    71→  amount: number;
+    72→  currency: 'YER' | 'SAR' | 'USD';
+    73→  fee: number;
+    74→  fee_currency: string;
+    75→  type: 'transfer' | 'deposit' | 'withdraw' | 'order' | 'recharge' | 'exchange' | 'gift' | 'promo' | 'commission' | 'refund' | 'investment';
+    76→  status: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled' | 'refunded';
+    77→  description: string;
+    78→  reference_number: string;
+    79→  receipt_data: Record<string, unknown>;
+    80→  sender_name: string;
+    81→  sender_phone: string;
+    82→  receiver_name: string;
+    83→  receiver_phone: string;
+    84→  receiver_card_number: string;
+    85→  api_provider_id: string;
+    86→  api_order_id: string;
+    87→  created_at: string;
+    88→  updated_at: string;
+    89→  completed_at: string | null;
+    90→}
+    91→
+    92→export interface DbOrder {
+    93→  id: string;
+    94→  user_id: string;
+    95→  provider_id: string;
+    96→  provider_name: string;
+    97→  package_id: string;
+    98→  package_name: string;
+    99→  category_id: string;
+   100→  category_name: string;
+   101→  customer_input: string;
+   102→  amount: number;
+   103→  currency: 'YER' | 'SAR' | 'USD';
+   104→  cost_price: number;
+   105→  cost_currency: string;
+   106→  commission_amount: number;
+   107→  commission_type: string;
+   108→  execution_type: 'manual' | 'auto' | 'api';
+   109→  status: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled' | 'refunded';
+   110→  api_provider_id: string;
+   111→  api_product_id: string;
+   112→  api_order_id: string;
+   113→  api_response: Record<string, unknown>;
+   114→  result_code: string;
+   115→  result_message: string;
+   116→  result_pin_code: string;
+   117→  transaction_id: string | null;
+   118→  processed_by: string | null;
+   119→  processed_at: string | null;
+   120→  created_at: string;
+   121→  updated_at: string;
+   122→}
+   123→
+   124→export interface DbDepositRequest {
+   125→  id: string;
+   126→  user_id: string;
+   127→  amount: number;
+   128→  currency: 'YER' | 'SAR' | 'USD';
+   129→  method: 'bank_transfer' | 'crypto' | 'cash' | 'card' | 'agent';
+   130→  bank_name: string;
+   131→  bank_account: string;
+   132→  sender_name: string;
+   133→  transfer_receipt_url: string;
+   134→  crypto_network: string;
+   135→  crypto_wallet_address: string;
+   136→  crypto_tx_hash: string;
+   137→  status: 'pending' | 'approved' | 'rejected' | 'cancelled';
+   138→  rejection_reason: string;
+   139→  admin_notes: string;
+   140→  reviewed_by: string | null;
+   141→  reviewed_at: string | null;
+   142→  transaction_id: string | null;
+   143→  created_at: string;
+   144→  updated_at: string;
+   145→}
+   146→
+   147→export interface DbWithdrawRequest {
+   148→  id: string;
+   149→  user_id: string;
+   150→  amount: number;
+   151→  currency: 'YER' | 'SAR' | 'USD';
+   152→  method: 'bank_transfer' | 'crypto' | 'cash' | 'agent';
+   153→  bank_name: string;
+   154→  bank_account: string;
+   155→  bank_iban: string;
+   156→  crypto_network: string;
+   157→  crypto_wallet_address: string;
+   158→  status: 'pending' | 'approved' | 'processing' | 'completed' | 'rejected' | 'cancelled';
+   159→  rejection_reason: string;
+   160→  admin_notes: string;
+   161→  reviewed_by: string | null;
+   162→  reviewed_at: string | null;
+   163→  processed_by: string | null;
+   164→  processed_at: string | null;
+   165→  transaction_id: string | null;
+   166→  created_at: string;
+   167→  updated_at: string;
+   168→}
+   169→
+   170→export interface DbSection {
+   171→  id: string;
+   172→  name: string;
+   173→  name_en: string;
+   174→  description: string;
+   175→  icon: string;
+   176→  color: string;
+   177→  image_url: string;
+   178→  sort_order: number;
+   179→  is_active: boolean;
+   180→  is_visible: boolean;
+   181→  type: 'manual' | 'api' | 'wallet';
+   182→  api_provider_id: string;
+   183→  created_at: string;
+   184→  updated_at: string;
+   185→}
+   186→
+   187→export interface DbSubSection {
+   188→  id: string;
+   189→  section_id: string;
+   190→  name: string;
+   191→  name_en: string;
+   192→  description: string;
+   193→  icon: string;
+   194→  color: string;
+   195→  image_url: string;
+   196→  sort_order: number;
+   197→  is_active: boolean;
+   198→  is_visible: boolean;
+   199→  type: 'manual' | 'api' | 'wallet';
+   200→  api_category_id: string;
+   201→  api_provider_id: string;
+   202→  created_at: string;
+   203→  updated_at: string;
+   204→}
+   205→
+   206→export interface DbServiceProvider {
+   207→  id: string;
+   208→  section_id: string;
+   209→  sub_section_id: string;
+   210→  name: string;
+   211→  name_en: string;
+   212→  description: string;
+   213→  icon: string;
+   214→  color: string;
+   215→  image_url: string;
+   216→  input_label: string;
+   217→  input_type: 'text' | 'tel' | 'number' | 'email';
+   218→  input_prefix: string;
+   219→  is_active: boolean;
+   220→  is_visible: boolean;
+   221→  sort_order: number;
+   222→  type: 'manual' | 'api' | 'wallet';
+   223→  api_provider_id: string;
+   224→  api_product_id: string;
+   225→  execution_type: 'manual' | 'auto' | 'api';
+   226→  created_at: string;
+   227→  updated_at: string;
+   228→}
+   229→
+   230→export interface DbProductPackage {
+   231→  id: string;
+   232→  provider_id: string;
+   233→  name: string;
+   234→  name_en: string;
+   235→  description: string;
+   236→  price_usd: number;
+   237→  price_yer: number;
+   238→  price_sar: number;
+   239→  cost_price: number;
+   240→  cost_currency: string;
+   241→  commission_amount: number;
+   242→  commission_type: string;
+   243→  execution_type: 'manual' | 'auto' | 'api';
+   244→  api_product_id: string;
+   245→  is_active: boolean;
+   246→  sort_order: number;
+   247→  created_at: string;
+   248→  updated_at: string;
+   249→}
+   250→
+   251→export interface DbApiProvider {
+   252→  id: string;
+   253→  name: string;
+   254→  description: string;
+   255→  website: string;
+   256→  api_url: string;
+   257→  api_key: string;
+   258→  auth_header: string;
+   259→  auth_type: 'header' | 'bearer' | 'basic' | 'query';
+   260→  is_active: boolean;
+   261→  balance: number;
+   262→  balance_currency: string;
+   263→  last_balance_check: string | null;
+   264→  default_commission: number;
+   265→  commission_type: 'percentage' | 'fixed';
+   266→  sync_categories: boolean;
+   267→  sync_products: boolean;
+   268→  last_sync_at: string | null;
+   269→  config: Record<string, unknown>;
+   270→  created_at: string;
+   271→  updated_at: string;
+   272→}
+   273→
+   274→export interface DbApiCategory {
+   275→  id: string;
+   276→  api_provider_id: string;
+   277→  api_category_id: string;
+   278→  title: string;
+   279→  title_en: string;
+   280→  description: string;
+   281→  image_url: string;
+   282→  product_count: number;
+   283→  is_active: boolean;
+   284→  is_synced: boolean;
+   285→  last_synced_at: string | null;
+   286→  section_id: string;
+   287→  created_at: string;
+   288→  updated_at: string;
+   289→}
+   290→
+   291→export interface DbExchangeRate {
+   292→  id: string;
+   293→  usd_to_yer: number;
+   294→  usd_to_sar: number;
+   295→  sar_to_yer: number;
+   296→  source: string;
+   297→  is_active: boolean;
+   298→  updated_by: string | null;
+   299→  created_at: string;
+   300→  updated_at: string;
+   301→}
+   302→
+   303→export interface DbBanner {
+   304→  id: string;
+   305→  title: string;
+   306→  description: string;
+   307→  image_url: string;
+   308→  position: 'login' | 'home' | 'services' | 'wallet' | 'all';
+   309→  link_type: 'none' | 'url' | 'screen' | 'provider' | 'promo';
+   310→  link_target: string;
+   311→  sort_order: number;
+   312→  is_active: boolean;
+   313→  start_date: string | null;
+   314→  end_date: string | null;
+   315→  created_at: string;
+   316→  updated_at: string;
+   317→}
+   318→
+   319→export interface DbNotification {
+   320→  id: string;
+   321→  user_id: string;
+   322→  title: string;
+   323→  body: string;
+   324→  type: string;
+   325→  is_read: boolean;
+   326→  navigation_target: string;
+   327→  navigation_params: Record<string, unknown>;
+   328→  data: Record<string, unknown>;
+   329→  created_at: string;
+   330→}
+   331→
+   332→export interface DbWalletAddress {
+   333→  id: string;
+   334→  network: 'TRC20' | 'ERC20' | 'BEP20' | 'BTC' | 'ETH' | 'SOL' | 'OTHER';
+   335→  network_name: string;
+   336→  address: string;
+   337→  label: string;
+   338→  qr_code_url: string;
+   339→  is_active: boolean;
+   340→  currency: string;
+   341→  created_at: string;
+   342→  updated_at: string;
+   343→}
+   344→
+   345→export interface DbFeatureFlag {
+   346→  flag_key: string;
+   347→  is_enabled: boolean;
+   348→  description: string;
+   349→  updated_at: string;
+   350→}
+   351→
+   352→export interface DbBottomNav {
+   353→  tab_id: string;
+   354→  label: string;
+   355→  icon: string;
+   356→  is_visible: boolean;
+   357→  sort_order: number;
+   358→}
+   359→
+   360→export interface DbMaintenance {
+   361→  id: string;
+   362→  is_active: boolean;
+   363→  message: string;
+   364→  estimated_time: string;
+   365→  activated_at: string | null;
+   366→}
+   367→
+   368→export interface DbKillSwitch {
+   369→  id: string;
+   370→  is_active: boolean;
+   371→  message: string;
+   372→  activated_at: string | null;
+   373→  activated_by: string | null;
+   374→  deactivate_at: string | null;
+   375→  duration_minutes: number;
+   376→}
+   377→
+   378→export interface DbBranding {
+   379→  id: string;
+   380→  app_name: string;
+   381→  app_name_en: string;
+   382→  logo_url: string;
+   383→  logo_dark_url: string;
+   384→  favicon_url: string;
+   385→  primary_color: string;
+   386→  secondary_color: string;
+   387→  accent_color: string;
+   388→  splash_background: string;
+   389→  updated_at: string;
+   390→}
+   391→
+   392→export interface DbAppConfig {
+   393→  key: string;
+   394→  value: Record<string, unknown>;
+   395→  description: string;
+   396→  updated_at: string;
+   397→}
+   398→
+   399→export interface DbEscrowTransaction {
+   400→  id: string;
+   401→  buyer_id: string;
+   402→  seller_id: string;
+   403→  title: string;
+   404→  description: string;
+   405→  amount: number;
+   406→  currency: string;
+   407→  reference_code: string;
+   408→  status: string;
+   409→  buyer_confirmed: boolean;
+   410→  seller_confirmed: boolean;
+   411→  funded_at: string | null;
+   412→  completed_at: string | null;
+   413→  dispute_reason: string;
+   414→  created_at: string;
+   415→  updated_at: string;
+   416→}
+   417→
+   418→export interface DbBranch {
+   419→  id: string;
+   420→  name: string;
+   421→  name_en: string;
+   422→  address: string;
+   423→  governorate: string;
+   424→  phone: string;
+   425→  email: string;
+   426→  working_hours: string;
+   427→  weekend: string;
+   428→  latitude: number;
+   429→  longitude: number;
+   430→  services: string[];
+   431→  is_active: boolean;
+   432→  sort_order: number;
+   433→}
+   434→
+   435→export interface DbUserReview {
+   436→  id: string;
+   437→  user_id: string;
+   438→  rating: number;
+   439→  comment: string;
+   440→  category: string;
+   441→  status: string;
+   442→  admin_reply: string;
+   443→  is_featured: boolean;
+   444→  created_at: string;
+   445→}
+   446→
+   447→export interface DbPriceOverride {
+   448→  id: string;
+   449→  target_type: string;
+   450→  target_id: string;
+   451→  markup_type: string;
+   452→  markup_value: number;
+   453→  markup_currency: string;
+   454→  is_active: boolean;
+   455→}
+   456→
+   457→export interface DbCommissionConfig {
+   458→  id: string;
+   459→  target_type: string;
+   460→  target_id: string;
+   461→  commission_type: string;
+   462→  commission_value: number;
+   463→  commission_currency: string;
+   464→  is_active: boolean;
+   465→}
+   466→
+   467→// Helper: Check if Supabase is configured
+   468→export function isSupabaseConfigured(): boolean {
+   469→  return !!supabaseUrl && supabaseUrl.includes('.supabase.co');
+   470→}
+   471→
+   472→// =====================================================
+   473→// SUPABASE SERVICE FUNCTIONS
+   474→// =====================================================
+   475→
+   476→export const supabaseService = {
+   477→  // --- Users ---
+   478→  async getUserById(id: string) {
+   479→    const { data, error } = await supabase.from('users').select('*').eq('id', id).single();
+   480→    if (error) throw error;
+   481→    return data as DbUser;
+   482→  },
+   483→
+   484→  async getUserByFirebaseUid(firebaseUid: string) {
+   485→    const { data, error } = await supabase.from('users').select('*').eq('firebase_uid', firebaseUid).single();
+   486→    if (error && error.code !== 'PGRST116') throw error;
+   487→    return data as DbUser | null;
+   488→  },
+   489→
+   490→  async createUser(user: Partial<DbUser> & { id: string }) {
+   491→    const { data, error } = await supabase.from('users').insert(user).select().single();
+   492→    if (error) throw error;
+   493→    return data as DbUser;
+   494→  },
+   495→
+   496→  async updateUser(id: string, updates: Partial<DbUser>) {
+   497→    const { data, error } = await supabase.from('users').update(updates).eq('id', id).select().single();
+   498→    if (error) throw error;
+   499→    return data as DbUser;
+   500→  },
+   501→
+   502→  // --- Transactions ---
+   503→  async getTransactions(userId: string, limit = 50) {
+   504→    const { data, error } = await supabase
+   505→      .from('transactions')
+   506→      .select('*')
+   507→      .or(`user_id.eq.${userId},from_user_id.eq.${userId},to_user_id.eq.${userId}`)
+   508→      .order('created_at', { ascending: false })
+   509→      .limit(limit);
+   510→    if (error) throw error;
+   511→    return data as DbTransaction[];
+   512→  },
+   513→
+   514→  async createTransaction(tx: Omit<DbTransaction, 'id' | 'created_at' | 'updated_at'>) {
+   515→    const { data, error } = await supabase.from('transactions').insert(tx).select().single();
+   516→    if (error) throw error;
+   517→    return data as DbTransaction;
+   518→  },
+   519→
+   520→  // --- Orders ---
+   521→  async getOrders(userId: string, limit = 50) {
+   522→    const { data, error } = await supabase
+   523→      .from('orders')
+   524→      .select('*')
+   525→      .eq('user_id', userId)
+   526→      .order('created_at', { ascending: false })
+   527→      .limit(limit);
+   528→    if (error) throw error;
+   529→    return data as DbOrder[];
+   530→  },
+   531→
+   532→  async createOrder(order: Omit<DbOrder, 'id' | 'created_at' | 'updated_at'>) {
+   533→    const { data, error } = await supabase.from('orders').insert(order).select().single();
+   534→    if (error) throw error;
+   535→    return data as DbOrder;
+   536→  },
+   537→
+   538→  // --- Deposit Requests ---
+   539→  async getDepositRequests(userId: string) {
+   540→    const { data, error } = await supabase.from('deposit_requests').select('*').eq('user_id', userId).order('created_at', { ascending: false });
+   541→    if (error) throw error;
+   542→    return data as DbDepositRequest[];
+   543→  },
+   544→
+   545→  async createDepositRequest(req: Omit<DbDepositRequest, 'id' | 'created_at' | 'updated_at'>) {
+   546→    const { data, error } = await supabase.from('deposit_requests').insert(req).select().single();
+   547→    if (error) throw error;
+   548→    return data as DbDepositRequest;
+   549→  },
+   550→
+   551→  // --- Withdraw Requests ---
+   552→  async getWithdrawRequests(userId: string) {
+   553→    const { data, error } = await supabase.from('withdraw_requests').select('*').eq('user_id', userId).order('created_at', { ascending: false });
+   554→    if (error) throw error;
+   555→    return data as DbWithdrawRequest[];
+   556→  },
+   557→
+   558→  async createWithdrawRequest(req: Omit<DbWithdrawRequest, 'id' | 'created_at' | 'updated_at'>) {
+   559→    const { data, error } = await supabase.from('withdraw_requests').insert(req).select().single();
+   560→    if (error) throw error;
+   561→    return data as DbWithdrawRequest;
+   562→  },
+   563→
+   564→  // --- Sections ---
+   565→  async getSections() {
+   566→    const { data, error } = await supabase.from('sections').select('*').eq('is_active', true).order('sort_order');
+   567→    if (error) throw error;
+   568→    return data as DbSection[];
+   569→  },
+   570→
+   571→  // --- Sub Sections ---
+   572→  async getSubSections(sectionId: string) {
+   573→    const { data, error } = await supabase.from('sub_sections').select('*').eq('section_id', sectionId).eq('is_active', true).order('sort_order');
+   574→    if (error) throw error;
+   575→    return data as DbSubSection[];
+   576→  },
+   577→
+   578→  // --- Service Providers ---
+   579→  async getServiceProviders(sectionId?: string) {
+   580→    let query = supabase.from('service_providers').select('*').eq('is_active', true).order('sort_order');
+   581→    if (sectionId) query = query.eq('section_id', sectionId);
+   582→    const { data, error } = await query;
+   583→    if (error) throw error;
+   584→    return data as DbServiceProvider[];
+   585→  },
+   586→
+   587→  // --- Product Packages ---
+   588→  async getProductPackages(providerId: string) {
+   589→    const { data, error } = await supabase.from('product_packages').select('*').eq('provider_id', providerId).eq('is_active', true).order('sort_order');
+   590→    if (error) throw error;
+   591→    return data as DbProductPackage[];
+   592→  },
+   593→
+   594→  // --- API Providers ---
+   595→  async getApiProviders() {
+   596→    const { data, error } = await supabase.from('api_providers').select('*').eq('is_active', true);
+   597→    if (error) throw error;
+   598→    return data as DbApiProvider[];
+   599→  },
+   600→
+   601→  // --- API Categories ---
+   602→  async getApiCategories(providerId: string) {
+   603→    const { data, error } = await supabase.from('api_categories').select('*').eq('api_provider_id', providerId).eq('is_active', true);
+   604→    if (error) throw error;
+   605→    return data as DbApiCategory[];
+   606→  },
+   607→
+   608→  // --- Exchange Rates ---
+   609→  async getExchangeRates() {
+   610→    const { data, error } = await supabase.from('exchange_rates').select('*').eq('is_active', true).order('created_at', { ascending: false }).limit(1);
+   611→    if (error) throw error;
+   612→    return data[0] as DbExchangeRate | null;
+   613→  },
+   614→
+   615→  // --- Banners ---
+   616→  async getBanners(position?: string) {
+   617→    let query = supabase.from('banners').select('*').eq('is_active', true).order('sort_order');
+   618→    if (position) query = query.eq('position', position);
+   619→    const { data, error } = await query;
+   620→    if (error) throw error;
+   621→    return data as DbBanner[];
+   622→  },
+   623→
+   624→  // --- Notifications ---
+   625→  async getNotifications(userId: string) {
+   626→    const { data, error } = await supabase.from('notifications').select('*').eq('user_id', userId).order('created_at', { ascending: false });
+   627→    if (error) throw error;
+   628→    return data as DbNotification[];
+   629→  },
+   630→
+   631→  async markNotificationRead(id: string) {
+   632→    const { error } = await supabase.from('notifications').update({ is_read: true }).eq('id', id);
+   633→    if (error) throw error;
+   634→  },
+   635→
+   636→  // --- Wallet Addresses ---
+   637→  async getWalletAddresses() {
+   638→    const { data, error } = await supabase.from('wallet_addresses').select('*').eq('is_active', true);
+   639→    if (error) throw error;
+   640→    return data as DbWalletAddress[];
+   641→  },
+   642→
+   643→  // --- Feature Flags ---
+   644→  async getFeatureFlags() {
+   645→    const { data, error } = await supabase.from('feature_flags').select('*');
+   646→    if (error) throw error;
+   647→    return data as DbFeatureFlag[];
+   648→  },
+   649→
+   650→  // --- Bottom Nav ---
+   651→  async getBottomNav() {
+   652→    const { data, error } = await supabase.from('bottom_nav').select('*').eq('is_visible', true).order('sort_order');
+   653→    if (error) throw error;
+   654→    return data as DbBottomNav[];
+   655→  },
+   656→
+   657→  // --- Maintenance ---
+   658→  async getMaintenance() {
+   659→    const { data, error } = await supabase.from('maintenance').select('*').eq('id', 'main').single();
+   660→    if (error && error.code !== 'PGRST116') throw error;
+   661→    return data as DbMaintenance | null;
+   662→  },
+   663→
+   664→  // --- Kill Switch ---
+   665→  async getKillSwitch() {
+   666→    const { data, error } = await supabase.from('kill_switch').select('*').eq('id', 'main').single();
+   667→    if (error && error.code !== 'PGRST116') throw error;
+   668→    return data as DbKillSwitch | null;
+   669→  },
+   670→
+   671→  // --- Branding ---
+   672→  async getBranding() {
+   673→    const { data, error } = await supabase.from('branding').select('*').eq('id', 'default').single();
+   674→    if (error && error.code !== 'PGRST116') throw error;
+   675→    return data as DbBranding | null;
+   676→  },
+   677→
+   678→  // --- App Config ---
+   679→  async getAppConfig(key: string) {
+   680→    const { data, error } = await supabase.from('app_config').select('*').eq('key', key).single();
+   681→    if (error && error.code !== 'PGRST116') throw error;
+   682→    return data as DbAppConfig | null;
+   683→  },
+   684→
+   685→  // --- Wallet Services ---
+   686→  async getWalletServices() {
+   687→    const { data, error } = await supabase.from('wallet_services').select('*').eq('is_active', true).order('sort_order');
+   688→    if (error) throw error;
+   689→    return data as DbWalletAddress[];
+   690→  },
+   691→
+   692→  // --- Visibility ---
+   693→  async getVisibility(targetType: string) {
+   694→    const { data, error } = await supabase.from('visibility').select('*').eq('target_type', targetType);
+   695→    if (error) throw error;
+   696→    return data;
+   697→  },
+   698→
+   699→  // --- Card Colors ---
+   700→  async getCardColors() {
+   701→    const { data, error } = await supabase.from('card_colors').select('*');
+   702→    if (error) throw error;
+   703→    return data;
+   704→  },
+   705→
+   706→  // --- Legal Content ---
+   707→  async getLegalContent(id: string) {
+   708→    const { data, error } = await supabase.from('legal_content').select('*').eq('id', id).single();
+   709→    if (error) throw error;
+   710→    return data;
+   711→  },
+   712→
+   713→  // --- Social Links ---
+   714→  async getSocialLinks() {
+   715→    const { data, error } = await supabase.from('social_links').select('*').eq('is_active', true).order('sort_order');
+   716→    if (error) throw error;
+   717→    return data;
+   718→  },
+   719→
+   720→  // --- KYC Documents ---
+   721→  async submitKycDocument(doc: { user_id: string; document_type: string; document_url: string }) {
+   722→    const { data, error } = await supabase.from('kyc_documents').insert(doc).select().single();
+   723→    if (error) throw error;
+   724→    return data;
+   725→  },
+   726→
+   727→  // --- Support Tickets ---
+   728→  async createSupportTicket(ticket: { user_id: string; subject: string; category?: string }) {
+   729→    const { data, error } = await supabase.from('support_tickets').insert(ticket).select().single();
+   730→    if (error) throw error;
+   731→    return data;
+   732→  },
+   733→
+   734→  // --- Balance Update via RPC (safe, atomic) ---
+   735→  async updateBalance(userId: string, currency: string, amount: number, operation: 'add' | 'subtract' = 'add') {
+   736→    const { data, error } = await supabase.rpc('update_user_balance', {
+   737→      p_user_id: userId,
+   738→      p_currency: currency,
+   739→      p_amount: amount,
+   740→      p_operation: operation,
+   741→    });
+   742→    if (error) throw error;
+   743→    return data as number;
+   744→  },
+   745→
+   746→  // --- Currency Conversion via RPC ---
+   747→  async convertCurrency(amount: number, fromCurrency: string, toCurrency: string) {
+   748→    const { data, error } = await supabase.rpc('convert_currency', {
+   749→      p_amount: amount,
+   750→      p_from_currency: fromCurrency,
+   751→      p_to_currency: toCurrency,
+   752→    });
+   753→    if (error) throw error;
+   754→    return data as number;
+   755→  },
+   756→
+   757→  // --- Dashboard Stats via RPC ---
+   758→  async getDashboardStats() {
+   759→    const { data, error } = await supabase.rpc('get_dashboard_stats');
+   760→    if (error) throw error;
+   761→    return data;
+   762→  },
+   763→
+   764→  // --- Escrow Transactions ---
+   765→  getEscrowTransactions: async (userId: string) => {
+   766→    const { data } = await supabase.from('escrow_transactions').select('*')
+   767→      .or(`buyer_id.eq.${userId},seller_id.eq.${userId}`)
+   768→      .order('created_at', { ascending: false });
+   769→    return data || [];
+   770→  },
+   771→
+   772→  createEscrowTransaction: async (escrow: any) => {
+   773→    const { data } = await supabase.from('escrow_transactions').insert(escrow).select().single();
+   774→    return data;
+   775→  },
+   776→
+   777→  updateEscrowStatus: async (id: string, status: string, updates: any = {}) => {
+   778→    const { data } = await supabase.from('escrow_transactions').update({ status, ...updates })
+   779→      .eq('id', id).select().single();
+   780→    return data;
+   781→  },
+   782→
+   783→  // --- User Reviews ---
+   784→  getUserReviews: async () => {
+   785→    const { data } = await supabase.from('user_reviews').select('*, users(name)').order('created_at', { ascending: false });
+   786→    return data || [];
+   787→  },
+   788→
+   789→  // --- Branches ---
+   790→  getBranches: async () => {
+   791→    const { data } = await supabase.from('branches').select('*').eq('is_active', true).order('sort_order');
+   792→    return data || [];
+   793→  },
+   794→
+   795→  // --- Marketing Content ---
+   796→  getMarketingContent: async () => {
+   797→    const { data } = await supabase.from('marketing_content').select('*').eq('is_active', true);
+   798→    return data || [];
+   799→  },
+   800→
+   801→  // --- Price Overrides ---
+   802→  getPriceOverrides: async () => {
+   803→    const { data } = await supabase.from('price_overrides').select('*').eq('is_active', true);
+   804→    return data || [];
+   805→  },
+   806→
+   807→  calculatePrice: async (basePriceUsd: number, providerId?: string, packageId?: string) => {
+   808→    // Check package-level override first, then provider-level, then global
+   809→    let markup = 0;
+   810→    let markupType = 'percentage';
+   811→
+   812→    if (packageId) {
+   813→      const { data: pkgOverride } = await supabase.from('price_overrides')
+   814→        .select('*').eq('target_type', 'package').eq('target_id', packageId).eq('is_active', true).single();
+   815→      if (pkgOverride) {
+   816→        markup = pkgOverride.markup_value;
+   817→        markupType = pkgOverride.markup_type;
+   818→      }
+   819→    }
+   820→
+   821→    if (!markup && providerId) {
+   822→      const { data: provOverride } = await supabase.from('price_overrides')
+   823→        .select('*').eq('target_type', 'provider').eq('target_id', providerId).eq('is_active', true).single();
+   824→      if (provOverride) {
+   825→        markup = provOverride.markup_value;
+   826→        markupType = provOverride.markup_type;
+   827→      }
+   828→    }
+   829→
+   830→    if (!markup) {
+   831→      const { data: globalOverride } = await supabase.from('price_overrides')
+   832→        .select('*').eq('target_type', 'global').eq('is_active', true).limit(1).single();
+   833→      if (globalOverride) {
+   834→        markup = globalOverride.markup_value;
+   835→        markupType = globalOverride.markup_type;
+   836→      }
+   837→    }
+   838→
+   839→    if (markupType === 'percentage') {
+   840→      return basePriceUsd * (1 + markup / 100);
+   841→    }
+   842→    return basePriceUsd + markup;
+   843→  },
+   844→
+   845→  // --- Commission Config ---
+   846→  getCommissionConfig: async () => {
+   847→    const { data } = await supabase.from('commission_config').select('*').eq('is_active', true);
+   848→    return data || [];
+   849→  },
+   850→
+   851→  calculateCommission: async (amountUsd: number, providerId?: string, packageId?: string) => {
+   852→    let commissionRate = 3; // default 3%
+   853→    let commissionType = 'percentage';
+   854→
+   855→    if (packageId) {
+   856→      const { data: pkgConfig } = await supabase.from('commission_config')
+   857→        .select('*').eq('target_type', 'package').eq('target_id', packageId).eq('is_active', true).single();
+   858→      if (pkgConfig) {
+   859→        commissionRate = pkgConfig.commission_value;
+   860→        commissionType = pkgConfig.commission_type;
+   861→      }
+   862→    }
+   863→
+   864→    if (commissionRate === 3 && providerId) {
+   865→      const { data: provConfig } = await supabase.from('commission_config')
+   866→        .select('*').eq('target_type', 'provider').eq('target_id', providerId).eq('is_active', true).single();
+   867→      if (provConfig) {
+   868→        commissionRate = provConfig.commission_value;
+   869→        commissionType = provConfig.commission_type;
+   870→      }
+   871→    }
+   872→
+   873→    if (commissionType === 'percentage') {
+   874→      return amountUsd * (commissionRate / 100);
+   875→    }
+   876→    return commissionRate;
+   877→  },
+   878→
+   879→  // --- Data Exports ---
+   880→  createDataExport: async (exportData: any) => {
+   881→    const { data } = await supabase.from('data_exports').insert(exportData).select().single();
+   882→    return data;
+   883→  },
+   884→
+   885→  getDataExports: async () => {
+   886→    const { data } = await supabase.from('data_exports').select('*').order('created_at', { ascending: false }).limit(50);
+   887→    return data || [];
+   888→  },
+   889→};
+   890→
