@@ -1,0 +1,93 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Next.js
+.next/
+out/
+
+# Production
+build/
+dist/
+
+# Debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Local env files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Vercel
+.vercel
+
+# TypeScript
+*.tsbuildinfo
+next-env.d.ts
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Firebase
+upload/
+upload-sa.json
+*-firebase-adminsdk*.json
+
+# Android
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+*.apk
+*.aab
+*.keystore
+!south-wallet.keystore
+
+# Android SDK (should never be in repo)
+.android-sdk/
+
+# Capacitor
+android/app/src/main/assets/public/
+
+# Prisma
+prisma/*.db
+
+# Misc
+*.log
+coverage/
+
+# JDK installations
+.jdks/
+
+# Android SDK
+.android-sdk/
+
+# SQLite databases
+db/*.db
+
+# Keystore files (security)
+*.keystore
+
+# Agent context
+agent-ctx/
+
+# Skills
+skills/
+
+# Download directory
+download/
+
+# Work files
+worklog.md
