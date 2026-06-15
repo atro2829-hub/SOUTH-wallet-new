@@ -100,6 +100,7 @@ function mapDbProviderToStore(dbProv: DbServiceProvider): ServiceProvider {
     inputLabel: dbProv.input_label || '',
     inputType: dbProv.input_type === 'tel' ? 'phone' : 'text',
     inputPrefix: dbProv.input_prefix || undefined,
+    subSectionId: dbProv.sub_section_id || undefined,
   };
 }
 
@@ -649,15 +650,23 @@ export function useSupabaseSync() {
 
   // ─────────────────────────────────────────────────────────
   //  Realtime subscriptions – global (public) data
+  //  Uses unique channel names with instance suffix to prevent
+  //  "cannot add callbacks after subscribe" errors when the
+  //  component remounts before the old channel is cleaned up.
   // ─────────────────────────────────────────────────────────
 
   const globalChannelsRef = useRef<ReturnType<typeof supabase.channel>[]>([]);
   const globalSubscribedRef = useRef(false);
+  const instanceSuffixRef = useRef(`-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
 
   useEffect(() => {
     // Prevent duplicate subscriptions in StrictMode or re-renders
     if (globalSubscribedRef.current) return;
     globalSubscribedRef.current = true;
+
+    // Regenerate suffix on each new subscription cycle
+    instanceSuffixRef.current = `-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const suf = instanceSuffixRef.current;
 
     // Clean up any leftover channels from a previous mount
     globalChannelsRef.current.forEach((ch) => {
@@ -667,7 +676,7 @@ export function useSupabaseSync() {
 
     // ── Sections ──
     const sectionsChannel = supabase
-      .channel('sections-public')
+      .channel(`sections-public${suf}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'sections' },
@@ -689,9 +698,31 @@ export function useSupabaseSync() {
       )
       .subscribe();
 
+    // ── Sub Sections ──
+    const subSectionsChannel = supabase
+      .channel(`sub-sections-public${suf}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'sub_sections' },
+        async () => {
+          try {
+            // Refresh sections to get sub-section updates
+            const sections = await supabaseService.getSections();
+            const sectionsMap: Record<string, DbSection> = {};
+            for (const s of sections) {
+              sectionsMap[s.id] = s;
+            }
+            setFbSectionsRef.current(sectionsMap as Record<string, any>);
+          } catch (error) {
+            console.error('[SupabaseSync] Sub-sections realtime refresh error:', error);
+          }
+        }
+      )
+      .subscribe();
+
     // ── Service Providers ──
     const providersChannel = supabase
-      .channel('providers-public')
+      .channel(`providers-public${suf}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'service_providers' },
@@ -721,7 +752,7 @@ export function useSupabaseSync() {
 
     // ── Product Packages ──
     const packagesChannel = supabase
-      .channel('packages-public')
+      .channel(`packages-public${suf}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'product_packages' },
@@ -749,7 +780,7 @@ export function useSupabaseSync() {
 
     // ── Exchange Rates ──
     const exchangeRatesChannel = supabase
-      .channel('exchange-rates-public')
+      .channel(`exchange-rates-public${suf}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'exchange_rates' },
@@ -768,17 +799,13 @@ export function useSupabaseSync() {
 
     // ── Banners ──
     const bannersChannel = supabase
-      .channel('banners-public')
+      .channel(`banners-public${suf}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'banners' },
         async () => {
           try {
-            // Banners are typically rendered from fbSections or a dedicated store field
-            // We refresh sections as banners might be linked
             const banners = await supabaseService.getBanners();
-            // Store banners in a way the app can access them
-            // For now, we just log - the app can fetch banners on demand
             void banners;
           } catch (error) {
             console.error('[SupabaseSync] Banners realtime refresh error:', error);
@@ -789,7 +816,7 @@ export function useSupabaseSync() {
 
     // ── Feature Flags ──
     const featureFlagsChannel = supabase
-      .channel('feature-flags-public')
+      .channel(`feature-flags-public${suf}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'feature_flags' },
@@ -806,7 +833,7 @@ export function useSupabaseSync() {
 
     // ── Kill Switch ──
     const killSwitchChannel = supabase
-      .channel('kill-switch-public')
+      .channel(`kill-switch-public${suf}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'kill_switch' },
@@ -814,7 +841,6 @@ export function useSupabaseSync() {
           try {
             const ks = await supabaseService.getKillSwitch();
             if (ks) {
-              // Auto-deactivate if deactivate_at has passed
               if (ks.is_active && ks.deactivate_at && new Date(ks.deactivate_at) <= new Date()) {
                 setKillSwitchRef.current(null);
               } else {
@@ -832,7 +858,7 @@ export function useSupabaseSync() {
 
     // ── Maintenance ──
     const maintenanceChannel = supabase
-      .channel('maintenance-public')
+      .channel(`maintenance-public${suf}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'maintenance' },
@@ -851,6 +877,7 @@ export function useSupabaseSync() {
 
     globalChannelsRef.current = [
       sectionsChannel,
+      subSectionsChannel,
       providersChannel,
       packagesChannel,
       exchangeRatesChannel,

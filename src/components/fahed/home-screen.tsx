@@ -47,7 +47,7 @@ import { LOGO_BASE64, RED_LOGO_FILTER } from '@/lib/logo';
 import { serviceIcons } from '@/lib/service-icons';
 import { productIcons } from '@/lib/product-icons';
 import { supabase } from '@/lib/supabase';
-import { getCategories, subscribeToCategories, type DynamicCategory } from '@/lib/categories';
+import { getCategories, type DynamicCategory } from '@/lib/categories';
 import { useAdminSettings } from '@/lib/use-admin-settings';
 import { useSupabaseSync } from '@/lib/use-supabase-sync';
 import {
@@ -648,13 +648,8 @@ export default function HomeScreen() {
     firebaseIcon?: string; // base64 icon from fbSections
   }
 
-  // Subscribe to categories realtime changes
-  useEffect(() => {
-    const unsubscribe = subscribeToCategories((_cats) => {
-      // Categories are already synced via use-supabase-sync, this just ensures realtime updates
-    });
-    return () => unsubscribe();
-  }, []);
+  // NOTE: Categories realtime is already handled by useSupabaseSync hook
+  // No need for a separate subscribeToCategories here - it would create a duplicate channel
 
   // Helper to determine icon type from an icon string
   const getIconType = (icon: string): 'lucide' | 'emoji' | 'image' => {

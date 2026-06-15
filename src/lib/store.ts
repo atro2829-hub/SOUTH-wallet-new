@@ -72,6 +72,7 @@ export interface ServiceProvider {
   inputLabel: string; // e.g. "رقم الهاتف" or "Player ID"
   inputType: 'phone' | 'text';
   inputPrefix?: string; // e.g. "+967"
+  subSectionId?: string; // reference to sub_sections.id from Supabase
 }
 
 export interface ProductPackage {
@@ -585,17 +586,9 @@ interface AppState {
   setEscrowTransactions: (data: any[]) => void;
 }
 
-// Default service categories
-const defaultCategories: ServiceCategory[] = [
-  { id: 'service-providers', name: 'مزودين الخدمات', type: 'providers', icon: 'providers' },
-  { id: 'wallet-services', name: 'خدمات المحفظة الخاصة بنا', type: 'wallet-services', icon: 'wallet-services' },
-  { id: 'telecom', name: 'الاتصالات', type: 'telecom', icon: 'telecom' },
-  { id: 'internet', name: 'الإنترنت', type: 'internet', icon: 'internet' },
-  { id: 'electricity', name: 'الكهرباء والماء', type: 'electricity', icon: 'electricity' },
-  { id: 'government', name: 'خدمات حكومية', type: 'government', icon: 'government' },
-  { id: 'crypto', name: 'الكريبتو', type: 'crypto', icon: 'crypto' },
-  { id: 'crypto-invest', name: 'استثمار الكريبتو', type: 'crypto', icon: 'crypto-invest' },
-];
+// Default service categories - now loaded from Supabase sections table
+// Empty array as default; actual data comes from use-supabase-sync
+const defaultCategories: ServiceCategory[] = [];
 
 // Default service providers for Yemen
 const defaultProviders: ServiceProvider[] = [];

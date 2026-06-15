@@ -10,7 +10,7 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || 'https://kifmxseonkdsxuanznny.supabase.co';
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtpZm14c2Vvbmtkc3h1YW56bm55Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE0Njk3NzAsImV4cCI6MjA5NzA0NTc3MH0.4KbBtMruP_xrPiHe_XtcoHG7NVQhlflhUUkJFWgQxkM';
-const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 
 // Standard client with anon key (respects RLS policies)
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
@@ -189,7 +189,8 @@ export interface DbSection {
   sort_order: number;
   is_active: boolean;
   is_visible: boolean;
-  type: 'manual' | 'api' | 'wallet';
+  type: 'manual' | 'api' | 'wallet' | 'exchange' | 'escrow' | 'telecom' | 'games' | 'investment' | 'link';
+  screen_type: string;
   api_provider_id: string;
   created_at: string;
   updated_at: string;
@@ -207,7 +208,7 @@ export interface DbSubSection {
   sort_order: number;
   is_active: boolean;
   is_visible: boolean;
-  type: 'manual' | 'api' | 'wallet';
+  type: 'manual' | 'api' | 'wallet' | 'exchange' | 'escrow' | 'telecom' | 'games' | 'investment' | 'link';
   api_category_id: string;
   api_provider_id: string;
   created_at: string;
@@ -626,11 +627,63 @@ export const supabaseService = {
     return data as DbSection[];
   },
 
+  async getAllSections() {
+    const { data, error } = await supabase.from('sections').select('*').order('sort_order');
+    if (error) throw error;
+    return data as DbSection[];
+  },
+
+  async updateSection(id: string, updates: Partial<DbSection>) {
+    const { data, error } = await supabase.from('sections').update({ ...updates, updated_at: new Date().toISOString() }).eq('id', id).select().single();
+    if (error) throw error;
+    return data as DbSection;
+  },
+
+  async createSection(section: Omit<DbSection, 'created_at' | 'updated_at'>) {
+    const { data, error } = await supabase.from('sections').insert(section).select().single();
+    if (error) throw error;
+    return data as DbSection;
+  },
+
+  async deleteSection(id: string) {
+    const { error } = await supabase.from('sections').delete().eq('id', id);
+    if (error) throw error;
+  },
+
   // --- Sub Sections ---
   async getSubSections(sectionId: string) {
     const { data, error } = await supabase.from('sub_sections').select('*').eq('section_id', sectionId).eq('is_active', true).order('sort_order');
     if (error) throw error;
     return data as DbSubSection[];
+  },
+
+  async getAllSubSections(sectionId: string) {
+    const { data, error } = await supabase.from('sub_sections').select('*').eq('section_id', sectionId).order('sort_order');
+    if (error) throw error;
+    return data as DbSubSection[];
+  },
+
+  async createSubSection(subSection: Omit<DbSubSection, 'created_at' | 'updated_at'>) {
+    const { data, error } = await supabase.from('sub_sections').insert(subSection).select().single();
+    if (error) throw error;
+    return data as DbSubSection;
+  },
+
+  async updateSubSection(id: string, updates: Partial<DbSubSection>) {
+    const { data, error } = await supabase.from('sub_sections').update({ ...updates, updated_at: new Date().toISOString() }).eq('id', id).select().single();
+    if (error) throw error;
+    return data as DbSubSection;
+  },
+
+  async deleteSubSection(id: string) {
+    const { error } = await supabase.from('sub_sections').delete().eq('id', id);
+    if (error) throw error;
+  },
+
+  async toggleSubSectionVisibility(id: string, isVisible: boolean) {
+    const { data, error } = await supabase.from('sub_sections').update({ is_visible: isVisible, is_active: isVisible, updated_at: new Date().toISOString() }).eq('id', id).select().single();
+    if (error) throw error;
+    return data as DbSubSection;
   },
 
   // --- Service Providers ---

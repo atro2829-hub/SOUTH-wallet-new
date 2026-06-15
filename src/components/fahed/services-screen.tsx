@@ -19,124 +19,28 @@ import {
 import { useAppStore } from '@/lib/store';
 import { productIcons } from '@/lib/product-icons';
 import { serviceIcons } from '@/lib/service-icons';
-import { database } from '@/lib/firebase';
-import { ref, onValue } from 'firebase/database';
+import { supabase, supabaseService } from '@/lib/supabase';
+import { type DynamicSubSection } from '@/lib/categories';
 
 // ═══════════════════════════════════════════════════════════════════════
-// Firebase Data Types
+// Display Helper Types (Supabase-compatible)
 // ═══════════════════════════════════════════════════════════════════════
 
-interface FirebaseSubSection {
+interface ProviderDisplay {
   id: string;
   name: string;
-  icon?: string;
-  sortOrder?: number;
-  isActive?: boolean;
-  parentId?: string;
-  providerIds?: string[];
-}
-
-interface FirebaseSection {
-  id: string;
-  name: string;
-  icon?: string;
-  color?: string;
-  sortOrder?: number;
-  isActive?: boolean;
-  type?: string;
-  parentId?: string;
-  providerIds?: string[];
-  apiProviderId?: string;
-  subSections?: Record<string, FirebaseSubSection>;
-}
-
-interface FirebaseProvider {
-  id: string;
-  name: string;
-  color?: string;
-  icon?: string;
-  categoryId?: string;
-  sectionId?: string;
-  subSectionId?: string;
-  inputLabel?: string;
-  inputType?: string;
+  icon: string;
+  color: string;
+  sectionId: string;
+  subSectionId: string;
+  categoryId: string;
+  inputLabel: string;
+  inputType: string;
   inputPrefix?: string;
-  isActive?: boolean;
-  sortOrder?: number;
-  executionType?: string;
+  isActive: boolean;
+  sortOrder: number;
+  executionType: string;
 }
-
-interface FirebaseWalletServicePackage {
-  id: string;
-  name: string;
-  price?: number;
-  currency?: string;
-  costPrice?: number;
-  commission?: number;
-  commissionType?: string;
-  executionType?: string;
-  isActive?: boolean;
-  sortOrder?: number;
-  description?: string;
-}
-
-interface FirebaseWalletService {
-  id: string;
-  name: string;
-  description?: string;
-  icon?: string;
-  color?: string;
-  categoryId?: string;
-  sectionId?: string;
-  subSectionId?: string;
-  inputLabel?: string;
-  inputType?: string;
-  inputPrefix?: string;
-  isActive?: boolean;
-  sortOrder?: number;
-  packages?: Record<string, FirebaseWalletServicePackage>;
-}
-
-interface ApiProviderCategory {
-  id: number | string;
-  title: string;
-  icon?: string;
-  slug?: string;
-  sectionId?: string;
-  products?: Record<string, ApiProviderProduct>;
-}
-
-interface ApiProviderProduct {
-  id: number | string;
-  title: string;
-  unit_price: number;
-  stock?: number;
-  icon?: string;
-  description?: string;
-  isActive?: boolean;
-}
-
-interface FirebaseApiProvider {
-  id: string;
-  name: string;
-  baseUrl?: string;
-  apiKey?: string;
-  authHeader?: string;
-  isActive?: boolean;
-  syncEnabled?: boolean;
-  sectionId?: string;
-  sectionName?: string;
-  commission?: number;
-  commissionType?: string;
-  balance?: number;
-  balanceCurrency?: string;
-  lastBalanceCheck?: string;
-  categories?: Record<string, ApiProviderCategory>;
-}
-
-// ═══════════════════════════════════════════════════════════════════════
-// Display Helper Types
-// ═══════════════════════════════════════════════════════════════════════
 
 interface ApiCategoryItem {
   id: string;
@@ -150,7 +54,7 @@ interface ApiCategoryItem {
 interface SubSectionDisplay {
   id: string;
   name: string;
-  providers: FirebaseProvider[];
+  providers: ProviderDisplay[];
   isApiCategory?: boolean;
   apiCategories?: ApiCategoryItem[];
 }
@@ -161,7 +65,7 @@ interface SectionDisplay {
   icon?: string;
   color?: string;
   type?: string;
-  providers: FirebaseProvider[];
+  providers: ProviderDisplay[];
   subSections: SubSectionDisplay[];
   isApiSection?: boolean;
   isWalletServicesSection?: boolean;
@@ -209,16 +113,20 @@ function getIconForApiCategory(cat: ApiCategoryItem): string | null {
 export default function ServicesScreen() {
   const { theme } = useTheme();
   const isDark = theme === 'dark';
-  const { setActiveScreen, setSelectedCategory } = useAppStore();
+  const {
+    setActiveScreen,
+    setSelectedCategory,
+    fbSections,
+    fbVisibility,
+    recentServices,
+  } = useAppStore();
 
-  // ─── Firebase Real-Time State ─────────────────────────────────────
+  // ─── Supabase Fetched State ─────────────────────────────────────
 
-  const [fbSections, setFbSections] = useState<Record<string, FirebaseSection>>({});
-  const [fbProviders, setFbProviders] = useState<Record<string, FirebaseProvider>>({});
-  const [fbWalletServices, setFbWalletServices] = useState<Record<string, FirebaseWalletService>>({});
-  const [fbApiProviders, setFbApiProviders] = useState<Record<string, FirebaseApiProvider>>({});
-  const [visibilitySections, setVisibilitySections] = useState<Record<string, boolean>>({});
-  const [visibilityProviders, setVisibilityProviders] = useState<Record<string, boolean>>({});
+  const [subSectionsMap, setSubSectionsMap] = useState<Record<string, DynamicSubSection[]>>({});
+  const [apiCategories, setApiCategories] = useState<any[]>([]);
+  const [apiProvidersMap, setApiProvidersMap] = useState<Record<string, any>>({});
+  const [dbProviders, setDbProviders] = useState<ProviderDisplay[]>([]);
 
   // ─── UI State ─────────────────────────────────────────────────────
 
@@ -226,104 +134,172 @@ export default function ServicesScreen() {
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
 
   // ═══════════════════════════════════════════════════════════════════
-  // Firebase Real-Time Listeners
+  // Fetch Sub-Sections from Supabase
+  // ═══════════════════════════════════════════════════════════════════
+
+  const fetchSubSections = useCallback(async () => {
+    try {
+      const sections = await supabaseService.getSections();
+      const map: Record<string, DynamicSubSection[]> = {};
+      for (const s of sections) {
+        try {
+          const subs = await supabaseService.getSubSections(s.id);
+          map[s.id] = subs.map(sub => ({
+            id: sub.id,
+            sectionId: sub.section_id,
+            name: sub.name,
+            nameAr: sub.name,
+            nameEn: sub.name_en || sub.name,
+            description: sub.description || '',
+            icon: sub.icon || '📋',
+            iconType: (sub.icon && (sub.icon.startsWith('http') || sub.icon.startsWith('/'))) ? 'image' as const : 'emoji' as const,
+            color: sub.color || '#5C1A1B',
+            image: sub.image_url || '',
+            order: sub.sort_order ?? 0,
+            isVisible: sub.is_visible ?? true,
+            isActive: sub.is_active ?? true,
+            type: sub.type || 'manual',
+            apiCategoryId: sub.api_category_id || '',
+            apiProviderId: sub.api_provider_id || '',
+            createdAt: sub.created_at || '',
+            updatedAt: sub.updated_at || '',
+          }));
+        } catch {}
+      }
+      setSubSectionsMap(map);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    fetchSubSections();
+  }, [fbSections, fetchSubSections]); // Re-fetch when sections change
+
+  // ═══════════════════════════════════════════════════════════════════
+  // Fetch API Providers & Categories from Supabase
+  // ═══════════════════════════════════════════════════════════════════
+
+  const fetchApiData = useCallback(async () => {
+    try {
+      // Fetch API providers
+      const apiProviders = await supabaseService.getApiProviders();
+      const provMap: Record<string, any> = {};
+      for (const ap of apiProviders) {
+        provMap[ap.id] = ap;
+      }
+      setApiProvidersMap(provMap);
+
+      // Fetch all API categories
+      const allCats: any[] = [];
+      for (const ap of apiProviders) {
+        try {
+          const cats = await supabaseService.getApiCategories(ap.id);
+          for (const cat of cats) {
+            allCats.push({
+              id: `apicat-${ap.id}-${cat.api_category_id || cat.id}`,
+              name: cat.title || 'خدمة',
+              providerId: ap.id,
+              categoryId: cat.api_category_id || cat.id,
+              icon: cat.image_url || '',
+              productsCount: cat.product_count || 0,
+              sectionId: cat.section_id || '',
+            });
+          }
+        } catch {}
+      }
+      setApiCategories(allCats);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    fetchApiData();
+  }, [fetchApiData]);
+
+  // ═══════════════════════════════════════════════════════════════════
+  // Fetch Full Provider Data from Supabase
+  // ═══════════════════════════════════════════════════════════════════
+
+  const fetchProviders = useCallback(async () => {
+    try {
+      const dbProvs = await supabaseService.getServiceProviders();
+      setDbProviders(
+        dbProvs.map(p => ({
+          id: p.id,
+          name: p.name || '',
+          icon: p.icon || '',
+          color: p.color || '',
+          sectionId: p.section_id || '',
+          subSectionId: p.sub_section_id || '',
+          categoryId: p.section_id || '',
+          inputLabel: p.input_label || '',
+          inputType: p.input_type || 'text',
+          inputPrefix: p.input_prefix || undefined,
+          isActive: p.is_active ?? true,
+          sortOrder: p.sort_order ?? 0,
+          executionType: p.execution_type || 'manual',
+        }))
+      );
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    fetchProviders();
+  }, [fetchProviders]);
+
+  // ═══════════════════════════════════════════════════════════════════
+  // Supabase Realtime Subscription for sub-sections
   // ═══════════════════════════════════════════════════════════════════
 
   useEffect(() => {
-    const unsub = onValue(
-      ref(database, 'sections'),
-      (snap) => setFbSections(snap.exists() ? snap.val() : {}),
-      (err) => console.error('[sections]', err)
-    );
-    return () => unsub();
-  }, []);
+    const channelName = `services-sub-sections-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const channel = supabase
+      .channel(channelName)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sub_sections' }, () => {
+        fetchSubSections();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'service_providers' }, () => {
+        fetchProviders();
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'api_categories' }, () => {
+        fetchApiData();
+      })
+      .subscribe();
 
-  useEffect(() => {
-    const unsub = onValue(
-      ref(database, 'providers'),
-      (snap) => setFbProviders(snap.exists() ? snap.val() : {}),
-      (err) => console.error('[providers]', err)
-    );
-    return () => unsub();
-  }, []);
-
-  useEffect(() => {
-    const unsub = onValue(
-      ref(database, 'walletServices'),
-      (snap) => setFbWalletServices(snap.exists() ? snap.val() : {}),
-      (err) => console.error('[walletServices]', err)
-    );
-    return () => unsub();
-  }, []);
-
-  useEffect(() => {
-    const unsub = onValue(
-      ref(database, 'adminSettings/apiProviders'),
-      (snap) => setFbApiProviders(snap.exists() ? snap.val() : {}),
-      (err) => console.error('[apiProviders]', err)
-    );
-    return () => unsub();
-  }, []);
-
-  useEffect(() => {
-    const unsub = onValue(
-      ref(database, 'adminSettings/visibility'),
-      (snap) => {
-        if (!snap.exists()) return;
-        const data = snap.val();
-        if (data.sections) setVisibilitySections(data.sections);
-        if (data.providers) setVisibilityProviders(data.providers);
-      },
-      (err) => console.error('[visibility]', err)
-    );
-    return () => unsub();
-  }, []);
+    return () => {
+      try { supabase.removeChannel(channel); } catch {}
+    };
+  }, [fetchSubSections, fetchProviders, fetchApiData]);
 
   // ═══════════════════════════════════════════════════════════════════
   // Helpers
   // ═══════════════════════════════════════════════════════════════════
 
   const isProviderVisible = useCallback(
-    (id: string, isActive?: boolean): boolean =>
-      isActive !== false && visibilityProviders[id] !== false,
-    [visibilityProviders]
+    (id: string, isActive?: boolean): boolean => {
+      if (isActive === false) return false;
+      if (fbVisibility?.providers && fbVisibility.providers[id] === false) return false;
+      return true;
+    },
+    [fbVisibility]
   );
 
   const isSectionVisible = useCallback(
-    (id: string, isActive?: boolean): boolean =>
-      isActive !== false && visibilitySections[id] !== false,
-    [visibilitySections]
+    (id: string, isActive?: boolean): boolean => {
+      if (isActive === false) return false;
+      if (fbVisibility?.sections && fbVisibility.sections[id] === false) return false;
+      return true;
+    },
+    [fbVisibility]
   );
 
   const isSubSectionVisible = useCallback(
     (sectionId: string, subId: string, isActive?: boolean): boolean => {
       if (isActive === false) return false;
-      // Check parent section visibility
-      if (visibilitySections[sectionId] === false) return false;
-      // Check sub-section specific visibility (stored as "sectionId/subId")
+      if (fbVisibility?.sections && fbVisibility.sections[sectionId] === false) return false;
       const key = `${sectionId}/${subId}`;
-      return visibilitySections[key] !== false;
+      if (fbVisibility?.sections && fbVisibility.sections[key] === false) return false;
+      return true;
     },
-    [visibilitySections]
-  );
-
-  /** Convert a wallet service into a provider-like shape for rendering */
-  const walletServiceToProvider = useCallback(
-    (ws: FirebaseWalletService): FirebaseProvider => ({
-      id: ws.id,
-      name: ws.name,
-      color: ws.color,
-      icon: ws.icon,
-      categoryId: ws.categoryId,
-      sectionId: ws.sectionId,
-      subSectionId: ws.subSectionId,
-      inputLabel: ws.inputLabel,
-      inputType: ws.inputType,
-      inputPrefix: ws.inputPrefix,
-      isActive: ws.isActive,
-      sortOrder: ws.sortOrder,
-    }),
-    []
+    [fbVisibility]
   );
 
   const toggleExpand = useCallback((sectionId: string) => {
@@ -372,63 +348,53 @@ export default function ServicesScreen() {
   // ═══════════════════════════════════════════════════════════════════
 
   const apiCategoryItems = useMemo<ApiCategoryItem[]>(() => {
-    const items: ApiCategoryItem[] = [];
-
-    for (const ap of Object.values(fbApiProviders)) {
-      if (ap.isActive === false) continue;
-      if (!ap.categories) continue;
-
-      for (const cat of Object.values(ap.categories)) {
-        if (cat == null) continue;
-        const productsCount = cat.products
-          ? Object.values(cat.products).filter((p) => p != null).length
-          : 0;
-
-        items.push({
-          id: `apicat-${ap.id}-${cat.id}`,
-          name: cat.title || 'خدمة',
-          providerId: ap.id,
-          categoryId: cat.id,
-          icon: cat.icon,
-          productsCount,
-        });
-      }
-    }
-
-    return items;
-  }, [fbApiProviders]);
+    return apiCategories.filter(cat => {
+      // Filter out inactive or those with no provider
+      return cat.providerId && apiProvidersMap[cat.providerId];
+    });
+  }, [apiCategories, apiProvidersMap]);
 
   // ═══════════════════════════════════════════════════════════════════
-  // Build Sections from Firebase Data
+  // Build Sections from Supabase / Store Data
   // ═══════════════════════════════════════════════════════════════════
 
   const allSections = useMemo<SectionDisplay[]>(() => {
-    const sorted = Object.values(fbSections)
-      .filter((s) => isSectionVisible(s.id, s.isActive))
-      .sort((a, b) => (a.sortOrder ?? 999) - (b.sortOrder ?? 999));
+    // Build sections from fbSections (DbSection data from store)
+    const sectionEntries = Object.values(fbSections) as any[];
+    const sorted = sectionEntries
+      .filter((s) => isSectionVisible(s.id, s.is_active !== false ? true : false))
+      .filter((s) => s.is_visible !== false)
+      .sort((a, b) => (a.sort_order ?? 999) - (b.sort_order ?? 999));
 
     const result: SectionDisplay[] = [];
 
     for (const section of sorted) {
-      const isApiSection = !!section.apiProviderId; // any apiProviderId, not just '__all__'
+      const sectionId = section.id;
+      const sectionName = section.name || '';
+      const sectionIcon = section.icon || '';
+      const sectionColor = section.color || '#5C1A1B';
+      const sectionType = section.type || 'manual';
+      const apiProviderId = section.api_provider_id || '';
+
+      const isApiSection = !!apiProviderId;
       const isWalletSection =
-        section.type === 'wallet-services' || section.id === 'wallet-services';
+        sectionType === 'wallet-services' || sectionId === 'wallet-services';
 
       // ── API Providers Section ──────────────────────────────────
       if (isApiSection) {
-        result.push(buildApiSection(section));
+        result.push(buildApiSection(sectionId, sectionName, sectionIcon, sectionColor, sectionType, apiProviderId));
         continue;
       }
 
       // ── Wallet Services Section ────────────────────────────────
       if (isWalletSection) {
-        const built = buildWalletServicesSection(section);
+        const built = buildWalletServicesSection(sectionId, sectionName, sectionIcon, sectionColor, sectionType);
         if (built) result.push(built);
         continue;
       }
 
       // ── Regular Section ────────────────────────────────────────
-      const built = buildRegularSection(section);
+      const built = buildRegularSection(sectionId, sectionName, sectionIcon, sectionColor, sectionType);
       if (built) result.push(built);
     }
 
@@ -436,10 +402,17 @@ export default function ServicesScreen() {
 
     // ─── Inner builders (close over outer scope) ────────────────
 
-    function buildApiSection(section: FirebaseSection): SectionDisplay {
+    function buildApiSection(
+      sectionId: string,
+      name: string,
+      icon: string | undefined,
+      color: string | undefined,
+      type: string | undefined,
+      apiProviderId: string
+    ): SectionDisplay {
       // If apiProviderId is '__all__', show all API providers' categories
-      // If apiProviderId is a specific ID (e.g., 'g2bulk'), show only that provider's categories
-      const targetProviderId = section.apiProviderId === '__all__' ? null : section.apiProviderId;
+      // If apiProviderId is a specific ID, show only that provider's categories
+      const targetProviderId = apiProviderId === '__all__' ? null : apiProviderId;
 
       // Group API categories by provider (or use single provider)
       const grouped: Record<string, ApiCategoryItem[]> = {};
@@ -451,7 +424,7 @@ export default function ServicesScreen() {
       const apiSubSections: SubSectionDisplay[] = Object.entries(grouped).map(
         ([provId, items]) => ({
           id: `api-${provId}`,
-          name: fbApiProviders[provId]?.name || 'مزود خدمات',
+          name: apiProvidersMap[provId]?.name || 'مزود خدمات',
           providers: [],
           isApiCategory: true,
           apiCategories: items,
@@ -459,15 +432,15 @@ export default function ServicesScreen() {
       );
 
       // Also include regular providers linked to this section
-      const providers = collectSectionProviders(section);
+      const provs = collectSectionProviders(sectionId);
 
       return {
-        id: section.id,
-        name: section.name,
-        icon: section.icon,
-        color: section.color,
-        type: section.type,
-        providers,
+        id: sectionId,
+        name,
+        icon,
+        color,
+        type,
+        providers: provs,
         subSections: apiSubSections,
         isApiSection: true,
         isWalletServicesSection: false,
@@ -475,22 +448,30 @@ export default function ServicesScreen() {
     }
 
     function buildWalletServicesSection(
-      section: FirebaseSection
+      sectionId: string,
+      name: string,
+      icon: string | undefined,
+      color: string | undefined,
+      type: string | undefined
     ): SectionDisplay | null {
-      const wsProviders: FirebaseProvider[] = [];
+      const wsProviders: ProviderDisplay[] = [];
       const walletSubSections: SubSectionDisplay[] = [];
+      const sectionSubs = subSectionsMap[sectionId] || [];
 
-      if (hasActiveSubSections(section.subSections)) {
+      if (sectionSubs.length > 0) {
         // Distribute wallet services into sub-sections
-        const subEntries = sortSubSections(section.subSections!);
+        const activeSubs = sectionSubs
+          .filter(s => s.isActive !== false)
+          .sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
         const assignedIds = new Set<string>();
 
-        for (const sub of subEntries) {
+        for (const sub of activeSubs) {
           // Check sub-section visibility
-          if (!isSubSectionVisible(section.id, sub.id, sub.isActive)) continue;
+          if (!isSubSectionVisible(sectionId, sub.id, sub.isActive)) continue;
 
           const subProviders = resolveSubSectionProviders(
             sub,
+            sectionId,
             /* preferWalletServices */ true
           );
           subProviders.forEach((p) => assignedIds.add(p.id));
@@ -498,32 +479,30 @@ export default function ServicesScreen() {
           if (subProviders.length > 0) {
             walletSubSections.push({
               id: sub.id,
-              name: sub.name,
+              name: sub.nameAr || sub.name,
               providers: subProviders,
             });
           }
         }
 
         // Collect unassigned wallet services for this section
-        const unassigned = Object.values(fbWalletServices)
+        const unassigned = dbProviders
           .filter(
-            (ws) =>
-              ws.sectionId === section.id &&
-              isProviderVisible(ws.id, ws.isActive) &&
-              !assignedIds.has(ws.id)
+            (p) =>
+              p.sectionId === sectionId &&
+              isProviderVisible(p.id, p.isActive) &&
+              !assignedIds.has(p.id)
           )
-          .map(walletServiceToProvider)
           .sort(bySortOrder);
 
         wsProviders.push(...unassigned);
       } else {
         // No sub-sections: flat list of wallet services
-        const flat = Object.values(fbWalletServices)
+        const flat = dbProviders
           .filter(
-            (ws) =>
-              ws.sectionId === section.id && isProviderVisible(ws.id, ws.isActive)
+            (p) =>
+              p.sectionId === sectionId && isProviderVisible(p.id, p.isActive)
           )
-          .map(walletServiceToProvider)
           .sort(bySortOrder);
 
         wsProviders.push(...flat);
@@ -532,11 +511,11 @@ export default function ServicesScreen() {
       if (wsProviders.length === 0 && walletSubSections.length === 0) return null;
 
       return {
-        id: section.id,
-        name: section.name,
-        icon: section.icon,
-        color: section.color,
-        type: section.type,
+        id: sectionId,
+        name,
+        icon,
+        color,
+        type,
         providers: wsProviders,
         subSections: walletSubSections,
         isApiSection: false,
@@ -545,41 +524,49 @@ export default function ServicesScreen() {
     }
 
     function buildRegularSection(
-      section: FirebaseSection
+      sectionId: string,
+      name: string,
+      icon: string | undefined,
+      color: string | undefined,
+      type: string | undefined
     ): SectionDisplay | null {
-      const providers = collectSectionProviders(section);
+      const provs = collectSectionProviders(sectionId);
       const sectionSubSections: SubSectionDisplay[] = [];
+      const sectionSubs = subSectionsMap[sectionId] || [];
 
-      if (hasActiveSubSections(section.subSections)) {
-        const subEntries = sortSubSections(section.subSections!);
+      if (sectionSubs.length > 0) {
+        const activeSubs = sectionSubs
+          .filter(s => s.isActive !== false)
+          .sort((a, b) => (a.order ?? 999) - (b.order ?? 999));
 
-        for (const sub of subEntries) {
+        for (const sub of activeSubs) {
           // Check sub-section visibility
-          if (!isSubSectionVisible(section.id, sub.id, sub.isActive)) continue;
+          if (!isSubSectionVisible(sectionId, sub.id, sub.isActive)) continue;
 
           const subProviders = resolveSubSectionProviders(
             sub,
+            sectionId,
             /* preferWalletServices */ false
           );
           if (subProviders.length > 0) {
             sectionSubSections.push({
               id: sub.id,
-              name: sub.name,
+              name: sub.nameAr || sub.name,
               providers: subProviders,
             });
           }
         }
       }
 
-      if (providers.length === 0 && sectionSubSections.length === 0) return null;
+      if (provs.length === 0 && sectionSubSections.length === 0) return null;
 
       return {
-        id: section.id,
-        name: section.name,
-        icon: section.icon,
-        color: section.color,
-        type: section.type,
-        providers,
+        id: sectionId,
+        name,
+        icon,
+        color,
+        type,
+        providers: provs,
         subSections: sectionSubSections,
         isApiSection: false,
         isWalletServicesSection: false,
@@ -587,96 +574,47 @@ export default function ServicesScreen() {
     }
 
     /** Collect top-level providers for a section */
-    function collectSectionProviders(section: FirebaseSection): FirebaseProvider[] {
-      if (section.providerIds?.length) {
-        return section.providerIds
-          .map((pid) => fbProviders[pid])
-          .filter((p): p is FirebaseProvider => !!p && isProviderVisible(p.id, p.isActive))
-          .sort(bySortOrder);
-      }
-
-      return Object.values(fbProviders)
+    function collectSectionProviders(sectionId: string): ProviderDisplay[] {
+      return dbProviders
         .filter(
           (p) =>
-            p.sectionId === section.id && isProviderVisible(p.id, p.isActive)
+            p.sectionId === sectionId &&
+            isProviderVisible(p.id, p.isActive) &&
+            !p.subSectionId // only providers not assigned to a sub-section
         )
         .sort(bySortOrder);
     }
 
-    /** Resolve providers for a sub-section, optionally preferring wallet services */
+    /** Resolve providers for a sub-section */
     function resolveSubSectionProviders(
-      sub: FirebaseSubSection,
-      preferWalletServices: boolean
-    ): FirebaseProvider[] {
-      const result: FirebaseProvider[] = [];
+      sub: DynamicSubSection,
+      sectionId: string,
+      _preferWalletServices: boolean
+    ): ProviderDisplay[] {
+      // Find providers that belong to this sub-section
+      const subProviders = dbProviders.filter(
+        (p) =>
+          p.subSectionId === sub.id &&
+          p.sectionId === sectionId &&
+          isProviderVisible(p.id, p.isActive)
+      );
 
-      if (sub.providerIds?.length) {
-        for (const pid of sub.providerIds) {
-          if (preferWalletServices) {
-            const ws = fbWalletServices[pid];
-            if (ws && isProviderVisible(ws.id, ws.isActive)) {
-              result.push(walletServiceToProvider(ws));
-              continue;
-            }
-          }
-          const prov = fbProviders[pid];
-          if (prov && isProviderVisible(prov.id, prov.isActive)) {
-            result.push(prov);
-          }
-        }
-      } else {
-        // Resolve by subSectionId
-        if (preferWalletServices) {
-          for (const ws of Object.values(fbWalletServices)) {
-            if (
-              ws.subSectionId === sub.id &&
-              isProviderVisible(ws.id, ws.isActive)
-            ) {
-              result.push(walletServiceToProvider(ws));
-            }
-          }
-        }
-        for (const prov of Object.values(fbProviders)) {
-          if (
-            prov.subSectionId === sub.id &&
-            isProviderVisible(prov.id, prov.isActive) &&
-            !result.find((r) => r.id === prov.id)
-          ) {
-            result.push(prov);
-          }
-        }
-      }
-
-      return result.sort(bySortOrder);
+      return subProviders.sort(bySortOrder);
     }
 
-    function hasActiveSubSections(
-      subs?: Record<string, FirebaseSubSection>
-    ): boolean {
-      return !!subs && Object.values(subs).some((s) => s.isActive !== false);
-    }
-
-    function sortSubSections(subs: Record<string, FirebaseSubSection>) {
-      return Object.values(subs)
-        .filter((s) => s.isActive !== false)
-        .sort((a, b) => (a.sortOrder ?? 999) - (b.sortOrder ?? 999));
-    }
-
-    function bySortOrder(a: { sortOrder?: number }, b: { sortOrder?: number }) {
+    function bySortOrder(a: { sortOrder: number }, b: { sortOrder: number }) {
       return (a.sortOrder ?? 999) - (b.sortOrder ?? 999);
     }
   }, [
     fbSections,
-    fbProviders,
-    fbWalletServices,
-    fbApiProviders,
+    subSectionsMap,
+    dbProviders,
     apiCategoryItems,
-    visibilitySections,
-    visibilityProviders,
+    apiProvidersMap,
+    fbVisibility,
     isSectionVisible,
     isSubSectionVisible,
     isProviderVisible,
-    walletServiceToProvider,
   ]);
 
   // ═══════════════════════════════════════════════════════════════════
@@ -727,6 +665,27 @@ export default function ServicesScreen() {
   };
 
   // ═══════════════════════════════════════════════════════════════════
+  // Recent Services (map IDs to display objects)
+  // ═══════════════════════════════════════════════════════════════════
+
+  const recentServiceItems = useMemo(() => {
+    if (!recentServices || recentServices.length === 0) return [];
+    return recentServices
+      .slice(0, 6)
+      .map((id: string) => {
+        const prov = dbProviders.find(p => p.id === id);
+        if (!prov) return null;
+        return {
+          id: prov.id,
+          name: prov.name,
+          icon: prov.icon,
+          color: prov.color,
+        };
+      })
+      .filter(Boolean) as { id: string; name: string; icon: string; color: string }[];
+  }, [recentServices, dbProviders]);
+
+  // ═══════════════════════════════════════════════════════════════════
   // Theme Styles
   // ═══════════════════════════════════════════════════════════════════
 
@@ -742,7 +701,7 @@ export default function ServicesScreen() {
   // Render: Provider Item
   // ═══════════════════════════════════════════════════════════════════
 
-  const renderProviderItem = (provider: FirebaseProvider, index: number) => {
+  const renderProviderItem = (provider: ProviderDisplay, index: number) => {
     const iconSrc = provider.icon || getIconForProvider(provider.id);
 
     return (
@@ -1010,7 +969,7 @@ export default function ServicesScreen() {
       </motion.div>
 
       {/* Recently Used Services */}
-      {!searchQuery.trim() && recentServices && recentServices.length > 0 && (
+      {!searchQuery.trim() && recentServiceItems && recentServiceItems.length > 0 && (
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
@@ -1018,7 +977,7 @@ export default function ServicesScreen() {
         >
           <h3 className="text-xs font-bold mb-2" style={{ color: isDark ? '#888' : '#999' }}>الأخيرة</h3>
           <div className="flex gap-3 overflow-x-auto pb-1" style={{ scrollbarWidth: 'none' }}>
-            {recentServices.slice(0, 6).map((service: any, index: number) => {
+            {recentServiceItems.map((service, index: number) => {
               const iconSrc = service.icon ? (service.icon.startsWith('data:') || service.icon.startsWith('http') ? service.icon : undefined) : undefined;
               return (
                 <motion.button
@@ -1067,7 +1026,7 @@ export default function ServicesScreen() {
         const hasSubSections = section.subSections.length > 0;
 
         // Flat providers when no sub-sections
-        const displayFlatProviders: FirebaseProvider[] | null =
+        const displayFlatProviders: ProviderDisplay[] | null =
           hasSubSections
             ? null
             : isExpanded

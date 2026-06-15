@@ -1,107 +1,16 @@
 'use client';
 
-import { useState, useRef, useEffect, useMemo } from 'react';
+import { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useTheme } from 'next-themes';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ChevronRight, Search, ChevronLeft, ArrowLeft, Package, ShoppingCart, Wallet } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { productIcons, getProductIcon } from '@/lib/product-icons';
 import { serviceIcons } from '@/lib/service-icons';
-import { database } from '@/lib/firebase';
-import { ref, onValue } from 'firebase/database';
+import { supabase, supabaseService } from '@/lib/supabase';
+import type { DbSubSection, DbServiceProvider, DbProductPackage } from '@/lib/supabase';
+import { getSubSections, type DynamicSubSection } from '@/lib/categories';
 import type { ApiProviderCategory, ApiProviderProduct, ApiProviderConfig } from '@/lib/api-provider';
-
-// ─── Category display names ─────────────────────────────────────────
-const categoryNames: Record<string, string> = {
-  'service-providers': 'مزودين الخدمات',
-  'wallet-services': 'خدمات المحفظة الخاصة بنا',
-  entertainment: 'خدمات ترفيهية',
-  cards: 'بطاقات رقمية',
-  telecom: 'خدمات الاتصالات',
-  electricity: 'الكهرباء والماء',
-  government: 'خدمات حكومية',
-  internet: 'الإنترنت',
-  crypto: 'الكريبتو',
-  'crypto-invest': 'استثمار الكريبتو',
-};
-
-// ─── Sub-section icon keys (maps to productIcons or serviceIcons) ───
-const subSectionIcons: Record<string, string> = {
-  shooting: 'pubg',
-  strategy: 'clash-royale',
-  adventure: 'roblox',
-  platforms: 'steam',
-  streaming: 'netflix',
-  'store-cards': 'google-play',
-  'gaming-cards': 'psn-card',
-  'payment-cards': 'visa-virtual',
-  recharge: 'yemen-mobile',
-  'internet-packages': 'yemen-net',
-  elec: 'electricity',
-  water: 'water',
-  identity: 'civil-registry',
-  'traffic-municipal': 'traffic',
-  providers: 'yemen-net',
-  'buy-sell': 'bitcoin',
-  'usdt-plans': 'usdt',
-};
-
-// ─── Sub-sections with provider IDs (legacy fallback) ────────────────
-interface SubSection {
-  id: string;
-  name: string;
-  description: string;
-  providerIds: string[];
-  iconKey: string;
-  color: string;
-}
-
-const categorySubSections: Record<string, SubSection[]> = {
-  'service-providers': [],
-  'wallet-services': [
-    { id: 'shooting', name: 'ألعاب إطلاق النار', description: 'ببجي، فري فاير، فالورانت والمزيد', providerIds: ['pubg', 'freefire', 'call-of-duty', 'fortnite', 'valorant', 'apex-legends'], iconKey: 'pubg', color: '#F59E0B' },
-    { id: 'strategy', name: 'ألعاب الاستراتيجية', description: 'كلاش رويال، كلاش اوف كلانس والمزيد', providerIds: ['clash-royale', 'clash-of-clans', 'league-legends'], iconKey: 'clash-royale', color: '#3B82F6' },
-    { id: 'adventure', name: 'ألعاب المغامرات', description: 'روبلوكس، ماينكرافت، جينشين والمزيد', providerIds: ['roblox', 'minecraft', 'genshin-impact', 'honkai-star'], iconKey: 'roblox', color: '#5C1A1B' },
-    { id: 'platforms', name: 'منصات الألعاب', description: 'ستيم، EA FC والمزيد', providerIds: ['steam', 'ea-fc'], iconKey: 'steam', color: '#1B2838' },
-    { id: 'streaming', name: 'خدمات البث', description: 'نتفلكس، سبوتيفاي، يوتيوب بريميوم', providerIds: ['netflix', 'spotify', 'youtube-premium'], iconKey: 'netflix', color: '#E50914' },
-    { id: 'store-cards', name: 'بطاقات المتاجر', description: 'جوجل بلاي، آيتونز، امازون', providerIds: ['google-play', 'apple-itunes', 'amazon-gift'], iconKey: 'google-play', color: '#34A853' },
-    { id: 'gaming-cards', name: 'بطاقات الألعاب', description: 'بلايستيشن، اكسبوكس، نينتندو', providerIds: ['psn-card', 'xbox-card', 'nintendo-card'], iconKey: 'psn-card', color: '#00439C' },
-    { id: 'payment-cards', name: 'بطاقات الدفع', description: 'فيزا، ماستركارد، بايبال', providerIds: ['visa-virtual', 'mastercard-virtual', 'paypal'], iconKey: 'visa-virtual', color: '#1A1F71' },
-  ],
-  entertainment: [
-    { id: 'shooting', name: 'ألعاب إطلاق النار', description: 'ببجي، فري فاير، فالورانت والمزيد', providerIds: ['pubg', 'freefire', 'call-of-duty', 'fortnite', 'valorant', 'apex-legends'], iconKey: 'pubg', color: '#F59E0B' },
-    { id: 'strategy', name: 'ألعاب الاستراتيجية', description: 'كلاش رويال، كلاش اوف كلانس والمزيد', providerIds: ['clash-royale', 'clash-of-clans', 'league-legends'], iconKey: 'clash-royale', color: '#3B82F6' },
-    { id: 'adventure', name: 'ألعاب المغامرات', description: 'روبلوكس، ماينكرافت، جينشين والمزيد', providerIds: ['roblox', 'minecraft', 'genshin-impact', 'honkai-star'], iconKey: 'roblox', color: '#5C1A1B' },
-    { id: 'platforms', name: 'منصات الألعاب', description: 'ستيم، EA FC والمزيد', providerIds: ['steam', 'ea-fc'], iconKey: 'steam', color: '#1B2838' },
-    { id: 'streaming', name: 'خدمات البث', description: 'نتفلكس، سبوتيفاي، يوتيوب بريميوم', providerIds: ['netflix', 'spotify', 'youtube-premium'], iconKey: 'netflix', color: '#E50914' },
-  ],
-  cards: [
-    { id: 'store-cards', name: 'بطاقات المتاجر', description: 'جوجل بلاي، آيتونز، امازون', providerIds: ['google-play', 'apple-itunes', 'amazon-gift'], iconKey: 'google-play', color: '#34A853' },
-    { id: 'gaming-cards', name: 'بطاقات الألعاب', description: 'بلايستيشن، اكسبوكس، نينتندو', providerIds: ['psn-card', 'xbox-card', 'nintendo-card'], iconKey: 'psn-card', color: '#00439C' },
-    { id: 'payment-cards', name: 'بطاقات الدفع', description: 'فيزا، ماستركارد، بايبال', providerIds: ['visa-virtual', 'mastercard-virtual', 'paypal'], iconKey: 'visa-virtual', color: '#1A1F71' },
-  ],
-  telecom: [
-    { id: 'recharge', name: 'شحن رصيد', description: 'يمن موبايل، يو، سبأفون، واي', providerIds: ['yemen-mobile', 'yo', 'sabafon', 'y'], iconKey: 'yemen-mobile', color: '#C41E3A' },
-    { id: 'internet-packages', name: 'باقات الإنترنت', description: 'يمن نت، واي نت، سبأفون نت', providerIds: ['yemen-net', 'y-net-internet', 'sabafon-internet'], iconKey: 'yemen-net', color: '#8B5CF6' },
-  ],
-  electricity: [
-    { id: 'elec', name: 'الكهرباء', description: 'دفع فواتير الكهرباء', providerIds: ['elec-sanaa', 'elec-aden'], iconKey: 'electricity', color: '#F59E0B' },
-    { id: 'water', name: 'المياه', description: 'دفع فواتير المياه', providerIds: ['water-sanaa', 'water-aden'], iconKey: 'water', color: '#06B6D4' },
-  ],
-  government: [
-    { id: 'identity', name: 'الأوراق الثبوتية', description: 'السجل المدني، جواز السفر', providerIds: ['civil-registry', 'passport'], iconKey: 'civil-registry', color: '#6B7280' },
-    { id: 'traffic-municipal', name: 'المرور والبلدية', description: 'خدمات المرور والبلدية', providerIds: ['traffic', 'municipal'], iconKey: 'traffic', color: '#DC2626' },
-  ],
-  internet: [
-    { id: 'providers', name: 'مزودي الإنترنت', description: 'يمن نت، واي نت، سبأفون نت', providerIds: ['yemen-net', 'y-net-internet', 'sabafon-internet'], iconKey: 'yemen-net', color: '#8B5CF6' },
-  ],
-  crypto: [
-    { id: 'buy-sell', name: 'شراء وبيع', description: 'بيتكوين، إيثريوم، USDT والمزيد', providerIds: ['bitcoin', 'ethereum', 'usdt', 'bnb', 'solana', 'tron'], iconKey: 'bitcoin', color: '#F7931A' },
-  ],
-  'crypto-invest': [
-    { id: 'usdt-plans', name: 'خطط USDT', description: 'خطط استثمارية يومية وأسبوعية وشهرية وربع سنوية', providerIds: ['usdt-daily', 'usdt-weekly', 'usdt-monthly', 'usdt-quarterly'], iconKey: 'usdt', color: '#26A17B' },
-  ],
-};
 
 // ─── Product image URLs from real service providers ──
 const PRODUCT_IMAGES: Record<string, string> = {
@@ -195,14 +104,22 @@ function ProductImage({ providerId, providerName, size = 'sm', iconUrl }: { prov
   return <img src={src} alt={providerName} className={`${imgSizeClass} object-contain`} draggable={false} onError={() => setImgError(true)} />;
 }
 
-function SubSectionImage({ iconKey, color, firebaseIcon }: { iconKey: string; color: string; firebaseIcon?: string }) {
-  // Prefer Firebase base64 icon over hardcoded maps
-  if (firebaseIcon) {
-    return <img src={firebaseIcon} alt="" className="w-10 h-10 object-contain" draggable={false} />;
-  }
-  const iconSrc = productIcons[iconKey] || serviceIcons[iconKey] || productIcons['pubg'];
-  const externalUrl = PRODUCT_IMAGES[iconKey];
+function SubSectionImage({ icon, iconType, color }: { icon: string; iconType: 'lucide' | 'emoji' | 'image'; color: string }) {
   const [imgError, setImgError] = useState(false);
+
+  // Image URL icon
+  if (iconType === 'image' && icon && !imgError) {
+    return <img src={icon} alt="" className="w-10 h-10 object-contain" draggable={false} onError={() => setImgError(true)} />;
+  }
+
+  // Emoji icon
+  if (iconType === 'emoji' && icon) {
+    return <span className="text-2xl">{icon}</span>;
+  }
+
+  // Lucide icon - try to look up in productIcons/serviceIcons maps
+  const iconSrc = productIcons[icon] || serviceIcons[icon] || productIcons['pubg'];
+  const externalUrl = PRODUCT_IMAGES[icon];
 
   if (externalUrl && !imgError) {
     return <img src={externalUrl} alt="" className="w-10 h-10 object-contain" draggable={false} onError={() => setImgError(true)} />;
@@ -242,6 +159,11 @@ interface WalletServiceItem {
   packages?: Record<string, WalletServicePackage>;
 }
 
+// ─── Resolved sub-section type (sub-section with its providers) ──────
+interface ResolvedSubSection extends DynamicSubSection {
+  providers: ReturnType<typeof useAppStore.getState>['providers'];
+}
+
 // ─── Main Component ─────────────────────────────────────────────────
 export default function CategoryDetailScreen() {
   const { theme } = useTheme();
@@ -264,7 +186,7 @@ export default function CategoryDetailScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
-  
+
   // API provider state
   const [apiCategoryData, setApiCategoryData] = useState<{ provider: ApiProviderConfig; category: ApiProviderCategory; products: ApiProviderProduct[] } | null>(null);
   const [selectedApiProduct, setSelectedApiProduct] = useState<ApiProviderProduct | null>(null);
@@ -274,6 +196,52 @@ export default function CategoryDetailScreen() {
   // Wallet service state
   const [selectedWalletService, setSelectedWalletService] = useState<WalletServiceItem | null>(null);
   const [selectedWalletPackage, setSelectedWalletPackage] = useState<WalletServicePackage | null>(null);
+
+  // ─── Sub-sections fetched from Supabase ──────────────────────────
+  const [subSections, setSubSections] = useState<DynamicSubSection[]>([]);
+
+  // Fetch sub-sections when selectedCategory changes
+  useEffect(() => {
+    if (!selectedCategory) return;
+
+    let cancelled = false;
+
+    const fetchSubSections = async () => {
+      try {
+        const subs = await getSubSections(selectedCategory);
+        if (!cancelled) {
+          setSubSections(subs.filter(s => s.isVisible));
+        }
+      } catch (error) {
+        console.error('Error fetching sub-sections:', error);
+        if (!cancelled) {
+          setSubSections([]);
+        }
+      }
+    };
+
+    fetchSubSections();
+
+    return () => { cancelled = true; };
+  }, [selectedCategory]);
+
+  // Subscribe to sub_sections realtime changes
+  useEffect(() => {
+    if (!selectedCategory) return;
+
+    const channelName = `cat-detail-subs-${selectedCategory}-${Date.now()}`;
+    const channel = supabase
+      .channel(channelName)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sub_sections' }, async () => {
+        try {
+          const subs = await getSubSections(selectedCategory);
+          setSubSections(subs.filter(s => s.isVisible));
+        } catch {}
+      })
+      .subscribe();
+
+    return () => { try { supabase.removeChannel(channel); } catch {} };
+  }, [selectedCategory]);
 
   // ─── Derive API providers list from store ──────────────────────────
   const apiProviders = useMemo<ApiProviderConfig[]>(() => {
@@ -303,7 +271,7 @@ export default function CategoryDetailScreen() {
 
   const visibilityProviders = fbVisibility.providers;
 
-  // ─── Determine the current section from Firebase ──────────────────
+  // ─── Determine the current section from store (synced by useSupabaseSync) ──
   const currentSection = useMemo(() => {
     if (!selectedCategory || selectedCategory.startsWith('apicat-')) return null;
     const sections = fbSections as Record<string, any> | null;
@@ -325,7 +293,6 @@ export default function CategoryDetailScreen() {
   // ─── Parse API category info from selectedCategory ────────────────
   const parseApiCategoryInfo = (): { providerId: string; categoryId: string } | null => {
     if (!selectedCategory?.startsWith('apicat-')) return null;
-    // The provider ID might contain dashes, so we need to find the matching provider
     for (const ap of apiProviders) {
       const prefix = ap.id;
       const catStr = selectedCategory.replace(`apicat-${prefix}-`, '');
@@ -338,7 +305,7 @@ export default function CategoryDetailScreen() {
 
   const apiCategoryInfo = parseApiCategoryInfo();
 
-  // Helper: safely convert Firebase data (array with nulls or object) to clean array
+  // Helper: safely convert data (array with nulls or object) to clean array
   const safeArray = <T,>(data: any): T[] => {
     if (!data) return [];
     if (Array.isArray(data)) return data.filter((item: any) => item !== null && item !== undefined) as T[];
@@ -353,10 +320,9 @@ export default function CategoryDetailScreen() {
       if (provider) {
         const cats = provider.categories || {};
         const catList = safeArray<ApiProviderCategory>(cats);
-        // Try matching by id (could have cat_ prefix from Firebase sync)
         const category = catList.find(c => String(c.id) === String(apiCategoryInfo.categoryId) || `cat_${c.id}` === apiCategoryInfo.categoryId || String(c.id) === apiCategoryInfo.categoryId.replace('cat_', ''));
         if (category) {
-          const products = safeArray<ApiProviderProduct>(category.products).filter(p => p.isActive !== false);
+          const products = safeArray<ApiProviderCategory>(category.products).filter(p => p.isActive !== false) as unknown as ApiProviderProduct[];
           setApiCategoryData({ provider, category, products });
           setViewMode('api-products');
           return;
@@ -365,7 +331,6 @@ export default function CategoryDetailScreen() {
       setApiCategoryData(null);
       setViewMode('products');
     } else if (!isApiCategory) {
-      // Check if this is a section with apiProviderId
       if (sectionType === 'api' && currentSection?.apiProviderId) {
         const providerId = currentSection.apiProviderId;
         const provider = apiProviders.find(ap => ap.id === providerId);
@@ -373,8 +338,7 @@ export default function CategoryDetailScreen() {
           const cats = provider.categories || {};
           const catList = safeArray<ApiProviderCategory>(cats);
           if (catList.length > 0) {
-            // Show the first category's products, or list all categories
-            setApiCategoryData(null); // Will show category list instead
+            setApiCategoryData(null);
             setViewMode('api-products');
           }
         }
@@ -387,15 +351,20 @@ export default function CategoryDetailScreen() {
   // ─── Normal category logic (non-API) ──────────────────────────────
   const categoryId = !isApiCategory && sectionType !== 'api' ? (selectedCategory || '') : '';
   const categoryProviders = !isApiCategory && sectionType !== 'api' ? providers.filter(p => p.categoryId === categoryId && p.isActive && visibilityProviders[p.id] !== false) : [];
-  const rawSubSections = !isApiCategory && sectionType !== 'api' ? (categorySubSections[categoryId] || []) : [];
-  const resolvedSubSections = rawSubSections.map(sub => {
-    const subProviders = sub.providerIds
-      .map(pid => categoryProviders.find(p => p.id === pid))
-      .filter((p): p is NonNullable<typeof p> => !!p);
-    return { ...sub, providers: subProviders };
-  }).filter(sub => sub.providers.length > 0);
 
-  // ─── Wallet services for this section from Firebase ───────────────
+  // ─── Resolve sub-sections with their providers from Supabase ──────
+  const resolvedSubSections = useMemo<ResolvedSubSection[]>(() => {
+    if (isApiCategory || sectionType === 'api') return [];
+
+    return subSections
+      .map(sub => {
+        const subProviders = categoryProviders.filter(p => p.subSectionId === sub.id);
+        return { ...sub, providers: subProviders };
+      })
+      .filter(sub => sub.providers.length > 0);
+  }, [subSections, categoryProviders, isApiCategory, sectionType]);
+
+  // ─── Wallet services for this section from store (synced by useSupabaseSync) ──
   const walletServicesForSection = useMemo<WalletServiceItem[]>(() => {
     if (sectionType !== 'wallet-services') return [];
     const wsData = fbWalletServices as Record<string, any> | null;
@@ -404,7 +373,6 @@ export default function CategoryDetailScreen() {
       .filter(([, ws]: [string, any]) => {
         if (ws.isActive === false) return false;
         if (visibilityProviders[ws.id] === false) return false;
-        // Match by sectionId or by being unassigned with matching categoryId
         return ws.sectionId === categoryId || (!ws.sectionId && ws.categoryId === categoryId);
       })
       .map(([key, ws]: [string, any]) => ({
@@ -426,12 +394,12 @@ export default function CategoryDetailScreen() {
       .sort((a, b) => (a.sortOrder || 999) - (b.sortOrder || 999));
   }, [fbWalletServices, sectionType, categoryId, visibilityProviders]);
 
-  // ─── API categories for this section from Firebase ────────────────
+  // ─── API categories for this section from store (synced by useSupabaseSync) ──
   const apiCategoriesForSection = useMemo(() => {
     if (sectionType !== 'api' || !currentSection?.apiProviderId) return [];
     const providerId = currentSection.apiProviderId === '__all__' ? null : currentSection.apiProviderId;
     const result: { providerId: string; providerName: string; categoryId: string; category: ApiProviderCategory }[] = [];
-    
+
     for (const ap of apiProviders) {
       if (providerId && ap.id !== providerId) continue;
       if (!ap.categories) continue;
@@ -455,9 +423,9 @@ export default function CategoryDetailScreen() {
     } else if (sectionType === 'api') {
       setViewMode('api-products');
     } else if (sectionType === 'wallet-services') {
-      setViewMode('products'); // Show wallet services list
+      setViewMode('products');
     } else {
-      const subSections = categorySubSections[selectedCategory || ''] || [];
+      // Use subSections from Supabase (not hardcoded)
       if (subSections.length === 1) {
         setSelectedSubSection(subSections[0].id);
         setViewMode('products');
@@ -485,13 +453,14 @@ export default function CategoryDetailScreen() {
 
   if (!selectedCategory) return null;
 
-  // Get category name
+  // Get category name from Supabase-synced section data (fbSections)
   const getCategoryName = (): string => {
     if (isApiCategory && apiCategoryData) {
       return apiCategoryData.category.title || 'خدمة';
     }
     if (currentSection?.name) return currentSection.name;
-    return categoryNames[categoryId] || categoryId;
+    // Fallback: use section ID as name
+    return categoryId;
   };
 
   const categoryName = getCategoryName();
@@ -524,22 +493,47 @@ export default function CategoryDetailScreen() {
     setCustomerInput('');
   };
 
-  // Handle API product purchase
+  // Handle API product purchase - using Supabase
   const handleApiProductPurchase = async () => {
     if (!selectedApiProduct || !apiCategoryData || !customerInput.trim()) return;
-    
+
     setIsPurchasing(true);
     try {
-      const { push, ref, set: firebaseSet } = await import('firebase/database');
-      const { database: db } = await import('@/lib/firebase');
-      
       const orderId = `order-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       const user = useAppStore.getState().user;
-      
-      // Prices in USD
+
       const priceUSD = selectedApiProduct.unit_price;
-      
+
       const orderData = {
+        user_id: user?.userId || '',
+        provider_id: `api-${apiCategoryData.provider.id}`,
+        provider_name: apiCategoryData.provider.name,
+        package_id: String(selectedApiProduct.id),
+        package_name: selectedApiProduct.title,
+        category_id: String(apiCategoryData.category.id),
+        category_name: apiCategoryData.category.title || '',
+        customer_input: customerInput.trim(),
+        amount: priceUSD,
+        currency: 'USD' as const,
+        cost_price: 0,
+        cost_currency: 'USD',
+        commission_amount: 0,
+        commission_type: 'percentage',
+        execution_type: 'api' as const,
+        status: 'pending' as const,
+        api_provider_id: apiCategoryData.provider.id,
+        api_product_id: String(selectedApiProduct.id),
+        api_order_id: '',
+        api_response: {},
+        result_code: '',
+        result_message: '',
+        result_pin_code: '',
+      };
+
+      await supabaseService.createOrder(orderData);
+
+      // Add to local store
+      useAppStore.getState().addOrder({
         id: orderId,
         userId: user?.id || '',
         userName: user?.name || '',
@@ -552,23 +546,16 @@ export default function CategoryDetailScreen() {
         amount: priceUSD,
         currency: 'USD',
         status: 'pending',
-        executionType: 'auto' as const,
+        executionType: 'auto',
+        createdAt: new Date().toISOString(),
         apiProviderId: apiCategoryData.provider.id,
         apiProductId: String(selectedApiProduct.id),
         apiCategoryId: String(apiCategoryData.category.id),
-        createdAt: new Date().toISOString(),
-      };
-      
-      // Write order to Firebase
-      await firebaseSet(ref(db, `orders/${orderId}`), orderData);
-      
-      // Add to local store
-      useAppStore.getState().addOrder(orderData);
-      
-      // Reset purchase state
+      });
+
       setSelectedApiProduct(null);
       setCustomerInput('');
-      
+
     } catch (error) {
       console.error('Purchase error:', error);
     } finally {
@@ -576,19 +563,44 @@ export default function CategoryDetailScreen() {
     }
   };
 
-  // Handle wallet package purchase
+  // Handle wallet package purchase - using Supabase
   const handleWalletPackagePurchase = async () => {
     if (!selectedWalletPackage || !selectedWalletService || !customerInput.trim()) return;
-    
+
     setIsPurchasing(true);
     try {
-      const { ref, set: firebaseSet } = await import('firebase/database');
-      const { database: db } = await import('@/lib/firebase');
-      
       const orderId = `order-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       const user = useAppStore.getState().user;
-      
+
       const orderData = {
+        user_id: user?.userId || '',
+        provider_id: selectedWalletService.id,
+        provider_name: selectedWalletService.name,
+        package_id: selectedWalletPackage.id,
+        package_name: selectedWalletPackage.name,
+        category_id: selectedWalletService.categoryId || '',
+        category_name: '',
+        customer_input: customerInput.trim(),
+        amount: selectedWalletPackage.price || 0,
+        currency: (selectedWalletPackage.currency || 'YER') as 'YER' | 'SAR' | 'USD',
+        cost_price: selectedWalletPackage.costPrice || 0,
+        cost_currency: selectedWalletPackage.currency || 'YER',
+        commission_amount: selectedWalletPackage.commission || 0,
+        commission_type: selectedWalletPackage.commissionType || 'percentage',
+        execution_type: (selectedWalletPackage.executionType || 'manual') as 'manual' | 'auto' | 'api',
+        status: 'pending' as const,
+        api_provider_id: '',
+        api_product_id: '',
+        api_order_id: '',
+        api_response: {},
+        result_code: '',
+        result_message: '',
+        result_pin_code: '',
+      };
+
+      await supabaseService.createOrder(orderData);
+
+      useAppStore.getState().addOrder({
         id: orderId,
         userId: user?.id || '',
         userName: user?.name || '',
@@ -600,14 +612,11 @@ export default function CategoryDetailScreen() {
         customerInput: customerInput.trim(),
         amount: selectedWalletPackage.price || 0,
         currency: selectedWalletPackage.currency || 'YER',
-        status: 'pending' as const,
+        status: 'pending',
         executionType: (selectedWalletPackage.executionType || 'manual') as 'manual' | 'auto',
         createdAt: new Date().toISOString(),
-      };
-      
-      await firebaseSet(ref(db, `orders/${orderId}`), orderData);
-      useAppStore.getState().addOrder(orderData);
-      
+      });
+
       setSelectedWalletPackage(null);
       setCustomerInput('');
     } catch (error) {
@@ -1159,9 +1168,9 @@ export default function CategoryDetailScreen() {
                     <div className="absolute -bottom-6 -left-6 w-24 h-24 rounded-full opacity-[0.06]" style={{ background: sub.color }} />
                     <div className="relative z-10 p-4">
                       <div className="w-14 h-14 rounded-2xl overflow-hidden flex items-center justify-center mb-3" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
-                        <SubSectionImage iconKey={sub.iconKey} color={sub.color} firebaseIcon={currentSection?.subSections?.[sub.id]?.icon} />
+                        <SubSectionImage icon={sub.icon} iconType={sub.iconType} color={sub.color} />
                       </div>
-                      <h3 className="text-sm font-bold mb-1" style={{ color: textColor }}>{sub.name}</h3>
+                      <h3 className="text-sm font-bold mb-1" style={{ color: textColor }}>{sub.nameAr || sub.name}</h3>
                       <p className="text-[10px] leading-relaxed mb-2" style={{ color: subtleTextColor, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
                         {sub.description}
                       </p>
@@ -1198,7 +1207,7 @@ export default function CategoryDetailScreen() {
                         boxShadow: selectedSubSection === sub.id ? '0 2px 8px rgba(92,26,27,0.3)' : 'none',
                       }}
                     >
-                      {sub.name}
+                      {sub.nameAr || sub.name}
                     </button>
                   ))}
                 </div>

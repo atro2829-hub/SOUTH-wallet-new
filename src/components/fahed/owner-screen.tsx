@@ -18,6 +18,8 @@ import { useAppStore, type Order, type ServiceProvider, type ProductPackage } fr
 import { currencySymbols, currencyBadgeColors, formatNumber, generateReference, compressBase64Image, timeAgo } from '@/lib/utils';
 import { ref, set, get, update, remove, push, onValue } from 'firebase/database';
 import { database } from '@/lib/firebase';
+import { supabaseService } from '@/lib/supabase';
+import { getAllCategories, deleteCategory, toggleCategory, saveCategory, getAllSubSections, deleteSubSection, toggleSubSection, saveSubSection, type DynamicCategory, type DynamicSubSection } from '@/lib/categories';
 import { LOGO_BASE64 } from '@/lib/logo';
 import {
   DndContext, closestCenter, KeyboardSensor, PointerSensor,
@@ -249,6 +251,26 @@ function SubSectionItem({ sub, isDark, onToggle, onDelete, onIconChange, onEditN
 }
 
 export default function OwnerScreen() {
+  // Helper: map section type to screenType for categories.ts
+  const mapTypeToScreenType = (type: string): string => {
+    const mapping: Record<string, string> = {
+      'telecom': 'telecom', 'games': 'api-games', 'api': 'api-products',
+      'exchange': 'exchange', 'wallet': 'usdt', 'escrow': 'escrow',
+      'investment': 'investment', 'manual': 'manual', 'link': 'link',
+    };
+    return mapping[type] || 'manual';
+  };
+
+  // Helper: map screenType back to section type
+  const mapScreenTypeToType = (screenType?: string): string => {
+    const mapping: Record<string, string> = {
+      'telecom': 'telecom', 'api-games': 'games', 'api-products': 'api',
+      'exchange': 'exchange', 'usdt': 'wallet', 'escrow': 'escrow',
+      'investment': 'investment', 'manual': 'manual', 'link': 'link',
+    };
+    return mapping[screenType || 'manual'] || 'manual';
+  };
+
   const { theme } = useTheme();
   const isDark = theme === 'dark';
   const { setActiveScreen, user } = useAppStore();
@@ -394,48 +416,54 @@ export default function OwnerScreen() {
 
   // ===== Firebase Listeners =====
 
-  // Listen to sections
+  // Load sections from Supabase
   useEffect(() => {
-    const sectionsRef = ref(database, 'ownerSettings/sections');
-    const unsub = onValue(sectionsRef, (snapshot) => {
-      if (snapshot.exists()) {
-        const data = snapshot.val();
-        const list = Object.entries(data).map(([key, val]: [string, any]) => ({
-          id: key,
-          name: val.name || '',
-          icon: val.icon || '',
-          isVisible: val.isVisible !== false,
-          order: val.order || 0,
-          type: val.type || 'telecom',
+    const loadSections = async () => {
+      try {
+        const cats = await getAllCategories();
+        const list = cats.map((c: DynamicCategory) => ({
+          id: c.id,
+          name: c.nameAr || c.name,
+          icon: c.icon || '',
+          isVisible: c.isVisible,
+          order: c.order,
+          type: mapScreenTypeToType(c.screenType),
         }));
         setSections(list.sort((a, b) => a.order - b.order));
-      } else {
+      } catch (error) {
+        console.error('Error loading sections:', error);
         setSections([]);
       }
-    });
-    return () => unsub();
+    };
+    loadSections();
   }, []);
 
-  // Listen to subsections
+  // Load subsections from Supabase
   useEffect(() => {
-    const subRef = ref(database, 'ownerSettings/subsections');
-    const unsub = onValue(subRef, (snapshot) => {
-      if (snapshot.exists()) {
-        const data = snapshot.val();
-        const list = Object.entries(data).map(([key, val]: [string, any]) => ({
-          id: key,
-          parentId: val.parentId || '',
-          name: val.name || '',
-          icon: val.icon || '',
-          isVisible: val.isVisible !== false,
-          order: val.order || 0,
-        }));
-        setSubsections(list.sort((a, b) => a.order - b.order));
-      } else {
+    const loadSubsections = async () => {
+      try {
+        const allSections = await supabaseService.getAllSections();
+        const allSubs: OwnerSubSection[] = [];
+        for (const sec of allSections) {
+          const subs = await supabaseService.getAllSubSections(sec.id);
+          for (const sub of subs) {
+            allSubs.push({
+              id: sub.id,
+              parentId: sub.section_id,
+              name: sub.name || '',
+              icon: sub.icon || '',
+              isVisible: sub.is_visible ?? true,
+              order: sub.sort_order ?? 0,
+            });
+          }
+        }
+        setSubsections(allSubs.sort((a, b) => a.order - b.order));
+      } catch (error) {
+        console.error('Error loading subsections:', error);
         setSubsections([]);
       }
-    });
-    return () => unsub();
+    };
+    loadSubsections();
   }, []);
 
   // Listen to project config
@@ -759,40 +787,71 @@ export default function OwnerScreen() {
 
   const handleAddSection = async () => {
     if (!newSectionName) return;
-    const id = newSectionName.replace(/\s/g, '-').toLowerCase() + '-' + Date.now();
-    const section: OwnerSection = {
-      id, name: newSectionName, icon: newSectionIcon,
-      isVisible: true, order: sections.length, type: newSectionType,
-    };
     try {
-      await set(ref(database, `ownerSettings/sections/${id}`), section);
+      await saveCategory({
+        name: newSectionName,
+        nameAr: newSectionName,
+        nameEn: newSectionName,
+        icon: newSectionIcon || '📋',
+        order: sections.length,
+        isVisible: true,
+        screenType: mapTypeToScreenType(newSectionType),
+      });
       setNewSectionName('');
       setNewSectionIcon('');
       setNewSectionType('telecom');
       setShowAddSection(false);
-    } catch {}
+      // Reload sections
+      const cats = await getAllCategories();
+      const list = cats.map((c: DynamicCategory) => ({
+        id: c.id, name: c.nameAr || c.name, icon: c.icon || '',
+        isVisible: c.isVisible, order: c.order, type: mapScreenTypeToType(c.screenType),
+      }));
+      setSections(list.sort((a, b) => a.order - b.order));
+    } catch (error) {
+      console.error('Error adding section:', error);
+    }
   };
 
   const handleToggleSection = async (id: string) => {
     const section = sections.find(s => s.id === id);
     if (section) {
-      try { await update(ref(database, `ownerSettings/sections/${id}`), { isVisible: !section.isVisible }); } catch {}
+      try {
+        await toggleCategory(id, !section.isVisible);
+        setSections(prev => prev.map(s => s.id === id ? { ...s, isVisible: !s.isVisible } : s));
+      } catch (error) {
+        console.error('Error toggling section:', error);
+      }
     }
   };
 
   const handleDeleteSection = async (id: string) => {
-    try { await remove(ref(database, `ownerSettings/sections/${id}`)); } catch {}
+    try {
+      await deleteCategory(id);
+      setSections(prev => prev.filter(s => s.id !== id));
+      setSubsections(prev => prev.filter(s => s.parentId !== id));
+    } catch (error) {
+      console.error('Error deleting section:', error);
+    }
   };
 
   const handleSectionIconChange = async (id: string, icon: string) => {
     try {
       const compressed = await compressBase64Image(icon);
-      await update(ref(database, `ownerSettings/sections/${id}`), { icon: compressed });
-    } catch {}
+      await supabaseService.updateSection(id, { icon: compressed });
+      setSections(prev => prev.map(s => s.id === id ? { ...s, icon: compressed } : s));
+    } catch (error) {
+      console.error('Error updating section icon:', error);
+    }
   };
 
   const handleSectionNameChange = async (id: string, name: string) => {
-    try { await update(ref(database, `ownerSettings/sections/${id}`), { name }); } catch {}
+    try {
+      await supabaseService.updateSection(id, { name, name_en: name });
+      setSections(prev => prev.map(s => s.id === id ? { ...s, name } : s));
+    } catch (error) {
+      console.error('Error updating section name:', error);
+    }
   };
 
   const handleDragEndSections = async (event: DragEndEvent) => {
@@ -804,49 +863,85 @@ export default function OwnerScreen() {
     setSections(reordered);
     try {
       for (let i = 0; i < reordered.length; i++) {
-        await update(ref(database, `ownerSettings/sections/${reordered[i].id}`), { order: i });
+        await supabaseService.updateSection(reordered[i].id, { sort_order: i });
       }
-    } catch {}
+    } catch (error) {
+      console.error('Error reordering sections:', error);
+    }
   };
 
   // ===== Subsection Handlers =====
 
   const handleAddSubsection = async () => {
     if (!newSubName || !selectedParentId) return;
-    const id = 'sub-' + Date.now();
     const parentSubs = subsections.filter(s => s.parentId === selectedParentId);
-    const sub: OwnerSubSection = {
-      id, parentId: selectedParentId, name: newSubName, icon: newSubIcon,
-      isVisible: true, order: parentSubs.length,
-    };
     try {
-      await set(ref(database, `ownerSettings/subsections/${id}`), sub);
+      await saveSubSection({
+        name: newSubName,
+        nameAr: newSubName,
+        nameEn: newSubName,
+        sectionId: selectedParentId,
+        icon: newSubIcon || '📋',
+        order: parentSubs.length,
+        isVisible: true,
+        type: 'manual',
+      });
       setNewSubName('');
       setNewSubIcon('');
       setShowAddSubsection(false);
-    } catch {}
+      // Reload subsections
+      const subs = await supabaseService.getAllSubSections(selectedParentId);
+      const mapped = subs.map(sub => ({
+        id: sub.id, parentId: sub.section_id, name: sub.name || '',
+        icon: sub.icon || '', isVisible: sub.is_visible ?? true, order: sub.sort_order ?? 0,
+      }));
+      setSubsections(prev => {
+        const filtered = prev.filter(s => s.parentId !== selectedParentId);
+        return [...filtered, ...mapped].sort((a, b) => a.order - b.order);
+      });
+    } catch (error) {
+      console.error('Error adding subsection:', error);
+    }
   };
 
   const handleToggleSubsection = async (id: string) => {
     const sub = subsections.find(s => s.id === id);
     if (sub) {
-      try { await update(ref(database, `ownerSettings/subsections/${id}`), { isVisible: !sub.isVisible }); } catch {}
+      try {
+        await toggleSubSection(id, !sub.isVisible);
+        setSubsections(prev => prev.map(s => s.id === id ? { ...s, isVisible: !s.isVisible } : s));
+      } catch (error) {
+        console.error('Error toggling subsection:', error);
+      }
     }
   };
 
   const handleDeleteSubsection = async (id: string) => {
-    try { await remove(ref(database, `ownerSettings/subsections/${id}`)); } catch {}
+    try {
+      await deleteSubSection(id);
+      setSubsections(prev => prev.filter(s => s.id !== id));
+    } catch (error) {
+      console.error('Error deleting subsection:', error);
+    }
   };
 
   const handleSubIconChange = async (id: string, icon: string) => {
     try {
       const compressed = await compressBase64Image(icon);
-      await update(ref(database, `ownerSettings/subsections/${id}`), { icon: compressed });
-    } catch {}
+      await supabaseService.updateSubSection(id, { icon: compressed });
+      setSubsections(prev => prev.map(s => s.id === id ? { ...s, icon: compressed } : s));
+    } catch (error) {
+      console.error('Error updating sub icon:', error);
+    }
   };
 
   const handleSubNameChange = async (id: string, name: string) => {
-    try { await update(ref(database, `ownerSettings/subsections/${id}`), { name }); } catch {}
+    try {
+      await supabaseService.updateSubSection(id, { name, name_en: name });
+      setSubsections(prev => prev.map(s => s.id === id ? { ...s, name } : s));
+    } catch (error) {
+      console.error('Error updating sub name:', error);
+    }
   };
 
   // ===== Project Config Handlers =====
