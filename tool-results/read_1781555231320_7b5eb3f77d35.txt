@@ -1,0 +1,1474 @@
+     1→'use client';
+     2→
+     3→import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+     4→import { useTheme } from 'next-themes';
+     5→import { motion, AnimatePresence } from 'framer-motion';
+     6→import {
+     7→  Bell,
+     8→  Headphones,
+     9→  Eye,
+    10→  EyeOff,
+    11→  Send,
+    12→  Download,
+    13→  QrCode,
+    14→  HandCoins,
+    15→  ArrowUpRight,
+    16→  ArrowDownLeft,
+    17→  Wifi,
+    18→  Heart,
+    19→  Plus,
+    20→  ChevronLeft,
+    21→  RefreshCw,
+    22→  Sparkles,
+    23→  Clock,
+    24→  Zap,
+    25→  CreditCard,
+    26→  Smartphone,
+    27→  Gamepad2,
+    28→  ShoppingBag,
+    29→  ShieldAlert,
+    30→  Wallet,
+    31→  ArrowRightLeft,
+    32→  Phone,
+    33→  Globe,
+    34→  Receipt,
+    35→  FileText,
+    36→  ChevronRight,
+    37→  Gift,
+    38→  ScanLine,
+    39→  X,
+    40→  Zap as RechargeIcon,
+    41→} from 'lucide-react';
+    42→import { useAppStore } from '@/lib/store';
+    43→import { formatBalance, formatNumber, currencySymbols, currencyNames, currencyBadgeColors, timeAgo, transactionTypeLabels, transactionTypeColors } from '@/lib/utils';
+    44→import { LOGO_BASE64, RED_LOGO_FILTER } from '@/lib/logo';
+    45→import { serviceIcons } from '@/lib/service-icons';
+    46→import { productIcons } from '@/lib/product-icons';
+    47→import { database } from '@/lib/firebase';
+    48→import { ref, onValue } from 'firebase/database';
+    49→import { useAdminSettings } from '@/lib/use-admin-settings';
+    50→import { useFirebaseSync } from '@/lib/use-firebase-sync';
+    51→import {
+    52→  onForegroundNotification,
+    53→  handleNotificationTap,
+    54→  type ParsedNavigationTarget,
+    55→  type DeepLinkNotification,
+    56→} from '@/lib/notification-handler';
+    57→
+    58→// Visibility settings interface
+    59→interface VisibilitySettings {
+    60→  sections: Record<string, boolean>;
+    61→  providers: Record<string, boolean>;
+    62→  features: Record<string, boolean>;
+    63→}
+    64→
+    65→interface BalanceCard {
+    66→  currency: 'YER' | 'SAR' | 'USD';
+    67→  accentColor: string;
+    68→  accentColorEnd: string;
+    69→  glowColor: string;
+    70→  patternColor: string;
+    71→}
+    72→
+    73→interface Banner {
+    74→  id: string;
+    75→  title: string;
+    76→  description: string;
+    77→  imageUrl: string;
+    78→  isActive: boolean;
+    79→  order: number;
+    80→  url?: string;
+    81→  link?: string;
+    82→}
+    83→
+    84→function hexToRgb(hex: string): string {
+    85→  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    86→  return result ? `${parseInt(result[1], 16)},${parseInt(result[2], 16)},${parseInt(result[3], 16)}` : '255,255,255';
+    87→}
+    88→
+    89→// Quick action buttons for the home screen
+    90→const quickActions = [
+    91→  { id: 'send', label: 'إرسال', icon: Send, color: '#5C1A1B', gradient: 'linear-gradient(135deg, #5C1A1B, #3D0F10)' },
+    92→  { id: 'receive', label: 'استقبال', icon: Download, color: '#10B981', gradient: 'linear-gradient(135deg, #10B981, #059669)' },
+    93→  { id: 'qr-scan', label: 'مسح QR', icon: QrCode, color: '#3B82F6', gradient: 'linear-gradient(135deg, #3B82F6, #2563EB)' },
+    94→  { id: 'deposit', label: 'إيداع', icon: HandCoins, color: '#F59E0B', gradient: 'linear-gradient(135deg, #F59E0B, #D97706)' },
+    95→];
+    96→
+    97→// Services with custom SVG icons - each maps to a category-detail screen
+    98→const homeServices = [
+    99→  { id: 'telecom', label: 'الاتصالات', iconKey: 'telecom-category' },
+   100→  { id: 'entertainment', label: 'الترفيه', iconKey: 'entertainment-category' },
+   101→  { id: 'games', label: 'الألعاب', iconKey: 'games-category' },
+   102→  { id: 'gift-cards', label: 'بطاقات الهدايا', iconKey: 'gift-cards-category' },
+   103→  { id: 'digital-wallets', label: 'المحافظ الرقمية', iconKey: 'digital-wallets-category' },
+   104→  { id: 'escrow', label: 'الضمان', iconKey: 'escrow-category' },
+   105→  { id: 'usdt', label: 'USDT', iconKey: 'usdt-category' },
+   106→  { id: 'exchange', label: 'تبديل العملات', iconKey: 'currency-exchange' },
+   107→  { id: 'transfer', label: 'تحويل الأموال', iconKey: 'transfer' },
+   108→  { id: 'recharge', label: 'شحن رصيد', iconKey: 'recharge' },
+   109→  { id: 'service-providers', label: 'مزودين الخدمات', iconKey: 'providers-category' },
+   110→  { id: 'wallet-services', label: 'خدمات المحفظة', iconKey: 'wallet-services-category' },
+   111→];
+   112→
+   113→const promoItems = [
+   114→  { title: 'شحن رصيدك الآن واحصل على مكافأة!', desc: 'مكافأة تصل إلى 500 ر.ي عند كل شحن' },
+   115→  { title: 'عرض حصري على بطاقات ببجي', desc: 'خصم 15% على جميع شدات ببجي' },
+   116→  { title: 'أول تحويل مجاني', desc: 'استمتع بتحويل مجاني عند التسجيل' },
+   117→];
+   118→
+   119→// Animated counter hook
+   120→function useAnimatedCounter(target: number, duration = 800) {
+   121→  const [value, setValue] = useState(0);
+   122→  const prevTarget = useRef(0);
+   123→
+   124→  useEffect(() => {
+   125→    if (prevTarget.current === target) return;
+   126→    const start = prevTarget.current;
+   127→    const diff = target - start;
+   128→    const startTime = performance.now();
+   129→
+   130→    const animate = (currentTime: number) => {
+   131→      const elapsed = currentTime - startTime;
+   132→      const progress = Math.min(elapsed / duration, 1);
+   133→      const eased = 1 - Math.pow(1 - progress, 3);
+   134→      setValue(Math.round(start + diff * eased));
+   135→      if (progress < 1) {
+   136→        requestAnimationFrame(animate);
+   137→      } else {
+   138→        prevTarget.current = target;
+   139→      }
+   140→    };
+   141→
+   142→    requestAnimationFrame(animate);
+   143→  }, [target, duration]);
+   144→
+   145→  return value;
+   146→}
+   147→
+   148→function AnimatedBalance({ amount, currency, visible }: { amount: number; currency: string; visible: boolean }) {
+   149→  const animatedValue = useAnimatedCounter(amount);
+   150→  if (!visible) return <span className="text-white text-2xl font-bold tracking-wide">****</span>;
+   151→  return (
+   152→    <div className="flex items-baseline gap-1.5">
+   153→      <span className="text-white text-2xl font-bold tracking-wide">{formatBalance(animatedValue, currency)}</span>
+   154→      <span className="text-white/40 text-xs">{currencySymbols[currency]}</span>
+   155→    </div>
+   156→  );
+   157→}
+   158→
+   159→// Countdown timer component
+   160→function CountdownTimer({ targetDate }: { targetDate: Date }) {
+   161→  const [timeLeft, setTimeLeft] = useState({ hours: 0, minutes: 0, seconds: 0 });
+   162→
+   163→  useEffect(() => {
+   164→    const timer = setInterval(() => {
+   165→      const now = new Date().getTime();
+   166→      const distance = targetDate.getTime() - now;
+   167→      if (distance < 0) { clearInterval(timer); return; }
+   168→      setTimeLeft({
+   169→        hours: Math.floor(distance / (1000 * 60 * 60)),
+   170→        minutes: Math.floor((distance % (1000 * 60 * 60)) / (1000 * 60)),
+   171→        seconds: Math.floor((distance % (1000 * 60)) / 1000),
+   172→      });
+   173→    }, 1000);
+   174→    return () => clearInterval(timer);
+   175→  }, [targetDate]);
+   176→
+   177→  return (
+   178→    <div className="flex items-center gap-1.5 mt-2" dir="ltr">
+   179→      {[
+   180→        { val: timeLeft.hours, label: 'س' },
+   181→        { val: timeLeft.minutes, label: 'د' },
+   182→        { val: timeLeft.seconds, label: 'ث' },
+   183→      ].map((item, i) => (
+   184→        <div key={i} className="flex items-center gap-1">
+   185→          <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'rgba(255,255,255,0.12)' }}>
+   186→            <span className="text-white text-xs font-bold">{String(item.val).padStart(2, '0')}</span>
+   187→          </div>
+   188→          <span className="text-white/30 text-[9px]">{item.label}</span>
+   189→          {i < 2 && <span className="text-white/20 mx-0.5">:</span>}
+   190→        </div>
+   191→      ))}
+   192→    </div>
+   193→  );
+   194→}
+   195→
+   196→export default function HomeScreen() {
+   197→  const { theme } = useTheme();
+   198→  const isDark = theme === 'dark';
+   199→  const {
+   200→    user,
+   201→    balanceVisible,
+   202→    toggleBalance,
+   203→    setActiveScreen,
+   204→    notifications,
+   205→    setTransferOpen,
+   206→    setRequestMoneyOpen,
+   207→    setDrawerOpen,
+   208→    transactions,
+   209→    providers,
+   210→    categories,
+   211→    favorites,
+   212→    toggleFavorite,
+   213→    recentServices,
+   214→    setSelectedProvider,
+   215→    setOrderOpen,
+   216→    savingsGoals,
+   217→    cardColors,
+   218→    featureFlags,
+   219→    fbSections,
+   220→    fbApiProviders,
+   221→    fbVisibility,
+   222→  } = useAppStore();
+   223→
+   224→  const { refreshAll } = useAdminSettings();
+   225→  const { refreshUser } = useFirebaseSync();
+   226→
+   227→  // Derive balance cards from Firebase card colors in the store
+   228→  const balanceCards: BalanceCard[] = [
+   229→    { currency: 'YER', accentColor: cardColors.YER.primary, accentColorEnd: cardColors.YER.gradient, glowColor: `rgba(${hexToRgb(cardColors.YER.primary)},0.35)`, patternColor: 'rgba(255,255,255,0.06)' },
+   230→    { currency: 'SAR', accentColor: cardColors.SAR.primary, accentColorEnd: cardColors.SAR.gradient, glowColor: `rgba(${hexToRgb(cardColors.SAR.primary)},0.35)`, patternColor: 'rgba(255,255,255,0.06)' },
+   231→    { currency: 'USD', accentColor: cardColors.USD.primary, accentColorEnd: cardColors.USD.gradient, glowColor: `rgba(${hexToRgb(cardColors.USD.primary)},0.35)`, patternColor: 'rgba(255,255,255,0.06)' },
+   232→  ];
+   233→
+   234→  // Pull-to-refresh state
+   235→  const [isRefreshing, setIsRefreshing] = useState(false);
+   236→
+   237→  const handleRefresh = async () => {
+   238→    setIsRefreshing(true);
+   239→    try {
+   240→      await Promise.all([refreshAll(), refreshUser()]);
+   241→    } catch (e) {
+   242→      console.error('Refresh error:', e);
+   243→    } finally {
+   244→      setTimeout(() => setIsRefreshing(false), 500);
+   245→    }
+   246→  };
+   247→
+   248→  const [activeCardIndex, setActiveCardIndex] = useState(0);
+   249→  const containerRef = useRef<HTMLDivElement>(null);
+   250→  const [containerWidth, setContainerWidth] = useState(375);
+   251→  const [promoIndex, setPromoIndex] = useState(0);
+   252→  const [banners, setBanners] = useState<Banner[]>([]);
+   253→  const [bannerIndex, setBannerIndex] = useState(0);
+   254→  const [fabOpen, setFabOpen] = useState(false);
+   255→
+   256→  // ── Foreground notification deep-link banner ──
+   257→  const [notifBanner, setNotifBanner] = useState<{
+   258→    parsed: ParsedNavigationTarget;
+   259→    notification: DeepLinkNotification;
+   260→  } | null>(null);
+   261→  const notifBannerTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+   262→
+   263→  // Subscribe to foreground notification events
+   264→  useEffect(() => {
+   265→    const unsubscribe = onForegroundNotification((parsed, notification) => {
+   266→      // Clear any existing timer
+   267→      if (notifBannerTimerRef.current) {
+   268→        clearTimeout(notifBannerTimerRef.current);
+   269→      }
+   270→      setNotifBanner({ parsed, notification });
+   271→      // Auto-dismiss after 6 seconds
+   272→      notifBannerTimerRef.current = setTimeout(() => {
+   273→        setNotifBanner(null);
+   274→      }, 6000);
+   275→    });
+   276→    return () => {
+   277→      unsubscribe();
+   278→      if (notifBannerTimerRef.current) {
+   279→        clearTimeout(notifBannerTimerRef.current);
+   280→      }
+   281→    };
+   282→  }, []);
+   283→
+   284→  const dismissNotifBanner = useCallback(() => {
+   285→    setNotifBanner(null);
+   286→    if (notifBannerTimerRef.current) {
+   287→      clearTimeout(notifBannerTimerRef.current);
+   288→    }
+   289→  }, []);
+   290→
+   291→  const handleNotifBannerTap = useCallback(() => {
+   292→    if (!notifBanner) return;
+   293→    const { notification } = notifBanner;
+   294→    dismissNotifBanner();
+   295→    handleNotificationTap(notification);
+   296→  }, [notifBanner, dismissNotifBanner]);
+   297→
+   298→  // Touch/drag tracking
+   299→  const isDragging = useRef(false);
+   300→  const startX = useRef(0);
+   301→  const currentTranslate = useRef(0);
+   302→  const prevTranslate = useRef(0);
+   303→
+   304→  // Hidden admin access - tap greeting 5 times within 3 seconds
+   305→  const tapCount = useRef(0);
+   306→  const tapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+   307→
+   308→  const handleGreetingTap = () => {
+   309→    tapCount.current += 1;
+   310→    if (tapTimer.current) clearTimeout(tapTimer.current);
+   311→    if (tapCount.current >= 5) {
+   312→      tapCount.current = 0;
+   313→      setActiveScreen('admin');
+   314→      return;
+   315→    }
+   316→    tapTimer.current = setTimeout(() => {
+   317→      tapCount.current = 0;
+   318→    }, 3000);
+   319→  };
+   320→
+   321→  // Firebase banners listener
+   322→  useEffect(() => {
+   323→    const bannersRef = ref(database, 'adminSettings/banners');
+   324→    const unsubscribe = onValue(bannersRef, (snapshot) => {
+   325→      if (snapshot.exists()) {
+   326→        const data = snapshot.val();
+   327→        const bannersList: Banner[] = Object.keys(data)
+   328→          .map((key) => ({
+   329→            id: key,
+   330→            title: data[key].title || '',
+   331→            description: data[key].description || '',
+   332→            imageUrl: data[key].imageUrl || '',
+   333→            isActive: data[key].isActive ?? true,
+   334→            order: data[key].order ?? 0,
+   335→            link: data[key].link || undefined,
+   336→          }))
+   337→          .filter((b) => b.isActive)
+   338→          .sort((a, b) => a.order - b.order);
+   339→        setBanners(bannersList);
+   340→        setBannerIndex(0);
+   341→      } else {
+   342→        setBanners([]);
+   343→      }
+   344→    }, (error) => {
+   345→      console.error('Firebase banners error:', error);
+   346→    });
+   347→
+   348→    return () => unsubscribe();
+   349→  }, []);
+   350→
+   351→  // Use fbVisibility from store instead of local Firebase listener
+   352→  const visibilitySettings: VisibilitySettings = useMemo(() => ({
+   353→    sections: fbVisibility.sections || {},
+   354→    providers: fbVisibility.providers || {},
+   355→    features: fbVisibility.features || {},
+   356→  }), [fbVisibility]);
+   357→
+   358→  // Banner auto-rotation
+   359→  useEffect(() => {
+   360→    if (banners.length <= 1) return;
+   361→    const interval = setInterval(() => {
+   362→      setBannerIndex((prev) => (prev + 1) % banners.length);
+   363→    }, 5000);
+   364→    return () => clearInterval(interval);
+   365→  }, [banners.length]);
+   366→
+   367→  // Promo rotation (for static fallback)
+   368→  useEffect(() => {
+   369→    if (banners.length > 0) return; // Don't rotate static promo when banners exist
+   370→    const interval = setInterval(() => {
+   371→      setPromoIndex(prev => (prev + 1) % promoItems.length);
+   372→    }, 5000);
+   373→    return () => clearInterval(interval);
+   374→  }, [banners.length]);
+   375→
+   376→  const CARD_GAP = 12;
+   377→  const CARD_SIDE_PADDING = 32;
+   378→
+   379→  useEffect(() => {
+   380→    const updateWidth = () => {
+   381→      if (containerRef.current) {
+   382→        setContainerWidth(containerRef.current.offsetWidth);
+   383→      }
+   384→    };
+   385→    updateWidth();
+   386→    window.addEventListener('resize', updateWidth);
+   387→    return () => window.removeEventListener('resize', updateWidth);
+   388→  }, []);
+   389→
+   390→  const getCardWidth = useCallback(() => {
+   391→    return containerWidth * 0.78;
+   392→  }, [containerWidth]);
+   393→
+   394→  const getStepWidth = useCallback(() => {
+   395→    return getCardWidth() + CARD_GAP;
+   396→  }, [getCardWidth]);
+   397→
+   398→  const getGreeting = () => {
+   399→    const hour = new Date().getHours();
+   400→    if (hour < 12) return 'صباح الخير';
+   401→    return 'مساء الخير';
+   402→  };
+   403→
+   404→  const getBalance = (currency: string): number => {
+   405→    if (!user) return 0;
+   406→    const field = `balance${currency}` as keyof typeof user;
+   407→    return (user[field] as number) || 0;
+   408→  };
+   409→
+   410→  const unreadNotifCount = notifications.filter(n => !n.isRead).length;
+   411→  const recentTx = transactions.slice(0, 5);
+   412→
+   413→  const flashDealEnd = useRef(new Date(Date.now() + 6 * 60 * 60 * 1000));
+   414→
+   415→  // Snap to card
+   416→  const snapToCard = useCallback((index: number) => {
+   417→    const clamped = Math.max(0, Math.min(index, balanceCards.length - 1));
+   418→    setActiveCardIndex(clamped);
+   419→    const targetTranslate = -clamped * getStepWidth();
+   420→    currentTranslate.current = targetTranslate;
+   421→    prevTranslate.current = targetTranslate;
+   422→
+   423→    if (containerRef.current) {
+   424→      const track = containerRef.current.querySelector('[data-carousel-track]') as HTMLElement;
+   425→      if (track) {
+   426→        track.style.transform = `translateX(${targetTranslate}px)`;
+   427→        track.style.transition = 'transform 0.4s cubic-bezier(0.25, 1, 0.5, 1)';
+   428→      }
+   429→    }
+   430→  }, [getStepWidth]);
+   431→
+   432→  const setTrackPosition = useCallback((translateX: number) => {
+   433→    if (containerRef.current) {
+   434→      const track = containerRef.current.querySelector('[data-carousel-track]') as HTMLElement;
+   435→      if (track) {
+   436→        track.style.transform = `translateX(${translateX}px)`;
+   437→      }
+   438→    }
+   439→  }, []);
+   440→
+   441→  const handleTouchStart = useCallback((e: React.TouchEvent | React.MouseEvent) => {
+   442→    isDragging.current = true;
+   443→    startX.current = 'touches' in e ? e.touches[0].clientX : e.clientX;
+   444→    prevTranslate.current = currentTranslate.current;
+   445→
+   446→    if (containerRef.current) {
+   447→      const track = containerRef.current.querySelector('[data-carousel-track]') as HTMLElement;
+   448→      if (track) {
+   449→        track.style.transition = 'none';
+   450→      }
+   451→    }
+   452→  }, []);
+   453→
+   454→  const handleTouchMove = useCallback((e: React.TouchEvent | React.MouseEvent) => {
+   455→    if (!isDragging.current) return;
+   456→    const currentX = 'touches' in e ? e.touches[0].clientX : e.clientX;
+   457→    const diff = currentX - startX.current;
+   458→    const newTranslate = prevTranslate.current + diff;
+   459→
+   460→    const minTranslate = -(balanceCards.length - 1) * getStepWidth();
+   461→    const maxTranslate = 0;
+   462→
+   463→    let clampedTranslate = newTranslate;
+   464→    if (newTranslate > maxTranslate) {
+   465→      clampedTranslate = maxTranslate + (newTranslate - maxTranslate) * 0.3;
+   466→    } else if (newTranslate < minTranslate) {
+   467→      clampedTranslate = minTranslate + (newTranslate - minTranslate) * 0.3;
+   468→    }
+   469→
+   470→    currentTranslate.current = clampedTranslate;
+   471→    setTrackPosition(clampedTranslate);
+   472→  }, [getStepWidth, setTrackPosition]);
+   473→
+   474→  const handleTouchEnd = useCallback(() => {
+   475→    if (!isDragging.current) return;
+   476→    isDragging.current = false;
+   477→
+   478→    const movedBy = currentTranslate.current - prevTranslate.current;
+   479→    const stepWidth = getStepWidth();
+   480→    const threshold = stepWidth * 0.2;
+   481→
+   482→    let newIndex = activeCardIndex;
+   483→
+   484→    if (movedBy < -threshold) {
+   485→      newIndex = Math.min(activeCardIndex + 1, balanceCards.length - 1);
+   486→    } else if (movedBy > threshold) {
+   487→      newIndex = Math.max(activeCardIndex - 1, 0);
+   488→    }
+   489→
+   490→    const targetTranslate = -newIndex * stepWidth;
+   491→    currentTranslate.current = targetTranslate;
+   492→    prevTranslate.current = targetTranslate;
+   493→
+   494→    if (containerRef.current) {
+   495→      const track = containerRef.current.querySelector('[data-carousel-track]') as HTMLElement;
+   496→      if (track) {
+   497→        track.style.transition = 'transform 0.4s cubic-bezier(0.25, 1, 0.5, 1)';
+   498→        track.style.transform = `translateX(${targetTranslate}px)`;
+   499→      }
+   500→    }
+   501→
+   502→    setActiveCardIndex(newIndex);
+   503→  }, [activeCardIndex, getStepWidth]);
+   504→
+   505→  useEffect(() => {
+   506→    currentTranslate.current = 0;
+   507→    prevTranslate.current = 0;
+   508→  }, []);
+   509→
+   510→  const handleQuickAction = (actionId: string) => {
+   511→    const isVerified = user?.kycStatus === 'verified';
+   512→    switch (actionId) {
+   513→      case 'send':
+   514→        if (!isVerified) {
+   515→          useAppStore.getState().addNotification({
+   516→            id: Date.now().toString(),
+   517→            title: 'يرجى توثيق حسابك أولاً',
+   518→            body: 'لا يمكنك التحويل إلا بعد توثيق حسابك',
+   519→            type: 'security',
+   520→            isRead: false,
+   521→            createdAt: new Date().toISOString(),
+   522→          });
+   523→          setActiveScreen('kyc');
+   524→          return;
+   525→        }
+   526→        setTransferOpen(true);
+   527→        break;
+   528→      case 'receive':
+   529→        setActiveScreen('qr');
+   530→        break;
+   531→      case 'qr-scan':
+   532→        setActiveScreen('qr');
+   533→        break;
+   534→      case 'deposit':
+   535→        setActiveScreen('deposit');
+   536→        break;
+   537→    }
+   538→  };
+   539→
+   540→  const handleServiceClick = (serviceId: string) => {
+   541→    const isVerified = user?.kycStatus === 'verified';
+   542→
+   543→    // Block certain actions for unverified users
+   544→    const blockedActions = ['transfer', 'exchange', 'escrow'];
+   545→    if (blockedActions.includes(serviceId) && !isVerified) {
+   546→      useAppStore.getState().addNotification({
+   547→        id: Date.now().toString(),
+   548→        title: 'يرجى توثيق حسابك أولاً',
+   549→        body: 'لا يمكنك استخدام هذه الخدمة إلا بعد توثيق حسابك',
+   550→        type: 'security',
+   551→        isRead: false,
+   552→        createdAt: new Date().toISOString(),
+   553→      });
+   554→      setActiveScreen('kyc');
+   555→      return;
+   556→    }
+   557→
+   558→    switch (serviceId) {
+   559→      case 'transfer':
+   560→        setTransferOpen(true);
+   561→        break;
+   562→      case 'recharge':
+   563→        setActiveScreen('recharge');
+   564→        break;
+   565→      case 'digital-wallet':
+   566→      case 'digital-wallets':
+   567→        useAppStore.getState().setActiveTab('wallet');
+   568→        break;
+   569→      case 'crypto':
+   570→        useAppStore.getState().setSelectedCategory(serviceId);
+   571→        useAppStore.getState().setActiveScreen('category-detail');
+   572→        break;
+   573→      case 'crypto-invest':
+   574→      case 'investment':
+   575→        useAppStore.getState().setActiveScreen('investment');
+   576→        break;
+   577→      case 'currency-exchange':
+   578→      case 'exchange':
+   579→        setActiveScreen('exchange');
+   580→        break;
+   581→      case 'escrow':
+   582→        setActiveScreen('escrow');
+   583→        break;
+   584→      case 'entertainment':
+   585→      case 'games':
+   586→      case 'gift-cards':
+   587→      case 'usdt':
+   588→      case 'telecom':
+   589→        useAppStore.getState().setSelectedCategory(serviceId);
+   590→        useAppStore.getState().setActiveScreen('category-detail');
+   591→        break;
+   592→      default:
+   593→        // Firebase sections and other categories navigate to category-detail
+   594→        useAppStore.getState().setSelectedCategory(serviceId);
+   595→        useAppStore.getState().setActiveScreen('category-detail');
+   596→        break;
+   597→    }
+   598→  };
+   599→
+   600→  const handleBannerClick = (banner: Banner) => {
+   601→    if (banner.url) {
+   602→      window.open(banner.url, '_blank', 'noopener,noreferrer');
+   603→    } else if (banner.link) {
+   604→      window.open(banner.link, '_blank', 'noopener,noreferrer');
+   605→    }
+   606→  };
+   607→
+   608→  const dividerColor = isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.06)';
+   609→
+   610→  // ─── Build dynamic services from Firebase sections ─────────────────
+   611→  interface DynamicService {
+   612→    id: string;
+   613→    label: string;
+   614→    iconKey: string;
+   615→    firebaseIcon?: string; // base64 icon from Firebase
+   616→    color?: string;
+   617→  }
+   618→
+   619→  const dynamicServices = useMemo(() => {
+   620→    const sections = fbSections as Record<string, any> | null;
+   621→    const apiProviders = fbApiProviders as Record<string, any> | null;
+   622→    if (!sections || Object.keys(sections).length === 0) return homeServices as DynamicService[];
+   623→
+   624→    // Start with the hardcoded services (non-section ones like transfer, recharge, etc.)
+   625→    const staticOnly: DynamicService[] = homeServices.filter(s =>
+   626→      ['transfer', 'recharge', 'digital-wallet', 'currency-exchange'].includes(s.id)
+   627→    );
+   628→
+   629→    // Build services from Firebase sections
+   630→    const fbServices: DynamicService[] = [];
+   631→    const sortedSections = Object.values(sections)
+   632→      .filter((s: any) => s.isActive !== false && (fbVisibility.sections || {})[s.id] !== false)
+   633→      .sort((a: any, b: any) => (a.sortOrder ?? 999) - (b.sortOrder ?? 999));
+   634→
+   635→    for (const section of sortedSections) {
+   636→      const s = section as any;
+   637→      // Determine icon key as fallback
+   638→      let iconKey = s.id;
+   639→      if (s.apiProviderId && apiProviders) {
+   640→        iconKey = 'providers-category';
+   641→      }
+   642→      if (s.type === 'wallet-services' || s.id === 'wallet-services') {
+   643→        iconKey = 'wallet-services-category';
+   644→      }
+   645→
+   646→      fbServices.push({
+   647→        id: s.id,
+   648→        label: s.name || s.id,
+   649→        iconKey,
+   650→        firebaseIcon: s.icon || undefined, // base64 icon from Firebase
+   651→        color: s.color || undefined,
+   652→      });
+   653→    }
+   654→
+   655→    // Merge: Firebase sections first, then static services not already covered
+   656→    const sectionIds = new Set(fbServices.map(s => s.id));
+   657→    const remaining: DynamicService[] = homeServices.filter(s => !sectionIds.has(s.id) && !['transfer', 'recharge', 'digital-wallet', 'currency-exchange'].includes(s.id));
+   658→
+   659→    return [...fbServices, ...remaining, ...staticOnly];
+   660→  }, [fbSections, fbApiProviders, fbVisibility]);
+   661→
+   662→  return (
+   663→    <div className="pb-4">
+   664→      {/* ========================================
+   665→          HEADER - Jaib Style
+   666→          Right: Greeting + Name
+   667→          Left: Notifications bell + Support
+   668→          ======================================== */}
+   669→      <motion.div
+   670→        initial={{ opacity: 0, y: -10 }}
+   671→        animate={{ opacity: 1, y: 0 }}
+   672→        transition={{ duration: 0.4 }}
+   673→        className="px-4 pt-4 pb-2"
+   674→      >
+   675→        <div className="flex items-center justify-between" style={{ height: 56 }}>
+   676→          {/* Right side - Logo + Greeting */}
+   677→          <div className="flex items-center gap-3">
+   678→            <div
+   679→              className="w-10 h-10 rounded-xl overflow-hidden flex items-center justify-center"
+   680→              style={{ background: isDark ? 'rgba(92,26,27,0.08)' : 'rgba(92,26,27,0.06)', boxShadow: '0 2px 8px rgba(92,26,27,0.15)' }}
+   681→            >
+   682→              <img src={LOGO_BASE64} alt="الجنوب" className="w-full h-full object-cover" style={{ filter: RED_LOGO_FILTER }} />
+   683→            </div>
+   684→            <button onClick={handleGreetingTap} className="active:scale-95 transition-transform">
+   685→              <h1 className="text-base font-bold" style={{ color: isDark ? '#FFFFFF' : '#1a1a1a' }}>
+   686→                {getGreeting()}، {user?.name || 'مستخدم'}
+   687→              </h1>
+   688→              <p className="text-[11px]" style={{ color: isDark ? '#666' : '#999' }}>محفظة الجنوب</p>
+   689→            </button>
+   690→          </div>
+   691→
+   692→          {/* Left side - Gift Code + Notifications + Support */}
+   693→          <div className="flex items-center gap-2">
+   694→            <button
+   695→              onClick={() => setActiveScreen('promo')}
+   696→              className="w-10 h-10 rounded-xl flex items-center justify-center active:scale-95 transition-transform"
+   697→              style={{ background: 'rgba(92,26,27,0.08)' }}
+   698→              title="كود هدية"
+   699→            >
+   700→              <Gift size={20} strokeWidth={1.5} color="#5C1A1B" />
+   701→            </button>
+   702→            <button
+   703→              onClick={() => setActiveScreen('notifications')}
+   704→              className="relative w-10 h-10 rounded-xl flex items-center justify-center active:scale-95 transition-transform"
+   705→              style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}
+   706→            >
+   707→              <Bell size={20} strokeWidth={1.5} color={isDark ? '#CCC' : '#666'} />
+   708→              {unreadNotifCount > 0 && (
+   709→                <span
+   710→                  className="absolute -top-0.5 -right-0.5 min-w-[16px] h-[16px] rounded-full flex items-center justify-center text-[9px] font-bold text-white px-1"
+   711→                  style={{ background: '#5C1A1B' }}
+   712→                >
+   713→                  {unreadNotifCount}
+   714→                </span>
+   715→              )}
+   716→            </button>
+   717→            <button
+   718→              onClick={handleRefresh}
+   719→              disabled={isRefreshing}
+   720→              className="w-10 h-10 rounded-xl flex items-center justify-center active:scale-95 transition-transform"
+   721→              style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}
+   722→              title="تحديث"
+   723→            >
+   724→              <RefreshCw size={20} strokeWidth={1.5} color={isDark ? '#CCC' : '#666'} className={isRefreshing ? 'animate-spin' : ''} />
+   725→            </button>
+   726→            <button
+   727→              onClick={() => setActiveScreen('support')}
+   728→              className="w-10 h-10 rounded-xl flex items-center justify-center active:scale-95 transition-transform"
+   729→              style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}
+   730→            >
+   731→              <Headphones size={20} strokeWidth={1.5} color={isDark ? '#CCC' : '#666'} />
+   732→            </button>
+   733→          </div>
+   734→        </div>
+   735→      </motion.div>
+   736→
+   737→      {/* ── Foreground Notification Deep-Link Banner ── */}
+   738→      <AnimatePresence>
+   739→        {notifBanner && (
+   740→          <motion.div
+   741→            key="notif-deeplink-banner"
+   742→            initial={{ opacity: 0, y: -30, height: 0 }}
+   743→            animate={{ opacity: 1, y: 0, height: 'auto' }}
+   744→            exit={{ opacity: 0, y: -30, height: 0 }}
+   745→            transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+   746→            className="px-4 overflow-hidden"
+   747→          >
+   748→            <div
+   749→              onClick={handleNotifBannerTap}
+   750→              className="flex items-center gap-3 p-3 rounded-2xl cursor-pointer active:scale-[0.98] transition-transform"
+   751→              style={{
+   752→                background: isDark
+   753→                  ? 'linear-gradient(135deg, #1A1A1A, #222)'
+   754→                  : 'linear-gradient(135deg, #FFFFFF, #F9F9F9)',
+   755→                border: `1px solid ${isDark ? 'rgba(92,26,27,0.3)' : 'rgba(92,26,27,0.15)'}`,
+   756→                boxShadow: isDark
+   757→                  ? '0 4px 16px rgba(92,26,27,0.2)'
+   758→                  : '0 4px 16px rgba(92,26,27,0.08)',
+   759→              }}
+   760→            >
+   761→              {/* Icon */}
+   762→              <div
+   763→                className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+   764→                style={{ background: 'rgba(92,26,27,0.12)' }}
+   765→              >
+   766→                <Bell size={18} strokeWidth={1.5} color="#5C1A1B" />
+   767→              </div>
+   768→
+   769→              {/* Content */}
+   770→              <div className="flex-1 min-w-0">
+   771→                <p
+   772→                  className="text-[12px] font-bold truncate"
+   773→                  style={{ color: isDark ? '#FFF' : '#1a1a1a' }}
+   774→                >
+   775→                  {notifBanner.notification.title}
+   776→                </p>
+   777→                <p
+   778→                  className="text-[10px] truncate mt-0.5"
+   779→                  style={{ color: isDark ? '#999' : '#666' }}
+   780→                >
+   781→                  {notifBanner.notification.body}
+   782→                </p>
+   783→                {/* Deep-link target label */}
+   784→                {notifBanner.parsed.type !== 'unknown' && (
+   785→                  <div
+   786→                    className="flex items-center gap-1 mt-1 w-fit"
+   787→                    style={{ background: 'rgba(92,26,27,0.08)', borderRadius: 6, padding: '2px 6px' }}
+   788→                  >
+   789→                    <ArrowUpRight size={8} strokeWidth={2} color="#5C1A1B" />
+   790→                    <span className="text-[8px] font-medium" style={{ color: '#5C1A1B' }}>
+   791→                      {notifBanner.parsed.type === 'url' ? 'رابط خارجي' :
+   792→                        notifBanner.parsed.type === 'transaction' ? 'المعاملة' :
+   793→                        notifBanner.parsed.type === 'deposit' ? 'الإيداع' :
+   794→                        notifBanner.parsed.type === 'withdraw' ? 'السحب' :
+   795→                        notifBanner.parsed.type === 'order' ? 'الطلب' :
+   796→                        notifBanner.parsed.type === 'kyc' ? 'التوثيق' :
+   797→                        notifBanner.parsed.type === 'exchange' ? 'التحويل' :
+   798→                        notifBanner.parsed.type === 'services' ? 'الخدمات' :
+   799→                        notifBanner.parsed.type === 'promo' ? 'العروض' :
+   800→                        notifBanner.parsed.type === 'support' ? 'الدعم' :
+   801→                        notifBanner.parsed.type === 'profile' ? 'الحساب' :
+   802→                        notifBanner.parsed.type}
+   803→                    </span>
+   804→                  </div>
+   805→                )}
+   806→              </div>
+   807→
+   808→              {/* Dismiss button */}
+   809→              <button
+   810→                onClick={(e) => {
+   811→                  e.stopPropagation();
+   812→                  dismissNotifBanner();
+   813→                }}
+   814→                className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 opacity-50 hover:opacity-100 transition-opacity"
+   815→                style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}
+   816→              >
+   817→                <X size={14} strokeWidth={1.5} color={isDark ? '#888' : '#AAA'} />
+   818→              </button>
+   819→            </div>
+   820→          </motion.div>
+   821→        )}
+   822→      </AnimatePresence>
+   823→
+   824→      {/* ========================================
+   825→          BALANCE CARD CAROUSEL - Jaib Style
+   826→          Red card with "رصيدك" text + eye toggle
+   827→          ======================================== */}
+   828→      <div className="relative z-20">
+   829→        <div
+   830→          ref={containerRef}
+   831→          className="relative overflow-hidden"
+   832→          style={{ touchAction: 'pan-y', paddingLeft: CARD_SIDE_PADDING, paddingRight: CARD_SIDE_PADDING }}
+   833→          dir="ltr"
+   834→        >
+   835→          <div
+   836→            data-carousel-track=""
+   837→            className="flex cursor-grab active:cursor-grabbing select-none"
+   838→            style={{ gap: CARD_GAP }}
+   839→            onTouchStart={handleTouchStart}
+   840→            onTouchMove={handleTouchMove}
+   841→            onTouchEnd={handleTouchEnd}
+   842→            onMouseDown={handleTouchStart}
+   843→            onMouseMove={handleTouchMove}
+   844→            onMouseUp={handleTouchEnd}
+   845→            onMouseLeave={() => { if (isDragging.current) handleTouchEnd(); }}
+   846→          >
+   847→            {balanceCards.map((card, index) => (
+   848→              <div
+   849→                key={card.currency}
+   850→                className="shrink-0 relative overflow-hidden select-none"
+   851→                style={{
+   852→                  width: getCardWidth(),
+   853→                  height: index === activeCardIndex ? 195 : 190,
+   854→                  borderRadius: 20,
+   855→                  background: index === activeCardIndex
+   856→                    ? `linear-gradient(145deg, ${card.accentColor}DD, ${card.accentColorEnd}CC)`
+   857→                    : 'rgba(255, 255, 255, 0.03)',
+   858→                  backdropFilter: index === activeCardIndex ? 'blur(30px)' : 'blur(20px)',
+   859→                  WebkitBackdropFilter: index === activeCardIndex ? 'blur(30px)' : 'blur(20px)',
+   860→                  border: index === activeCardIndex
+   861→                    ? `1px solid rgba(${hexToRgb(card.accentColor)}, 0.5)`
+   862→                    : '1px solid rgba(255, 255, 255, 0.06)',
+   863→                  boxShadow: index === activeCardIndex
+   864→                    ? `0 12px 40px ${card.glowColor}, inset 0 1px 0 rgba(255,255,255,0.2)`
+   865→                    : '0 4px 16px rgba(0, 0, 0, 0.1)',
+   866→                  transform: index === activeCardIndex ? 'scale(1)' : 'scale(0.92)',
+   867→                  opacity: index === activeCardIndex ? 1 : 0.5,
+   868→                  transition: 'transform 0.4s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.4s ease, box-shadow 0.4s ease, background 0.4s ease, border 0.4s ease, height 0.3s ease',
+   869→                }}
+   870→                onClick={() => snapToCard(index)}
+   871→                dir="rtl"
+   872→              >
+   873→                {/* Logo Watermark */}
+   874→                <img src={LOGO_BASE64} alt="" className="absolute bottom-1 left-1 w-24 h-24 object-contain opacity-[0.03] pointer-events-none select-none" aria-hidden="true" />
+   875→                <div className="absolute inset-0 shimmer pointer-events-none" />
+   876→                <svg className="absolute inset-0 w-full h-full" xmlns="http://www.w3.org/2000/svg">
+   877→                  <defs>
+   878→                    <pattern id={`grid-${card.currency}`} width="40" height="40" patternUnits="userSpaceOnUse">
+   879→                      <circle cx="20" cy="20" r="1" fill={card.patternColor} />
+   880→                    </pattern>
+   881→                  </defs>
+   882→                  <rect width="100%" height="100%" fill={`url(#grid-${card.currency})`} />
+   883→                </svg>
+   884→                <div className="absolute -top-16 -right-16 w-40 h-40 rounded-full" style={{ background: index === activeCardIndex ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.03)' }} />
+   885→                <div className="absolute -bottom-10 -left-10 w-32 h-32 rounded-full" style={{ background: index === activeCardIndex ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.02)' }} />
+   886→                <svg className="absolute bottom-0 left-0 w-full" viewBox="0 0 300 40" preserveAspectRatio="none" style={{ height: '35px' }}>
+   887→                  <path d="M0,30 C50,10 100,40 150,25 C200,10 250,35 300,20 L300,40 L0,40 Z" fill={index === activeCardIndex ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.02)'} />
+   888→                </svg>
+   889→                {/* Animated gradient border glow for active card */}
+   890→                {index === activeCardIndex && (
+   891→                  <div
+   892→                    className="absolute inset-0 pointer-events-none"
+   893→                    style={{
+   894→                      borderRadius: 20,
+   895→                      border: `1px solid rgba(${hexToRgb(card.accentColor)}, 0.15)`,
+   896→                      boxShadow: `inset 0 0 20px rgba(${hexToRgb(card.accentColor)}, 0.1), 0 0 30px rgba(${hexToRgb(card.accentColor)}, 0.08)`,
+   897→                      animation: 'pulse 3s ease-in-out infinite',
+   898→                    }}
+   899→                  />
+   900→                )}
+   901→
+   902→                {/* Card Content - Jaib Style: Logo + Branding + Balance */}
+   903→                <div className="relative z-10 h-full flex flex-col justify-between p-6">
+   904→                  {/* Top Row - Logo + Brand Name (right) | Eye toggle (left) */}
+   905→                  <div className="flex items-center justify-between">
+   906→                    {/* Logo + Brand Name - Jaib style */}
+   907→                    <div className="flex items-center gap-2.5">
+   908→                      <div
+   909→                        className="w-9 h-9 rounded-lg overflow-hidden flex items-center justify-center shrink-0"
+   910→                        style={{
+   911→                          background: 'rgba(255,255,255,0.12)',
+   912→                          boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+   913→                        }}
+   914→                      >
+   915→                        {/* White logo on colored card background */}
+   916→                        <img src={LOGO_BASE64} alt="الجنوب" className="w-full h-full object-cover" />
+   917→                      </div>
+   918→                      <div className="flex flex-col leading-none">
+   919→                        <span className="text-white text-sm font-bold tracking-wide">الجنوب</span>
+   920→                        <span className="text-white/40 text-[9px] font-medium mt-0.5" dir="ltr">South Wallet</span>
+   921→                      </div>
+   922→                    </div>
+   923→                    {/* Eye toggle + Wifi */}
+   924→                    <div className="flex items-center gap-2">
+   925→                      <Wifi size={12} strokeWidth={1.5} color="rgba(255,255,255,0.25)" />
+   926→                      <button onClick={(e) => { e.stopPropagation(); toggleBalance(); }}>
+   927→                        {balanceVisible ? (
+   928→                          <Eye size={14} strokeWidth={1.5} color="rgba(255,255,255,0.4)" />
+   929→                        ) : (
+   930→                          <EyeOff size={14} strokeWidth={1.5} color="rgba(255,255,255,0.4)" />
+   931→                        )}
+   932→                      </button>
+   933→                    </div>
+   934→                  </div>
+   935→
+   936→                  {/* Balance Section - Jaib style: "رصيدك الآن" label */}
+   937→                  <div className="flex flex-col items-start">
+   938→                    <p className="text-white/50 text-[12px] mb-1">رصيدك الآن</p>
+   939→                    <AnimatedBalance amount={getBalance(card.currency)} currency={card.currency} visible={balanceVisible} />
+   940→                  </div>
+   941→
+   942→                  {/* Bottom Row - Currency badge + User ID */}
+   943→                  <div className="flex items-center justify-between">
+   944→                    <div className="flex items-center gap-2">
+   945→                      <div className="w-9 h-6 rounded-md" style={{ background: 'linear-gradient(135deg, rgba(255,215,0,0.35) 0%, rgba(255,215,0,0.15) 100%)', border: '1px solid rgba(255,215,0,0.15)' }} />
+   946→                      <span className="text-[10px] px-2 py-0.5 rounded font-bold text-white" style={{ background: currencyBadgeColors[card.currency] }}>
+   947→                        {card.currency}
+   948→                      </span>
+   949→                    </div>
+   950→                    {/* Card number dots - Jaib style */}
+   951→                    <div className="flex items-center gap-1.5" dir="ltr">
+   952→                      {[0,1,2,3].map((i) => (
+   953→                        <div key={i} className="w-[6px] h-[6px] rounded-full" style={{ background: 'rgba(255,255,255,0.35)' }} />
+   954→                      ))}
+   955→                      <span className="text-white/35 text-[10px] font-mono mr-1">
+   956→                        {user?.userId || '------'}
+   957→                      </span>
+   958→                    </div>
+   959→                  </div>
+   960→                </div>
+   961→              </div>
+   962→            ))}
+   963→          </div>
+   964→
+   965→          {/* Pagination Dots - Tiny Circles */}
+   966→          <div className="flex items-center justify-center gap-1.5 mt-4" dir="rtl">
+   967→            {balanceCards.map((_, index) => (
+   968→              <div
+   969→                key={index}
+   970→                className="rounded-full transition-all duration-300 cursor-pointer"
+   971→                onClick={() => snapToCard(index)}
+   972→                style={{
+   973→                  width: activeCardIndex === index ? '6px' : '4px',
+   974→                  height: activeCardIndex === index ? '6px' : '4px',
+   975→                  borderRadius: '50%',
+   976→                  background: activeCardIndex === index ? balanceCards[index].accentColor : (isDark ? '#333' : '#D4D4D4'),
+   977→                }}
+   978→              />
+   979→            ))}
+   980→          </div>
+   981→        </div>
+   982→      </div>
+   983→
+   984→      {/* ========================================
+   985→          QUICK ACTIONS - Circular Buttons
+   986→          Send, Receive, QR Scan, Deposit
+   987→          ======================================== */}
+   988→      <motion.div
+   989→        initial={{ opacity: 0, y: 10 }}
+   990→        animate={{ opacity: 1, y: 0 }}
+   991→        transition={{ delay: 0.1, duration: 0.4 }}
+   992→        className="px-4 mt-4"
+   993→      >
+   994→        <div className="flex items-center justify-around">
+   995→          {quickActions.map((action, index) => (
+   996→            <motion.button
+   997→              key={action.id}
+   998→              initial={{ opacity: 0, y: 12 }}
+   999→              animate={{ opacity: 1, y: 0 }}
+  1000→              transition={{ delay: 0.05 * index }}
+  1001→              whileTap={{ scale: 0.92 }}
+  1002→              onClick={() => handleQuickAction(action.id)}
+  1003→              className="flex flex-col items-center gap-2"
+  1004→            >
+  1005→              <div
+  1006→                className="w-14 h-14 rounded-full flex items-center justify-center"
+  1007→                style={{
+  1008→                  background: action.gradient,
+  1009→                  boxShadow: `0 4px 16px ${action.color}40`,
+  1010→                }}
+  1011→              >
+  1012→                <action.icon size={22} color="#FFF" strokeWidth={1.8} />
+  1013→              </div>
+  1014→              <span
+  1015→                className="text-[11px] font-medium"
+  1016→                style={{ color: isDark ? '#CCC' : '#444' }}
+  1017→              >
+  1018→                {action.label}
+  1019→              </span>
+  1020→            </motion.button>
+  1021→          ))}
+  1022→        </div>
+  1023→      </motion.div>
+  1024→
+  1025→      {/* ========================================
+  1026→          BANNER CAROUSEL / PROMO BANNER
+  1027→          Dynamic banners from Firebase, fallback to static promo
+  1028→          ======================================== */}
+  1029→      <motion.div
+  1030→        initial={{ opacity: 0, y: 15 }}
+  1031→        animate={{ opacity: 1, y: 0 }}
+  1032→        transition={{ delay: 0.15, duration: 0.4 }}
+  1033→        className="px-4 mt-4"
+  1034→      >
+  1035→        {banners.length > 0 ? (
+  1036→          /* Dynamic Banner Carousel from Firebase */
+  1037→          <div
+  1038→            className="rounded-2xl relative overflow-hidden cursor-pointer"
+  1039→            style={{
+  1040→              height: 110,
+  1041→              borderRadius: 16,
+  1042→              boxShadow: '0 4px 16px rgba(92,26,27,0.2)',
+  1043→            }}
+  1044→            onClick={() => handleBannerClick(banners[bannerIndex])}
+  1045→          >
+  1046→            {/* Banner Image Background */}
+  1047→            {banners[bannerIndex]?.imageUrl && (
+  1048→              <img
+  1049→                src={banners[bannerIndex].imageUrl}
+  1050→                alt={banners[bannerIndex].title}
+  1051→                className="absolute inset-0 w-full h-full object-cover"
+  1052→              />
+  1053→            )}
+  1054→            {/* Overlay gradient */}
+  1055→            <div
+  1056→              className="absolute inset-0"
+  1057→              style={{
+  1058→                background: banners[bannerIndex]?.imageUrl
+  1059→                  ? 'linear-gradient(145deg, rgba(92,26,27,0.85) 0%, rgba(61,15,16,0.75) 60%, rgba(49,27,146,0.65) 100%)'
+  1060→                  : 'linear-gradient(145deg, #5C1A1B 0%, #3D0F10 60%, #2D0A0A 100%)',
+  1061→              }}
+  1062→            />
+  1063→            <div className="absolute -top-8 -right-8 w-28 h-28 rounded-full" style={{ background: 'rgba(255,255,255,0.06)' }} />
+  1064→            <div className="absolute -bottom-6 -left-6 w-24 h-24 rounded-full" style={{ background: 'rgba(255,255,255,0.04)' }} />
+  1065→            <img src={LOGO_BASE64} alt="" className="absolute left-2 bottom-1 w-20 h-20 object-contain opacity-[0.06] pointer-events-none" aria-hidden="true" />
+  1066→
+  1067→            <div className="relative z-10 h-full flex items-center px-4">
+  1068→              <div className="flex-1">
+  1069→                <div className="flex items-center gap-2 mb-1.5">
+  1070→                  <span className="text-[9px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1" style={{ background: 'rgba(255,255,255,0.2)', color: '#FFF' }}>
+  1071→                    <Sparkles size={8} />
+  1072→                    عرض خاص
+  1073→                  </span>
+  1074→                </div>
+  1075→                <AnimatePresence mode="wait">
+  1076→                  <motion.div
+  1077→                    key={bannerIndex}
+  1078→                    initial={{ opacity: 0, x: 20 }}
+  1079→                    animate={{ opacity: 1, x: 0 }}
+  1080→                    exit={{ opacity: 0, x: -20 }}
+  1081→                    transition={{ duration: 0.3 }}
+  1082→                  >
+  1083→                    <h3 className="font-bold text-[13px] text-white leading-tight">{banners[bannerIndex]?.title}</h3>
+  1084→                    <p className="text-[11px] mt-0.5 text-white/50">{banners[bannerIndex]?.description}</p>
+  1085→                  </motion.div>
+  1086→                </AnimatePresence>
+  1087→              </div>
+  1088→            </div>
+  1089→
+  1090→            {/* Banner Dot Indicators */}
+  1091→            {banners.length > 1 && (
+  1092→              <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1">
+  1093→                {banners.map((_, i) => (
+  1094→                  <button
+  1095→                    key={i}
+  1096→                    onClick={(e) => { e.stopPropagation(); setBannerIndex(i); }}
+  1097→                    className="rounded-full transition-all duration-300"
+  1098→                    style={{ width: i === bannerIndex ? '6px' : '4px', height: i === bannerIndex ? '6px' : '4px', borderRadius: '50%', background: i === bannerIndex ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.3)' }}
+  1099→                  />
+  1100→                ))}
+  1101→              </div>
+  1102→            )}
+  1103→          </div>
+  1104→        ) : (
+  1105→          /* Static Promo Banner (fallback) */
+  1106→          <div
+  1107→            className="rounded-2xl relative overflow-hidden"
+  1108→            style={{
+  1109→              height: 90,
+  1110→              background: 'linear-gradient(145deg, #5C1A1B 0%, #3D0F10 60%, #2D0A0A 100%)',
+  1111→              borderRadius: 16,
+  1112→              boxShadow: '0 4px 16px rgba(92,26,27,0.2)',
+  1113→            }}
+  1114→          >
+  1115→            <div className="absolute -top-8 -right-8 w-28 h-28 rounded-full" style={{ background: 'rgba(255,255,255,0.06)' }} />
+  1116→            <div className="absolute -bottom-6 -left-6 w-24 h-24 rounded-full" style={{ background: 'rgba(255,255,255,0.04)' }} />
+  1117→            <img src={LOGO_BASE64} alt="" className="absolute left-2 bottom-1 w-20 h-20 object-contain opacity-[0.06] pointer-events-none" aria-hidden="true" />
+  1118→
+  1119→            <div className="relative z-10 h-full flex items-center px-4">
+  1120→              <div className="flex-1">
+  1121→                <div className="flex items-center gap-2 mb-1.5">
+  1122→                  <span className="text-[9px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1" style={{ background: 'rgba(255,255,255,0.2)', color: '#FFF' }}>
+  1123→                    <Sparkles size={8} />
+  1124→                    عرض خاص
+  1125→                  </span>
+  1126→                  <span className="text-[9px] px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.7)' }}>
+  1127→                    <Clock size={8} className="inline ml-0.5" />
+  1128→                    محدود
+  1129→                  </span>
+  1130→                </div>
+  1131→                <AnimatePresence mode="wait">
+  1132→                  <motion.div
+  1133→                    key={promoIndex}
+  1134→                    initial={{ opacity: 0, x: 20 }}
+  1135→                    animate={{ opacity: 1, x: 0 }}
+  1136→                    exit={{ opacity: 0, x: -20 }}
+  1137→                    transition={{ duration: 0.3 }}
+  1138→                  >
+  1139→                    <h3 className="font-bold text-[13px] text-white leading-tight">{promoItems[promoIndex].title}</h3>
+  1140→                    <p className="text-[11px] mt-0.5 text-white/50">{promoItems[promoIndex].desc}</p>
+  1141→                  </motion.div>
+  1142→                </AnimatePresence>
+  1143→              </div>
+  1144→              <div className="shrink-0 mr-2">
+  1145→                <CountdownTimer targetDate={flashDealEnd.current} />
+  1146→              </div>
+  1147→            </div>
+  1148→
+  1149→            <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1">
+  1150→              {promoItems.map((_, i) => (
+  1151→                <div key={i} className="rounded-full transition-all duration-300" style={{ width: i === promoIndex ? '6px' : '4px', height: i === promoIndex ? '6px' : '4px', borderRadius: '50%', background: i === promoIndex ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.3)' }} />
+  1152→              ))}
+  1153→            </div>
+  1154→          </div>
+  1155→        )}
+  1156→      </motion.div>
+  1157→
+  1158→      {/* ========================================
+  1159→          SERVICES GRID - Jaib Style (3x3)
+  1160→          Red + Blue icon colors matching Jaib
+  1161→          ======================================== */}
+  1162→      <motion.div
+  1163→        initial={{ opacity: 0, y: 15 }}
+  1164→        animate={{ opacity: 1, y: 0 }}
+  1165→        transition={{ delay: 0.25, duration: 0.4 }}
+  1166→        className="px-4 mt-5"
+  1167→      >
+  1168→        <div className="flex items-center justify-between mb-3">
+  1169→          <h3 className="text-sm font-bold" style={{ color: isDark ? '#FFFFFF' : '#1a1a1a' }}>الخدمات</h3>
+  1170→          <button
+  1171→            onClick={() => useAppStore.getState().setActiveTab('services')}
+  1172→            className="text-xs font-medium flex items-center gap-0.5"
+  1173→            style={{ color: '#5C1A1B' }}
+  1174→          >
+  1175→            المزيد
+  1176→            <ChevronLeft size={14} strokeWidth={1.5} />
+  1177→          </button>
+  1178→        </div>
+  1179→
+  1180→        <div className="grid grid-cols-3 gap-3">
+  1181→          {dynamicServices.filter(service => {
+  1182→            // Hide if visibility settings hide it
+  1183→            if (visibilitySettings.sections[service.id] === false) return false;
+  1184→            // Hide if feature flag disables it
+  1185→            if (service.id === 'transfer' && !featureFlags.transfersEnabled) return false;
+  1186→            if (service.id === 'recharge' && !featureFlags.rechargeEnabled) return false;
+  1187→            if (service.id === 'crypto' && !featureFlags.cryptoEnabled) return false;
+  1188→            if (service.id === 'crypto-invest' && !featureFlags.investmentEnabled) return false;
+  1189→            if (service.id === 'currency-exchange' && !featureFlags.exchangeEnabled) return false;
+  1190→            if (service.id === 'electricity' && !featureFlags.billsEnabled) return false;
+  1191→            return true;
+  1192→          }).map((service, index) => {
+  1193→            // Prefer Firebase base64 icon, then fallback to hardcoded icon maps
+  1194→            const fallbackIconSrc = productIcons[service.iconKey] || serviceIcons[service.iconKey];
+  1195→            const firebaseIcon = (service as any).firebaseIcon;
+  1196→            const sectionColor = (service as any).color;
+  1197→            return (
+  1198→              <motion.button
+  1199→                key={service.id}
+  1200→                initial={{ opacity: 0, y: 12 }}
+  1201→                animate={{ opacity: 1, y: 0 }}
+  1202→                transition={{ delay: 0.03 * index }}
+  1203→                onClick={() => handleServiceClick(service.id)}
+  1204→                whileTap={{ scale: 0.96 }}
+  1205→                className="flex flex-col items-center justify-center gap-2.5 py-4 px-3"
+  1206→                style={{
+  1207→                  background: isDark ? '#1A1A1A' : '#FFFFFF',
+  1208→                  borderRadius: 16,
+  1209→                  border: `1px solid ${isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)'}`,
+  1210→                  boxShadow: isDark ? 'none' : '0 1px 4px rgba(0,0,0,0.05)',
+  1211→                  transition: 'box-shadow 0.2s ease, transform 0.2s ease',
+  1212→                }}
+  1213→              >
+  1214→                <div
+  1215→                  className="w-11 h-11 rounded-2xl overflow-hidden flex items-center justify-center"
+  1216→                  style={{ background: (firebaseIcon || fallbackIconSrc) ? 'transparent' : (sectionColor || '#5C1A1B') + '15' }}
+  1217→                >
+  1218→                  {firebaseIcon ? (
+  1219→                    <img src={firebaseIcon} alt={service.label} className="w-full h-full object-contain" />
+  1220→                  ) : fallbackIconSrc ? (
+  1221→                    <img src={fallbackIconSrc} alt={service.label} className="w-full h-full object-contain" />
+  1222→                  ) : (
+  1223→                    <div className="w-6 h-6 rounded-lg" style={{ background: sectionColor || '#5C1A1B' }} />
+  1224→                  )}
+  1225→                </div>
+  1226→                <span
+  1227→                  className="text-[11px] font-medium text-center leading-tight max-w-[85px]"
+  1228→                  style={{
+  1229→                    color: isDark ? '#CCC' : '#444',
+  1230→                    display: '-webkit-box',
+  1231→                    WebkitLineClamp: 2,
+  1232→                    WebkitBoxOrient: 'vertical',
+  1233→                    overflow: 'hidden',
+  1234→                  }}
+  1235→                >
+  1236→                  {service.label}
+  1237→                </span>
+  1238→              </motion.button>
+  1239→            );
+  1240→          })}
+  1241→        </div>
+  1242→      </motion.div>
+  1243→
+  1244→      {/* ========================================
+  1245→          RECENT TRANSACTIONS - iOS Style Grouped
+  1246→          Single white card with thin 1px dividers
+  1247→          ======================================== */}
+  1248→      <motion.div
+  1249→        initial={{ opacity: 0, y: 15 }}
+  1250→        animate={{ opacity: 1, y: 0 }}
+  1251→        transition={{ delay: 0.35, duration: 0.4 }}
+  1252→        className="px-4 mt-5"
+  1253→      >
+  1254→        <div className="flex items-center justify-between mb-3">
+  1255→          <h3 className="text-sm font-bold" style={{ color: isDark ? '#FFFFFF' : '#1a1a1a' }}>العمليات</h3>
+  1256→          <button
+  1257→            onClick={() => useAppStore.getState().setActiveTab('wallet')}
+  1258→            className="text-xs font-medium flex items-center gap-0.5"
+  1259→            style={{ color: '#5C1A1B' }}
+  1260→          >
+  1261→            عرض الكل
+  1262→            <ChevronLeft size={14} strokeWidth={1.5} />
+  1263→          </button>
+  1264→        </div>
+  1265→
+  1266→        {recentTx.length === 0 ? (
+  1267→          <div
+  1268→            className="rounded-2xl p-8 flex flex-col items-center"
+  1269→            style={{
+  1270→              background: isDark ? '#1A1A1A' : '#FFFFFF',
+  1271→              border: `1px solid ${isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)'}`,
+  1272→            }}
+  1273→          >
+  1274→            <div className="w-14 h-14 rounded-2xl flex items-center justify-center" style={{ background: isDark ? '#222' : '#F5F5F5' }}>
+  1275→              <Send size={24} strokeWidth={1.5} color={isDark ? '#333' : '#DDD'} />
+  1276→            </div>
+  1277→            <p className="text-sm mt-3 font-medium" style={{ color: isDark ? '#555' : '#AAA' }}>لا توجد معاملات بعد</p>
+  1278→            <p className="text-[11px] mt-1" style={{ color: isDark ? '#444' : '#CCC' }}>أول تحويل سيظهر هنا</p>
+  1279→          </div>
+  1280→        ) : (
+  1281→          /* iOS-style grouped card with thin dividers */
+  1282→          <div
+  1283→            className="rounded-2xl overflow-hidden"
+  1284→            style={{
+  1285→              background: isDark ? '#1A1A1A' : '#FFFFFF',
+  1286→              border: `1px solid ${isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)'}`,
+  1287→            }}
+  1288→          >
+  1289→            {recentTx.map((tx, index) => {
+  1290→              const isIncoming = tx.toUserId === user?.id;
+  1291→              const txColor = transactionTypeColors[tx.type] || '#5C1A1B';
+  1292→              return (
+  1293→                <motion.div
+  1294→                  key={tx.id}
+  1295→                  initial={{ opacity: 0, x: -15 }}
+  1296→                  animate={{ opacity: 1, x: 0 }}
+  1297→                  transition={{ delay: 0.04 * index }}
+  1298→                  className="flex items-center gap-3 px-4 py-3 active:scale-[0.98] transition-transform"
+  1299→                  style={{
+  1300→                    borderBottom: index < recentTx.length - 1
+  1301→                      ? `1px solid ${dividerColor}`
+  1302→                      : 'none',
+  1303→                  }}
+  1304→                >
+  1305→                  <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: `${txColor}10` }}>
+  1306→                    {isIncoming ? (
+  1307→                      <ArrowDownLeft size={18} strokeWidth={1.5} color="#10B981" />
+  1308→                    ) : (
+  1309→                      <ArrowUpRight size={18} strokeWidth={1.5} color="#5C1A1B" />
+  1310→                    )}
+  1311→                  </div>
+  1312→                  <div className="flex-1 min-w-0">
+  1313→                    <p className="text-sm font-medium truncate" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
+  1314→                      {tx.description || transactionTypeLabels[tx.type] || 'معاملة'}
+  1315→                    </p>
+  1316→                    <p className="text-[11px]" style={{ color: isDark ? '#555' : '#AAA' }}>
+  1317→                      {timeAgo(tx.createdAt)}
+  1318→                    </p>
+  1319→                  </div>
+  1320→                  <div className="text-left shrink-0">
+  1321→                    <p className="text-sm font-bold" style={{ color: isIncoming ? '#10B981' : '#5C1A1B' }}>
+  1322→                      {isIncoming ? '+' : '-'}{tx.amount.toLocaleString()}
+  1323→                    </p>
+  1324→                    <div className="flex justify-end mt-0.5">
+  1325→                      <span className="text-[9px] px-1.5 py-0.5 rounded font-bold text-white" style={{ background: currencyBadgeColors[tx.currency] || '#666' }}>
+  1326→                        {tx.currency}
+  1327→                      </span>
+  1328→                    </div>
+  1329→                  </div>
+  1330→                </motion.div>
+  1331→              );
+  1332→            })}
+  1333→          </div>
+  1334→        )}
+  1335→      </motion.div>
+  1336→
+  1337→      {/* ========================================
+  1338→          FLOATING ACTION BUTTON (FAB)
+  1339→          Quick actions: Transfer, Scan QR, Recharge
+  1340→          ======================================== */}
+  1341→      <div className="fixed bottom-20 left-4 z-50" style={{ direction: 'ltr' }}>
+  1342→        <AnimatePresence>
+  1343→          {fabOpen && (
+  1344→            <>
+  1345→              {/* Backdrop */}
+  1346→              <motion.div
+  1347→                initial={{ opacity: 0 }}
+  1348→                animate={{ opacity: 1 }}
+  1349→                exit={{ opacity: 0 }}
+  1350→                className="fixed inset-0 z-40"
+  1351→                style={{ background: 'rgba(0,0,0,0.3)' }}
+  1352→                onClick={() => setFabOpen(false)}
+  1353→              />
+  1354→
+  1355→              {/* Quick Transfer */}
+  1356→              <motion.button
+  1357→                initial={{ opacity: 0, scale: 0.3, y: 20 }}
+  1358→                animate={{ opacity: 1, scale: 1, y: 0 }}
+  1359→                exit={{ opacity: 0, scale: 0.3, y: 20 }}
+  1360→                transition={{ duration: 0.2 }}
+  1361→                onClick={() => { setFabOpen(false); setTransferOpen(true); }}
+  1362→                className="absolute bottom-24 left-0 flex items-center gap-2 z-50"
+  1363→              >
+  1364→                <span
+  1365→                  className="text-[11px] font-bold px-3 py-1.5 rounded-xl whitespace-nowrap"
+  1366→                  style={{
+  1367→                    background: isDark ? '#1A1A1A' : '#FFFFFF',
+  1368→                    color: isDark ? '#FFF' : '#1a1a1a',
+  1369→                    boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+  1370→                    border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'}`,
+  1371→                  }}
+  1372→                >
+  1373→                  تحويل سريع
+  1374→                </span>
+  1375→                <div
+  1376→                  className="w-12 h-12 rounded-full flex items-center justify-center"
+  1377→                  style={{
+  1378→                    background: 'linear-gradient(135deg, #5C1A1B 0%, #3D0F10 100%)',
+  1379→                    boxShadow: '0 4px 12px rgba(92,26,27,0.4)',
+  1380→                  }}
+  1381→                >
+  1382→                  <Send size={20} color="#FFF" />
+  1383→                </div>
+  1384→              </motion.button>
+  1385→
+  1386→              {/* Quick Scan QR */}
+  1387→              <motion.button
+  1388→                initial={{ opacity: 0, scale: 0.3, y: 20 }}
+  1389→                animate={{ opacity: 1, scale: 1, y: 0 }}
+  1390→                exit={{ opacity: 0, scale: 0.3, y: 20 }}
+  1391→                transition={{ duration: 0.2, delay: 0.05 }}
+  1392→                onClick={() => { setFabOpen(false); setActiveScreen('qr'); }}
+  1393→                className="absolute bottom-12 left-0 flex items-center gap-2 z-50"
+  1394→              >
+  1395→                <span
+  1396→                  className="text-[11px] font-bold px-3 py-1.5 rounded-xl whitespace-nowrap"
+  1397→                  style={{
+  1398→                    background: isDark ? '#1A1A1A' : '#FFFFFF',
+  1399→                    color: isDark ? '#FFF' : '#1a1a1a',
+  1400→                    boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+  1401→                    border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'}`,
+  1402→                  }}
+  1403→                >
+  1404→                  مسح QR
+  1405→                </span>
+  1406→                <div
+  1407→                  className="w-12 h-12 rounded-full flex items-center justify-center"
+  1408→                  style={{
+  1409→                    background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)',
+  1410→                    boxShadow: '0 4px 12px rgba(16,185,129,0.4)',
+  1411→                  }}
+  1412→                >
+  1413→                  <ScanLine size={20} color="#FFF" />
+  1414→                </div>
+  1415→              </motion.button>
+  1416→
+  1417→              {/* Quick Recharge */}
+  1418→              <motion.button
+  1419→                initial={{ opacity: 0, scale: 0.3, y: 20 }}
+  1420→                animate={{ opacity: 1, scale: 1, y: 0 }}
+  1421→                exit={{ opacity: 0, scale: 0.3, y: 20 }}
+  1422→                transition={{ duration: 0.2, delay: 0.1 }}
+  1423→                onClick={() => { setFabOpen(false); setActiveScreen('recharge'); }}
+  1424→                className="absolute left-0 flex items-center gap-2 z-50"
+  1425→                style={{ bottom: '0px' }}
+  1426→              >
+  1427→                <span
+  1428→                  className="text-[11px] font-bold px-3 py-1.5 rounded-xl whitespace-nowrap"
+  1429→                  style={{
+  1430→                    background: isDark ? '#1A1A1A' : '#FFFFFF',
+  1431→                    color: isDark ? '#FFF' : '#1a1a1a',
+  1432→                    boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+  1433→                    border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'}`,
+  1434→                  }}
+  1435→                >
+  1436→                  شحن سريع
+  1437→                </span>
+  1438→                <div
+  1439→                  className="w-12 h-12 rounded-full flex items-center justify-center"
+  1440→                  style={{
+  1441→                    background: 'linear-gradient(135deg, #F59E0B 0%, #D97706 100%)',
+  1442→                    boxShadow: '0 4px 12px rgba(245,158,11,0.4)',
+  1443→                  }}
+  1444→                >
+  1445→                  <Zap size={20} color="#FFF" />
+  1446→                </div>
+  1447→              </motion.button>
+  1448→            </>
+  1449→          )}
+  1450→        </AnimatePresence>
+  1451→
+  1452→        {/* Main FAB Button */}
+  1453→        <motion.button
+  1454→          whileTap={{ scale: 0.9 }}
+  1455→          onClick={() => setFabOpen(!fabOpen)}
+  1456→          className="w-14 h-14 rounded-full flex items-center justify-center z-50 relative"
+  1457→          style={{
+  1458→            background: fabOpen ? (isDark ? '#333' : '#444') : 'linear-gradient(135deg, #5C1A1B 0%, #3D0F10 100%)',
+  1459→            boxShadow: fabOpen ? '0 4px 12px rgba(0,0,0,0.3)' : '0 6px 20px rgba(92,26,27,0.5)',
+  1460→            transition: 'all 0.3s ease',
+  1461→          }}
+  1462→        >
+  1463→          <motion.div
+  1464→            animate={{ rotate: fabOpen ? 45 : 0 }}
+  1465→            transition={{ duration: 0.2 }}
+  1466→          >
+  1467→            <Plus size={24} color="#FFF" strokeWidth={2.5} />
+  1468→          </motion.div>
+  1469→        </motion.button>
+  1470→      </div>
+  1471→    </div>
+  1472→  );
+  1473→}
+  1474→

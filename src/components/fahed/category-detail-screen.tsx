@@ -536,9 +536,8 @@ export default function CategoryDetailScreen() {
       const orderId = `order-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
       const user = useAppStore.getState().user;
       
-      // Calculate price in YER (converting from USD if needed)
-      const exchangeRates = useAppStore.getState().exchangeRates;
-      const priceInYER = Math.round(selectedApiProduct.unit_price * (exchangeRates.USD || 1558));
+      // Prices in USD
+      const priceUSD = selectedApiProduct.unit_price;
       
       const orderData = {
         id: orderId,
@@ -550,8 +549,8 @@ export default function CategoryDetailScreen() {
         packageId: String(selectedApiProduct.id),
         packageName: selectedApiProduct.title,
         customerInput: customerInput.trim(),
-        amount: priceInYER,
-        currency: 'YER',
+        amount: priceUSD,
+        currency: 'USD',
         status: 'pending',
         executionType: 'auto' as const,
         apiProviderId: apiCategoryData.provider.id,
@@ -767,7 +766,7 @@ export default function CategoryDetailScreen() {
                   <div className="flex-1">
                     <h3 className="text-sm font-bold" style={{ color: textColor }}>{selectedApiProduct.title}</h3>
                     <p className="text-lg font-bold mt-1" style={{ color: '#5C1A1B' }}>
-                      {formatPrice(Math.round(selectedApiProduct.unit_price * (useAppStore.getState().exchangeRates.USD || 1558)))} ر.ي
+                      ${formatPrice(selectedApiProduct.unit_price)} $
                     </p>
                     {selectedApiProduct.stock !== undefined && (
                       <p className="text-[10px] mt-0.5" style={{ color: subtleTextColor }}>
@@ -843,7 +842,7 @@ export default function CategoryDetailScreen() {
                     <h3 className="text-sm font-bold" style={{ color: textColor }}>{selectedWalletPackage.name}</h3>
                     {selectedWalletPackage.price !== undefined && (
                       <p className="text-lg font-bold mt-1" style={{ color: '#5C1A1B' }}>
-                        {formatPrice(selectedWalletPackage.price)} {selectedWalletPackage.currency || 'ر.ي'}
+                        {formatPrice(selectedWalletPackage.price)} $
                       </p>
                     )}
                     {selectedWalletPackage.description && (
@@ -918,7 +917,7 @@ export default function CategoryDetailScreen() {
                 <div className="rounded-2xl p-3" style={{ background: cardBg, border: `1px solid ${borderColor}`, boxShadow: isDark ? 'none' : '0 1px 4px rgba(0,0,0,0.04)' }}>
                   <div className="grid grid-cols-2 gap-2">
                     {apiCategoryData.products.map((product, pIndex) => {
-                      const priceInYER = Math.round(product.unit_price * (useAppStore.getState().exchangeRates.USD || 1558));
+                      const priceUSD = product.unit_price;
                       return (
                         <motion.button
                           key={String(product.id)}
@@ -941,7 +940,7 @@ export default function CategoryDetailScreen() {
                             {product.title}
                           </span>
                           <span className="text-[11px] font-bold" style={{ color: '#5C1A1B' }}>
-                            {formatPrice(priceInYER)} ر.ي
+                            {formatPrice(priceUSD)} $
                           </span>
                           {product.stock !== undefined && product.stock > 0 && (
                             <span className="text-[8px]" style={{ color: subtleTextColor }}>
@@ -1059,7 +1058,7 @@ export default function CategoryDetailScreen() {
                           </span>
                           {pkg.price !== undefined && (
                             <span className="text-[11px] font-bold" style={{ color: '#5C1A1B' }}>
-                              {formatPrice(pkg.price)} {pkg.currency || 'ر.ي'}
+                              {formatPrice(pkg.price)} $
                             </span>
                           )}
                         </motion.button>
@@ -1110,7 +1109,7 @@ export default function CategoryDetailScreen() {
                           </span>
                           {startingPrice > 0 && startingPrice !== Infinity && (
                             <span className="text-[10px] font-bold" style={{ color: '#5C1A1B' }}>
-                              من {formatPrice(startingPrice)} ر.ي
+                              من {formatPrice(startingPrice)} $
                             </span>
                           )}
                         </motion.button>
@@ -1230,7 +1229,7 @@ export default function CategoryDetailScreen() {
                             </span>
                             {startingPrice > 0 && (
                               <span className="text-[10px] font-bold" style={{ color: '#5C1A1B' }}>
-                                من {formatPrice(startingPrice)} ر.ي
+                                من {formatPrice(startingPrice)} $
                               </span>
                             )}
                           </motion.button>
@@ -1288,7 +1287,7 @@ export default function CategoryDetailScreen() {
                             </span>
                             {startingPrice > 0 && (
                               <span className="text-[10px] font-bold" style={{ color: '#5C1A1B' }}>
-                                من {formatPrice(startingPrice)} ر.ي
+                                من {formatPrice(startingPrice)} $
                               </span>
                             )}
                           </motion.button>

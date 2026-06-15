@@ -1,0 +1,1085 @@
+     1→'use client';
+     2→
+     3→import { useState, useEffect } from 'react';
+     4→import { useTheme } from 'next-themes';
+     5→import { motion, AnimatePresence } from 'framer-motion';
+     6→import { QRCodeSVG } from 'qrcode.react';
+     7→import {
+     8→  QrCode,
+     9→  Download,
+    10→  Settings,
+    11→  Shield,
+    12→  MessageCircle,
+    13→  Share2,
+    14→  ChevronDown,
+    15→  ChevronUp,
+    16→  User,
+    17→  Phone,
+    18→  CreditCard,
+    19→  LogOut,
+    20→  Eye,
+    21→  EyeOff,
+    22→  TrendingUp,
+    23→  Bell,
+    24→  FileText,
+    25→  Lock,
+    26→  Trash2,
+    27→  Info,
+    28→  ChevronLeft,
+    29→  Cloud,
+    30→  Heart,
+    31→  LayoutDashboard,
+    32→  Crown,
+    33→  Globe,
+    34→  ExternalLink,
+    35→  Mail,
+    36→  Gift,
+    37→  Copy,
+    38→  Check,
+    39→  BadgeCheck,
+    40→  Moon,
+    41→  Sun,
+    42→  Clock,
+    43→  Star,
+    44→} from 'lucide-react';
+    45→import { useAppStore } from '@/lib/store';
+    46→import { database } from '@/lib/firebase';
+    47→import { auth } from '@/lib/firebase';
+    48→import { ref, get, onValue, update } from 'firebase/database';
+    49→import { sendPasswordResetEmail, updatePassword, reauthenticateWithCredential, EmailAuthProvider } from 'firebase/auth';
+    50→import { LOGO_BASE64 } from '@/lib/logo';
+    51→
+    52→interface SectionItem {
+    53→  id: string;
+    54→  label: string;
+    55→  icon: typeof User;
+    56→  color: string;
+    57→  screen?: string;
+    58→  toggle?: boolean;
+    59→}
+    60→
+    61→interface Section {
+    62→  id: string;
+    63→  title: string;
+    64→  icon: typeof User;
+    65→  iconColor: string;
+    66→  items: SectionItem[];
+    67→}
+    68→
+    69→const accountSections: Section[] = [
+    70→  {
+    71→    id: 'account',
+    72→    title: 'الملف الشخصي',
+    73→    icon: User,
+    74→    iconColor: '#5C1A1B',
+    75→    items: [
+    76→      { id: 'profile', label: 'الحساب الشخصي', icon: Heart, color: '#5C1A1B', screen: 'edit-profile' },
+    77→      { id: 'my-data', label: 'بياناتي', icon: User, color: '#2563EB', screen: 'kyc' },
+    78→      { id: 'gift-vouchers', label: 'قسائم الهدية', icon: Gift, color: '#10B981', screen: 'gift-vouchers' },
+    79→      { id: 'my-investments', label: 'استثماراتي', icon: TrendingUp, color: '#8B5CF6', screen: 'investment' },
+    80→    ],
+    81→  },
+    82→  {
+    83→    id: 'privacy',
+    84→    title: 'الخصوصية والأمان',
+    85→    icon: Shield,
+    86→    iconColor: '#5C1A1B',
+    87→    items: [
+    88→      { id: 'change-password', label: 'تغيير كلمة المرور', icon: Lock, color: '#5C1A1B' },
+    89→      { id: 'notifications-settings', label: 'الإشعارات والتنبيهات', icon: Bell, color: '#2563EB', screen: 'notifications' },
+    90→    ],
+    91→  },
+    92→  {
+    93→    id: 'app-settings',
+    94→    title: 'التطبيق',
+    95→    icon: Settings,
+    96→    iconColor: '#666',
+    97→    items: [
+    98→      { id: 'general-settings', label: 'الإعدادات', icon: Settings, color: '#666', screen: 'settings' },
+    99→      { id: 'terms', label: 'الشروط والأحكام', icon: FileText, color: '#2563EB', screen: 'legal' },
+   100→      { id: 'privacy-policy', label: 'سياسة الخصوصية', icon: Shield, color: '#8B5CF6', screen: 'legal' },
+   101→      { id: 'share-app', label: 'مشاركة التطبيق', icon: Share2, color: '#10B981' },
+   102→    ],
+   103→  },
+   104→];
+   105→
+   106→// Account tier info
+   107→const accountTiers: Record<string, { label: string; color: string; bg: string; icon: typeof Star; description: string }> = {
+   108→  basic: { label: 'أساسي', color: '#999', bg: 'rgba(153,153,153,0.12)', icon: User, description: 'حساب غير موثق' },
+   109→  verified: { label: 'موثق', color: '#10B981', bg: 'rgba(16,185,129,0.12)', icon: BadgeCheck, description: 'حساب موثق بالكامل' },
+   110→  premium: { label: 'مميز', color: '#F59E0B', bg: 'rgba(245,158,11,0.12)', icon: Crown, description: 'حساب مميز مع امتيازات إضافية' },
+   111→};
+   112→
+   113→export default function AccountScreen() {
+   114→  const { theme, setTheme } = useTheme();
+   115→  const isDark = theme === 'dark';
+   116→  const { user, setActiveScreen, logout, balanceVisible, toggleBalance, setUser } = useAppStore();
+   117→  // Admin/Owner panels moved to separate admin app
+   118→  const [expandedSections, setExpandedSections] = useState<string[]>(['account', 'privacy']);
+   119→  const [toggleStates, setToggleStates] = useState<Record<string, boolean>>({
+   120→    'auto-login': true,
+   121→    'face-id': false,
+   122→    'dark-mode': isDark,
+   123→    'notifications-toggle': true,
+   124→  });
+   125→
+   126→  // Keep dark-mode toggle in sync with actual theme
+   127→  useEffect(() => {
+   128→    setToggleStates(prev => ({ ...prev, 'dark-mode': isDark }));
+   129→  }, [isDark]);
+   130→  const [copiedReferral, setCopiedReferral] = useState(false);
+   131→  const [showQRCard, setShowQRCard] = useState(false);
+   132→  const [lastLoginTime, setLastLoginTime] = useState<string>('');
+   133→
+   134→  // Password change state
+   135→  const [showPasswordDialog, setShowPasswordDialog] = useState(false);
+   136→  const [currentPassword, setCurrentPassword] = useState('');
+   137→  const [newPassword, setNewPassword] = useState('');
+   138→  const [confirmPassword, setConfirmPassword] = useState('');
+   139→  const [isChangingPassword, setIsChangingPassword] = useState(false);
+   140→  const [passwordError, setPasswordError] = useState('');
+   141→  const [passwordSuccess, setPasswordSuccess] = useState(false);
+   142→  const [showCurrentPwd, setShowCurrentPwd] = useState(false);
+   143→  const [showNewPwd, setShowNewPwd] = useState(false);
+   144→
+   145→  // Social links from Firebase
+   146→  const [socialLinks, setSocialLinks] = useState<{
+   147→    whatsapp: string; facebook: string; twitter: string; instagram: string;
+   148→    telegram: string; youtube: string; supportEmail: string; contactAdmin: string;
+   149→    contactAdminMessage: string;
+   150→  } | null>(null);
+   151→
+   152→  // Determine account tier
+   153→  const getAccountTier = (): string => {
+   154→    if (!user) return 'basic';
+   155→    if (user.kycStatus === 'verified') return 'verified';
+   156→    // Premium could be based on a future field, but for now verified is the highest
+   157→    return 'verified';
+   158→  };
+   159→  const tier = accountTiers[getAccountTier()];
+   160→
+   161→  useEffect(() => {
+   162→    const linksRef = ref(database, 'adminSettings/socialLinks');
+   163→    const unsubscribe = onValue(linksRef, (snapshot) => {
+   164→      if (snapshot.exists()) {
+   165→        const data = snapshot.val();
+   166→        setSocialLinks({
+   167→          whatsapp: data.whatsapp || '',
+   168→          facebook: data.facebook || '',
+   169→          twitter: data.twitter || '',
+   170→          instagram: data.instagram || '',
+   171→          telegram: data.telegram || '',
+   172→          youtube: data.youtube || '',
+   173→          supportEmail: data.supportEmail || '',
+   174→          contactAdmin: data.contactAdmin || '',
+   175→          contactAdminMessage: data.contactAdminMessage || '',
+   176→        });
+   177→      }
+   178→    });
+   179→    return () => unsubscribe();
+   180→  }, []);
+   181→
+   182→  // Last login time
+   183→  useEffect(() => {
+   184→    const now = new Date();
+   185→    const formatted = now.toLocaleDateString('ar-YE', {
+   186→      year: 'numeric',
+   187→      month: 'long',
+   188→      day: 'numeric',
+   189→      hour: '2-digit',
+   190→      minute: '2-digit',
+   191→    });
+   192→    setLastLoginTime(formatted);
+   193→  }, []);
+   194→
+   195→  // Admin/owner role check removed - panels are in separate admin app
+   196→
+   197→  const toggleSection = (sectionId: string) => {
+   198→    setExpandedSections(prev =>
+   199→      prev.includes(sectionId) ? prev.filter(id => id !== sectionId) : [...prev, sectionId]
+   200→    );
+   201→  };
+   202→
+   203→  const handleToggle = (itemId: string) => {
+   204→    if (itemId === 'dark-mode') {
+   205→      const newTheme = isDark ? 'light' : 'dark';
+   206→      setTheme(newTheme);
+   207→      // Also update Zustand store for persistence
+   208→      useAppStore.getState().setTheme(newTheme as 'light' | 'dark');
+   209→    }
+   210→    setToggleStates(prev => ({ ...prev, [itemId]: !prev[itemId] }));
+   211→  };
+   212→
+   213→  const handleItemClick = (item: SectionItem) => {
+   214→    if (item.id === 'change-password') {
+   215→      setShowPasswordDialog(true);
+   216→      return;
+   217→    }
+   218→    if (item.screen) {
+   219→      setActiveScreen(item.screen);
+   220→    }
+   221→  };
+   222→
+   223→  const handleChangePassword = async () => {
+   224→    if (!user || !auth.currentUser) return;
+   225→    setPasswordError('');
+   226→    if (newPassword !== confirmPassword) {
+   227→      setPasswordError('\u0643\u0644\u0645\u0629 \u0627\u0644\u0645\u0631\u0648\u0631 \u0627\u0644\u062c\u062f\u064a\u062f\u0629 \u063a\u064a\u0631 \u0645\u062a\u0637\u0627\u0628\u0642\u0629');
+   228→      return;
+   229→    }
+   230→    if (newPassword.length < 6) {
+   231→      setPasswordError('\u0643\u0644\u0645\u0629 \u0627\u0644\u0645\u0631\u0648\u0631 \u064a\u062c\u0628 \u0623\u0646 \u062a\u0643\u0648\u0646 6 \u0623\u062d\u0631\u0641 \u0639\u0644\u0649 \u0627\u0644\u0623\u0642\u0644');
+   232→      return;
+   233→    }
+   234→    setIsChangingPassword(true);
+   235→    try {
+   236→      const credential = EmailAuthProvider.credential(auth.currentUser.email || '', currentPassword);
+   237→      await reauthenticateWithCredential(auth.currentUser, credential);
+   238→      await updatePassword(auth.currentUser, newPassword);
+   239→      await update(ref(database, `users/${user.id}`), { passwordChangedAt: new Date().toISOString() });
+   240→      setPasswordSuccess(true);
+   241→      setCurrentPassword(''); setNewPassword(''); setConfirmPassword('');
+   242→      setTimeout(() => { setShowPasswordDialog(false); setPasswordSuccess(false); }, 2000);
+   243→    } catch (error: any) {
+   244→      if (error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+   245→        setPasswordError('\u0643\u0644\u0645\u0629 \u0627\u0644\u0645\u0631\u0648\u0631 \u0627\u0644\u062d\u0627\u0644\u064a\u0629 \u063a\u064a\u0631 \u0635\u062d\u064a\u062d\u0629');
+   246→      } else if (error.code === 'auth/weak-password') {
+   247→        setPasswordError('\u0643\u0644\u0645\u0629 \u0627\u0644\u0645\u0631\u0648\u0631 \u0636\u0639\u064a\u0641\u0629 \u062c\u062f\u0627\u064b');
+   248→      } else {
+   249→        try {
+   250→          if (auth.currentUser.email) { await sendPasswordResetEmail(auth, auth.currentUser.email); setPasswordError('\u062a\u0645 \u0625\u0631\u0633\u0627\u0644 \u0631\u0627\u0628\u0637 \u0625\u0639\u0627\u062f\u0629 \u0627\u0644\u062a\u0639\u064a\u064a\u0646 \u0625\u0644\u0649 \u0628\u0631\u064a\u062f\u0643'); }
+   251→          else { setPasswordError('\u062d\u062f\u062b \u062e\u0637\u0623. \u064a\u0631\u062c\u0649 \u0627\u0644\u0645\u062d\u0627\u0648\u0644\u0629 \u0645\u0631\u0629 \u0623\u062e\u0631\u0649.'); }
+   252→        } catch { setPasswordError('\u062d\u062f\u062b \u062e\u0637\u0623. \u064a\u0631\u062c\u0649 \u0627\u0644\u0645\u062d\u0627\u0648\u0644\u0629 \u0645\u0631\u0629 \u0623\u062e\u0631\u0649.'); }
+   253→      }
+   254→    } finally { setIsChangingPassword(false); }
+   255→  };
+   256→
+   257→  const handleShareProfile = () => {
+   258→    const text = `📱 حسابي في محفظة الجنوب\n🆔 رقم الحساب: ${user?.userId || ''}\n👤 الاسم: ${user?.name || ''}`;
+   259→    if (navigator.share) {
+   260→      navigator.share({ text }).catch(() => {
+   261→        navigator.clipboard?.writeText(text);
+   262→      });
+   263→    } else {
+   264→      navigator.clipboard?.writeText(text);
+   265→    }
+   266→  };
+   267→
+   268→  return (
+   269→    <div className="pb-4">
+   270→      {/* Header */}
+   271→      <motion.div
+   272→        initial={{ opacity: 0, y: -10 }}
+   273→        animate={{ opacity: 1, y: 0 }}
+   274→        className="px-4 pt-4 pb-2"
+   275→      >
+   276→        <h1 className="text-xl font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>الحساب</h1>
+   277→      </motion.div>
+   278→
+   279→      {/* Profile Card - Enhanced */}
+   280→      <motion.div
+   281→        initial={{ opacity: 0, y: 15 }}
+   282→        animate={{ opacity: 1, y: 0 }}
+   283→        transition={{ delay: 0.1 }}
+   284→        className="px-4 mt-2"
+   285→      >
+   286→        <div
+   287→          className="rounded-2xl p-5 relative overflow-hidden"
+   288→          style={{
+   289→            background: isDark ? '#1A1A1A' : '#FFFFFF',
+   290→            border: `1px solid ${isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)'}`,
+   291→          }}
+   292→        >
+   293→          {/* Profile Info */}
+   294→          <div className="flex items-center gap-4">
+   295→            {/* Avatar */}
+   296→            <div
+   297→              className="w-16 h-16 rounded-2xl flex items-center justify-center overflow-hidden shrink-0 relative"
+   298→              style={{
+   299→                background: user?.avatar ? 'transparent' : 'linear-gradient(135deg, #5C1A1B 0%, #3D0F10 100%)',
+   300→                boxShadow: '0 4px 12px rgba(92,26,27,0.2)',
+   301→              }}
+   302→            >
+   303→              {user?.avatar ? (
+   304→                <img src={user.avatar} alt={user.name} className="w-full h-full object-cover" />
+   305→              ) : (
+   306→                <User size={28} strokeWidth={1.5} color="#FFF" />
+   307→              )}
+   308→              {/* Verified badge overlay */}
+   309→              {user?.kycStatus === 'verified' && (
+   310→                <div
+   311→                  className="absolute -bottom-1 -left-1 w-6 h-6 rounded-full flex items-center justify-center"
+   312→                  style={{ background: '#10B981', border: '2px solid ' + (isDark ? '#1A1A1A' : '#FFFFFF') }}
+   313→                >
+   314→                  <BadgeCheck size={12} color="#FFF" />
+   315→                </div>
+   316→              )}
+   317→            </div>
+   318→
+   319→            {/* Name + Phone + Tier */}
+   320→            <div className="flex-1 min-w-0">
+   321→              <div className="flex items-center gap-2">
+   322→                <h2 className="text-lg font-bold truncate" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
+   323→                  {user?.name || 'مستخدم'}
+   324→                </h2>
+   325→                {user?.kycStatus === 'verified' && (
+   326→                  <BadgeCheck size={18} strokeWidth={2} color="#10B981" />
+   327→                )}
+   328→              </div>
+   329→              <div className="flex items-center gap-2 mt-1">
+   330→                <Phone size={12} strokeWidth={1.5} color="#5C1A1B" />
+   331→                <span className="text-sm font-medium" style={{ color: '#5C1A1B' }} dir="ltr">
+   332→                  {user?.phone || '+967 7XX XXX XXX'}
+   333→                </span>
+   334→              </div>
+   335→              <div className="flex items-center gap-2 mt-0.5">
+   336→                <CreditCard size={12} strokeWidth={1.5} color="#5C1A1B" />
+   337→                <span className="text-sm font-medium" style={{ color: '#5C1A1B' }} dir="ltr">
+   338→                  {user?.userId || '------'}
+   339→                </span>
+   340→              </div>
+   341→            </div>
+   342→
+   343→            {/* QR Code Button */}
+   344→            <button
+   345→              onClick={() => setActiveScreen('qr')}
+   346→              className="w-12 h-12 rounded-xl flex items-center justify-center"
+   347→              style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}
+   348→            >
+   349→              <QrCode size={22} strokeWidth={1.5} color={isDark ? '#CCC' : '#666'} />
+   350→            </button>
+   351→          </div>
+   352→
+   353→          {/* Account Tier Badge */}
+   354→          <div className="mt-3">
+   355→            <div
+   356→              className="flex items-center gap-2 px-3 py-2 rounded-xl"
+   357→              style={{ background: tier.bg }}
+   358→            >
+   359→              {(() => {
+   360→                const TierIcon = tier.icon;
+   361→                return <TierIcon size={16} strokeWidth={1.5} color={tier.color} />;
+   362→              })()}
+   363→              <div className="flex-1">
+   364→                <div className="flex items-center gap-2">
+   365→                  <span className="text-xs font-bold" style={{ color: tier.color }}>
+   366→                    حساب {tier.label}
+   367→                  </span>
+   368→                </div>
+   369→                <span className="text-[10px]" style={{ color: isDark ? '#888' : '#999' }}>
+   370→                  {tier.description}
+   371→                </span>
+   372→              </div>
+   373→              {getAccountTier() === 'basic' && (
+   374→                <button
+   375→                  onClick={() => setActiveScreen('kyc')}
+   376→                  className="text-[10px] px-2 py-1 rounded-lg font-bold"
+   377→                  style={{ background: 'rgba(92,26,27,0.1)', color: '#5C1A1B' }}
+   378→                >
+   379→                  توثيق
+   380→                </button>
+   381→              )}
+   382→            </div>
+   383→          </div>
+   384→
+   385→          {/* Action Buttons Row */}
+   386→          <div className="flex items-center gap-2 mt-4">
+   387→            <button
+   388→              onClick={() => setActiveScreen('qr')}
+   389→              className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl"
+   390→              style={{
+   391→                background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+   392→              }}
+   393→            >
+   394→              <Download size={16} strokeWidth={1.5} color={isDark ? '#CCC' : '#666'} />
+   395→              <span className="text-xs font-medium" style={{ color: isDark ? '#CCC' : '#666' }}>
+   396→                تحميل بطاقة
+   397→              </span>
+   398→            </button>
+   399→            <button
+   400→              onClick={handleShareProfile}
+   401→              className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl"
+   402→              style={{
+   403→                background: 'rgba(92,26,27,0.08)',
+   404→              }}
+   405→            >
+   406→              <Share2 size={16} strokeWidth={1.5} color="#5C1A1B" />
+   407→              <span className="text-xs font-medium" style={{ color: '#5C1A1B' }}>
+   408→                مشاركة الملف
+   409→              </span>
+   410→            </button>
+   411→            <button
+   412→              onClick={() => setActiveScreen('settings')}
+   413→              className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl"
+   414→              style={{
+   415→                background: 'rgba(16,185,129,0.08)',
+   416→              }}
+   417→            >
+   418→              <Settings size={16} strokeWidth={1.5} color="#10B981" />
+   419→              <span className="text-xs font-medium" style={{ color: '#10B981' }}>
+   420→                الإعدادات
+   421→              </span>
+   422→            </button>
+   423→          </div>
+   424→        </div>
+   425→      </motion.div>
+   426→
+   427→      {/* QR Code Card for Receiving Money */}
+   428→      <motion.div
+   429→        initial={{ opacity: 0, y: 15 }}
+   430→        animate={{ opacity: 1, y: 0 }}
+   431→        transition={{ delay: 0.12 }}
+   432→        className="px-4 mt-3"
+   433→      >
+   434→        <button
+   435→          onClick={() => setShowQRCard(!showQRCard)}
+   436→          className="w-full rounded-2xl overflow-hidden"
+   437→          style={{
+   438→            background: isDark ? '#1A1A1A' : '#FFFFFF',
+   439→            border: `1px solid ${isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)'}`,
+   440→          }}
+   441→        >
+   442→          <div className="flex items-center gap-3 p-4">
+   443→            <div
+   444→              className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+   445→              style={{ background: 'rgba(92,26,27,0.1)' }}
+   446→            >
+   447→              <QrCode size={20} strokeWidth={1.5} color="#5C1A1B" />
+   448→            </div>
+   449→            <div className="flex-1 text-right">
+   450→              <h3 className="text-sm font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>رمز الاستقبال</h3>
+   451→              <p className="text-[11px] mt-0.5" style={{ color: isDark ? '#888' : '#999' }}>اعرض رمز QR لاستقبال الأموال</p>
+   452→            </div>
+   453→            {showQRCard ? (
+   454→              <ChevronUp size={18} strokeWidth={1.5} color={isDark ? '#555' : '#AAA'} />
+   455→            ) : (
+   456→              <ChevronDown size={18} strokeWidth={1.5} color={isDark ? '#555' : '#AAA'} />
+   457→            )}
+   458→          </div>
+   459→        </button>
+   460→
+   461→        <AnimatePresence>
+   462→          {showQRCard && (
+   463→            <motion.div
+   464→              initial={{ height: 0, opacity: 0 }}
+   465→              animate={{ height: 'auto', opacity: 1 }}
+   466→              exit={{ height: 0, opacity: 0 }}
+   467→              transition={{ duration: 0.25 }}
+   468→              className="overflow-hidden"
+   469→            >
+   470→              <div
+   471→                className="mt-2 rounded-2xl overflow-hidden"
+   472→                style={{
+   473→                  background: 'linear-gradient(135deg, #3D0F10 0%, #5C1A1B 50%, #B91C1C 100%)',
+   474→                  boxShadow: '0 8px 32px rgba(92,26,27,0.25)',
+   475→                }}
+   476→              >
+   477→                {/* Card Header with branding */}
+   478→                <div className="px-5 pt-4 pb-2 flex items-center justify-between">
+   479→                  <div className="flex items-center gap-2">
+   480→                    <div className="w-8 h-8 rounded-lg flex items-center justify-center overflow-hidden" style={{ background: 'rgba(255,255,255,0.2)' }}>
+   481→                      <img src={LOGO_BASE64} alt="" className="w-full h-full object-cover" />
+   482→                    </div>
+   483→                    <div>
+   484→                      <span className="text-white text-xs font-bold block">محفظة الجنوب</span>
+   485→                      <span className="text-white/60 text-[9px]">South Wallet</span>
+   486→                    </div>
+   487→                  </div>
+   488→                  <div className="px-2 py-0.5 rounded-full" style={{ background: 'rgba(255,255,255,0.15)' }}>
+   489→                    <span className="text-white text-[9px] font-bold">بطاقة عميل</span>
+   490→                  </div>
+   491→                </div>
+   492→
+   493→                {/* User Info */}
+   494→                <div className="px-5 py-3">
+   495→                  <p className="text-white text-lg font-bold truncate">
+   496→                    {user?.name || 'مستخدم'}
+   497→                  </p>
+   498→                  <div className="flex items-center gap-3 mt-2">
+   499→                    <div className="flex items-center gap-1.5">
+   500→                      <CreditCard size={12} color="rgba(255,255,255,0.7)" />
+   501→                      <span className="text-white/80 text-xs font-mono" dir="ltr">
+   502→                        {user?.userId || '------'}
+   503→                      </span>
+   504→                    </div>
+   505→                    {user?.phone && (
+   506→                      <div className="flex items-center gap-1.5">
+   507→                        <Phone size={12} color="rgba(255,255,255,0.7)" />
+   508→                        <span className="text-white/80 text-xs font-mono" dir="ltr">
+   509→                          {user.phone}
+   510→                        </span>
+   511→                      </div>
+   512→                    )}
+   513→                  </div>
+   514→                </div>
+   515→
+   516→                {/* QR Code Section */}
+   517→                <div className="px-5 pb-4 flex items-center gap-4">
+   518→                  <div
+   519→                    className="w-28 h-28 rounded-xl flex items-center justify-center shrink-0 p-2"
+   520→                    style={{ background: '#FFFFFF' }}
+   521→                  >
+   522→                    <QRCodeSVG
+   523→                      value={`FAHED:RECEIVE:${user?.userId || ''}:NAME:${encodeURIComponent(user?.name || '')}:PHONE:${user?.phone || ''}`}
+   524→                      size={96}
+   525→                      level="M"
+   526→                      bgColor="#FFFFFF"
+   527→                      fgColor="#1a1a1a"
+   528→                    />
+   529→                  </div>
+   530→                  <div className="flex-1 min-w-0">
+   531→                    <p className="text-white/70 text-[10px] mb-1">امسح الرمز للتحويل</p>
+   532→                    <p className="text-white/50 text-[9px] leading-relaxed">
+   533→                      يمكن لأي مستخدم مسح هذا الرمز لتحويل الأموال إلى حسابك مباشرة
+   534→                    </p>
+   535→                    <button
+   536→                      onClick={() => setActiveScreen('qr')}
+   537→                      className="mt-2 px-3 py-1.5 rounded-lg text-[10px] font-bold text-[#5C1A1B]"
+   538→                      style={{ background: 'rgba(255,255,255,0.9)' }}
+   539→                    >
+   540→                      عرض رمز QR الكامل
+   541→                    </button>
+   542→                  </div>
+   543→                </div>
+   544→
+   545→                {/* Card Footer */}
+   546→                <div className="px-5 pb-3 flex items-center justify-between">
+   547→                  <span className="text-white/40 text-[8px]">v0.4.6.5</span>
+   548→                  {user?.kycStatus === 'verified' && (
+   549→                    <div className="flex items-center gap-1">
+   550→                      <BadgeCheck size={10} color="rgba(255,255,255,0.7)" />
+   551→                      <span className="text-white/70 text-[9px] font-bold">حساب موثق</span>
+   552→                    </div>
+   553→                  )}
+   554→                </div>
+   555→              </div>
+   556→            </motion.div>
+   557→          )}
+   558→        </AnimatePresence>
+   559→      </motion.div>
+   560→
+   561→      {/* Quick Settings Toggles */}
+   562→      <motion.div
+   563→        initial={{ opacity: 0, y: 15 }}
+   564→        animate={{ opacity: 1, y: 0 }}
+   565→        transition={{ delay: 0.13 }}
+   566→        className="px-4 mt-3"
+   567→      >
+   568→        <div
+   569→          className="rounded-2xl overflow-hidden"
+   570→          style={{
+   571→            background: isDark ? '#1A1A1A' : '#FFFFFF',
+   572→            border: `1px solid ${isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)'}`,
+   573→          }}
+   574→        >
+   575→          {/* Dark Mode Toggle */}
+   576→          <button
+   577→            onClick={() => handleToggle('dark-mode')}
+   578→            className="w-full flex items-center gap-3 px-4 py-3.5"
+   579→          >
+   580→            <div
+   581→              className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
+   582→              style={{ background: isDark ? 'rgba(139,92,246,0.12)' : 'rgba(245,158,11,0.12)' }}
+   583→            >
+   584→              {isDark ? <Moon size={18} strokeWidth={1.5} color="#8B5CF6" /> : <Sun size={18} strokeWidth={1.5} color="#F59E0B" />}
+   585→            </div>
+   586→            <span className="flex-1 text-right text-sm" style={{ color: isDark ? '#DDD' : '#444' }}>
+   587→              الوضع الداكن
+   588→            </span>
+   589→            <div
+   590→              className="w-11 h-6 rounded-full flex items-center transition-all duration-200 px-0.5"
+   591→              style={{
+   592→                background: toggleStates['dark-mode'] ? '#8B5CF6' : (isDark ? '#333' : '#DDD'),
+   593→                justifyContent: toggleStates['dark-mode'] ? 'flex-end' : 'flex-start',
+   594→              }}
+   595→            >
+   596→              <div className="w-5 h-5 rounded-full bg-white" style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
+   597→            </div>
+   598→          </button>
+   599→
+   600→          {/* Notifications Toggle */}
+   601→          <button
+   602→            onClick={() => handleToggle('notifications-toggle')}
+   603→            className="w-full flex items-center gap-3 px-4 py-3.5"
+   604→            style={{
+   605→              borderTop: `1px solid ${isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)'}`,
+   606→            }}
+   607→          >
+   608→            <div
+   609→              className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
+   610→              style={{ background: 'rgba(92,26,27,0.1)' }}
+   611→            >
+   612→              <Bell size={18} strokeWidth={1.5} color="#5C1A1B" />
+   613→            </div>
+   614→            <span className="flex-1 text-right text-sm" style={{ color: isDark ? '#DDD' : '#444' }}>
+   615→              الإشعارات
+   616→            </span>
+   617→            <div
+   618→              className="w-11 h-6 rounded-full flex items-center transition-all duration-200 px-0.5"
+   619→              style={{
+   620→                background: toggleStates['notifications-toggle'] ? '#5C1A1B' : (isDark ? '#333' : '#DDD'),
+   621→                justifyContent: toggleStates['notifications-toggle'] ? 'flex-end' : 'flex-start',
+   622→              }}
+   623→            >
+   624→              <div className="w-5 h-5 rounded-full bg-white" style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
+   625→            </div>
+   626→          </button>
+   627→
+   628→          {/* Last Login */}
+   629→          <div
+   630→            className="flex items-center gap-3 px-4 py-3.5"
+   631→            style={{
+   632→              borderTop: `1px solid ${isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)'}`,
+   633→            }}
+   634→          >
+   635→            <div
+   636→              className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
+   637→              style={{ background: 'rgba(59,130,246,0.1)' }}
+   638→            >
+   639→              <Clock size={18} strokeWidth={1.5} color="#3B82F6" />
+   640→            </div>
+   641→            <div className="flex-1 text-right">
+   642→              <span className="text-sm block" style={{ color: isDark ? '#DDD' : '#444' }}>آخر تسجيل دخول</span>
+   643→              <span className="text-[10px]" style={{ color: isDark ? '#888' : '#999' }}>{lastLoginTime}</span>
+   644→            </div>
+   645→          </div>
+   646→        </div>
+   647→      </motion.div>
+   648→
+   649→      {/* Referral / Gift Code Sharing Section */}
+   650→      <motion.div
+   651→        initial={{ opacity: 0, y: 15 }}
+   652→        animate={{ opacity: 1, y: 0 }}
+   653→        transition={{ delay: 0.15 }}
+   654→        className="px-4 mt-3"
+   655→      >
+   656→        <div
+   657→          className="rounded-2xl overflow-hidden"
+   658→          style={{
+   659→            background: isDark ? '#1A1A1A' : '#FFFFFF',
+   660→            border: `1px solid ${isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)'}`,
+   661→          }}
+   662→        >
+   663→          <div className="p-4">
+   664→            <div className="flex items-center gap-3 mb-3">
+   665→              <div
+   666→                className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+   667→                style={{ background: 'rgba(92,26,27,0.1)' }}
+   668→              >
+   669→                <Gift size={20} strokeWidth={1.5} color="#5C1A1B" />
+   670→              </div>
+   671→              <div className="flex-1">
+   672→                <h3 className="text-sm font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>شارك كود هدية</h3>
+   673→                <p className="text-[11px] mt-0.5" style={{ color: isDark ? '#888' : '#999' }}>دع أصدقائك واحصل على مكافأة</p>
+   674→              </div>
+   675→            </div>
+   676→
+   677→            {/* Referral Code Display */}
+   678→            <div
+   679→              className="flex items-center gap-2 p-3 rounded-xl mb-3"
+   680→              style={{ background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)', border: `1px dashed ${isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'}` }}
+   681→            >
+   682→              <span className="text-[11px]" style={{ color: isDark ? '#888' : '#999' }}>كود الدعوة:</span>
+   683→              <span className="flex-1 text-sm font-mono font-bold text-center" style={{ color: '#5C1A1B' }} dir="ltr">
+   684→                {user?.userId || '------'}
+   685→              </span>
+   686→              <button
+   687→                onClick={() => {
+   688→                  navigator.clipboard?.writeText(user?.userId || '');
+   689→                  setCopiedReferral(true);
+   690→                  setTimeout(() => setCopiedReferral(false), 2000);
+   691→                }}
+   692→                className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 active:scale-95 transition-transform"
+   693→                style={{ background: 'rgba(92,26,27,0.1)' }}
+   694→              >
+   695→                {copiedReferral ? <Check size={14} color="#10B981" /> : <Copy size={14} color="#5C1A1B" />}
+   696→              </button>
+   697→            </div>
+   698→
+   699→            {/* Share Buttons */}
+   700→            <div className="flex gap-2">
+   701→              <button
+   702→                onClick={() => {
+   703→                  const text = `🎁 استخدم كود الدعوة ${user?.userId || ''} في تطبيق محفظة الجنوب واحصل على مكافأة!`;
+   704→                  const whatsappUrl = `https://wa.me/?text=${encodeURIComponent(text)}`;
+   705→                  window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
+   706→                }}
+   707→                className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl active:scale-95 transition-transform"
+   708→                style={{ background: 'rgba(37,211,102,0.1)' }}
+   709→              >
+   710→                <Phone size={16} color="#25D366" />
+   711→                <span className="text-xs font-medium" style={{ color: '#25D366' }}>واتساب</span>
+   712→              </button>
+   713→              <button
+   714→                onClick={() => {
+   715→                  const text = `🎁 استخدم كود الدعوة ${user?.userId || ''} في تطبيق محفظة الجنوب واحصل على مكافأة!`;
+   716→                  navigator.share?.({ text }).catch(() => {
+   717→                    navigator.clipboard?.writeText(text);
+   718→                  });
+   719→                }}
+   720→                className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl active:scale-95 transition-transform"
+   721→                style={{ background: 'rgba(92,26,27,0.08)' }}
+   722→              >
+   723→                <Share2 size={16} color="#5C1A1B" />
+   724→                <span className="text-xs font-medium" style={{ color: '#5C1A1B' }}>مشاركة</span>
+   725→              </button>
+   726→            </div>
+   727→          </div>
+   728→        </div>
+   729→      </motion.div>
+   730→
+   731→      {/* Expandable Sections - Jaib Style */}
+   732→      {accountSections.map((section, sectionIndex) => {
+   733→        const SectionIcon = section.icon;
+   734→        const isExpanded = expandedSections.includes(section.id);
+   735→
+   736→        return (
+   737→          <motion.div
+   738→            key={section.id}
+   739→            initial={{ opacity: 0, y: 15 }}
+   740→            animate={{ opacity: 1, y: 0 }}
+   741→            transition={{ delay: 0.1 * (sectionIndex + 1), duration: 0.4 }}
+   742→            className="px-4 mt-3"
+   743→          >
+   744→            <div
+   745→              className="rounded-2xl overflow-hidden"
+   746→              style={{
+   747→                background: isDark ? '#1A1A1A' : '#FFFFFF',
+   748→                border: `1px solid ${isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)'}`,
+   749→              }}
+   750→            >
+   751→              {/* Section Header */}
+   752→              <button
+   753→                onClick={() => toggleSection(section.id)}
+   754→                className="w-full flex items-center gap-3 px-4 py-3.5"
+   755→              >
+   756→                <div
+   757→                  className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
+   758→                  style={{ background: `${section.iconColor}12` }}
+   759→                >
+   760→                  <SectionIcon size={18} strokeWidth={1.5} color={section.iconColor} />
+   761→                </div>
+   762→                <span className="flex-1 text-right text-sm font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
+   763→                  {section.title}
+   764→                </span>
+   765→                {isExpanded ? (
+   766→                  <ChevronUp size={18} strokeWidth={1.5} color={isDark ? '#555' : '#AAA'} />
+   767→                ) : (
+   768→                  <ChevronDown size={18} strokeWidth={1.5} color={isDark ? '#555' : '#AAA'} />
+   769→                )}
+   770→              </button>
+   771→
+   772→              {/* Section Items */}
+   773→              <AnimatePresence>
+   774→                {isExpanded && (
+   775→                  <motion.div
+   776→                    initial={{ height: 0, opacity: 0 }}
+   777→                    animate={{ height: 'auto', opacity: 1 }}
+   778→                    exit={{ height: 0, opacity: 0 }}
+   779→                    transition={{ duration: 0.2 }}
+   780→                    className="overflow-hidden"
+   781→                  >
+   782→                    {section.items.map((item, index) => {
+   783→                      const ItemIcon = item.icon;
+   784→                      return (
+   785→                        <button
+   786→                          key={item.id}
+   787→                          onClick={() => item.toggle ? handleToggle(item.id) : handleItemClick(item)}
+   788→                          className="w-full flex items-center gap-3 px-4 py-3 active:scale-[0.99] transition-transform"
+   789→                          style={{
+   790→                            borderTop: `1px solid ${isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)'}`,
+   791→                          }}
+   792→                        >
+   793→                          <div
+   794→                            className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
+   795→                            style={{ background: `${item.color}12` }}
+   796→                          >
+   797→                            <ItemIcon size={16} strokeWidth={1.5} color={item.color} />
+   798→                          </div>
+   799→                          <span className="flex-1 text-right text-sm" style={{ color: isDark ? '#DDD' : '#444' }}>
+   800→                            {item.label}
+   801→                          </span>
+   802→                          {item.toggle ? (
+   803→                            <div
+   804→                              className="w-11 h-6 rounded-full flex items-center transition-all duration-200 px-0.5"
+   805→                              style={{
+   806→                                background: toggleStates[item.id] ? '#5C1A1B' : (isDark ? '#333' : '#DDD'),
+   807→                                justifyContent: toggleStates[item.id] ? 'flex-end' : 'flex-start',
+   808→                              }}
+   809→                            >
+   810→                              <div className="w-5 h-5 rounded-full bg-white" style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
+   811→                            </div>
+   812→                          ) : (
+   813→                            <ChevronLeft size={16} strokeWidth={1.5} color={isDark ? '#444' : '#CCC'} />
+   814→                          )}
+   815→                        </button>
+   816→                      );
+   817→                    })}
+   818→                  </motion.div>
+   819→                )}
+   820→              </AnimatePresence>
+   821→            </div>
+   822→          </motion.div>
+   823→        );
+   824→      })}
+   825→
+   826→      {/* Social Links Section */}
+   827→      {socialLinks && (
+   828→        <motion.div
+   829→          initial={{ opacity: 0, y: 15 }}
+   830→          animate={{ opacity: 1, y: 0 }}
+   831→          transition={{ delay: 0.45 }}
+   832→          className="px-4 mt-3"
+   833→        >
+   834→          <div
+   835→            className="rounded-2xl overflow-hidden"
+   836→            style={{
+   837→              background: isDark ? '#1A1A1A' : '#FFFFFF',
+   838→              border: `1px solid ${isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)'}`,
+   839→            }}
+   840→          >
+   841→            <div className="flex items-center gap-3 px-4 py-3.5">
+   842→              <div
+   843→                className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0"
+   844→                style={{ background: 'rgba(92,26,27,0.1)' }}
+   845→              >
+   846→                <Globe size={18} strokeWidth={1.5} color="#5C1A1B" />
+   847→              </div>
+   848→              <span className="flex-1 text-right text-sm font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
+   849→                تواصل معنا
+   850→              </span>
+   851→            </div>
+   852→            <div
+   853→              className="flex items-center justify-center gap-3 px-4 py-4"
+   854→              style={{ borderTop: `1px solid ${isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)'}` }}
+   855→            >
+   856→              {socialLinks.whatsapp && (
+   857→                <a
+   858→                  href={`https://wa.me/${socialLinks.whatsapp.replace(/[^0-9]/g, '')}`}
+   859→                  target="_blank"
+   860→                  rel="noopener noreferrer"
+   861→                  className="w-11 h-11 rounded-xl flex items-center justify-center"
+   862→                  style={{ background: 'rgba(37,211,102,0.12)' }}
+   863→                >
+   864→                  <Phone size={20} strokeWidth={1.5} color="#25D366" />
+   865→                </a>
+   866→              )}
+   867→              {socialLinks.facebook && (
+   868→                <a
+   869→                  href={socialLinks.facebook}
+   870→                  target="_blank"
+   871→                  rel="noopener noreferrer"
+   872→                  className="w-11 h-11 rounded-xl flex items-center justify-center"
+   873→                  style={{ background: 'rgba(24,119,242,0.12)' }}
+   874→                >
+   875→                  <Globe size={20} strokeWidth={1.5} color="#1877F2" />
+   876→                </a>
+   877→              )}
+   878→              {socialLinks.twitter && (
+   879→                <a
+   880→                  href={socialLinks.twitter}
+   881→                  target="_blank"
+   882→                  rel="noopener noreferrer"
+   883→                  className="w-11 h-11 rounded-xl flex items-center justify-center"
+   884→                  style={{ background: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }}
+   885→                >
+   886→                  <Globe size={20} strokeWidth={1.5} color={isDark ? '#FFF' : '#1a1a1a'} />
+   887→                </a>
+   888→              )}
+   889→              {socialLinks.instagram && (
+   890→                <a
+   891→                  href={socialLinks.instagram}
+   892→                  target="_blank"
+   893→                  rel="noopener noreferrer"
+   894→                  className="w-11 h-11 rounded-xl flex items-center justify-center"
+   895→                  style={{ background: 'rgba(225,48,108,0.12)' }}
+   896→                >
+   897→                  <Globe size={20} strokeWidth={1.5} color="#E1306C" />
+   898→                </a>
+   899→              )}
+   900→              {socialLinks.telegram && (
+   901→                <a
+   902→                  href={socialLinks.telegram}
+   903→                  target="_blank"
+   904→                  rel="noopener noreferrer"
+   905→                  className="w-11 h-11 rounded-xl flex items-center justify-center"
+   906→                  style={{ background: 'rgba(0,136,204,0.12)' }}
+   907→                >
+   908→                  <MessageCircle size={20} strokeWidth={1.5} color="#0088CC" />
+   909→                </a>
+   910→              )}
+   911→              {socialLinks.youtube && (
+   912→                <a
+   913→                  href={socialLinks.youtube}
+   914→                  target="_blank"
+   915→                  rel="noopener noreferrer"
+   916→                  className="w-11 h-11 rounded-xl flex items-center justify-center"
+   917→                  style={{ background: 'rgba(255,0,0,0.12)' }}
+   918→                >
+   919→                  <Globe size={20} strokeWidth={1.5} color="#FF0000" />
+   920→                </a>
+   921→              )}
+   922→              {socialLinks.supportEmail && (
+   923→                <a
+   924→                  href={`mailto:${socialLinks.supportEmail}`}
+   925→                  className="w-11 h-11 rounded-xl flex items-center justify-center"
+   926→                  style={{ background: 'rgba(92,26,27,0.12)' }}
+   927→                >
+   928→                  <Mail size={20} strokeWidth={1.5} color="#5C1A1B" />
+   929→                </a>
+   930→              )}
+   931→              {socialLinks.contactAdmin && (
+   932→                <a
+   933→                  href={socialLinks.contactAdmin}
+   934→                  target="_blank"
+   935→                  rel="noopener noreferrer"
+   936→                  className="w-11 h-11 rounded-xl flex items-center justify-center"
+   937→                  style={{ background: 'rgba(139,92,246,0.12)' }}
+   938→                >
+   939→                  <ExternalLink size={20} strokeWidth={1.5} color="#8B5CF6" />
+   940→                </a>
+   941→              )}
+   942→            </div>
+   943→            {socialLinks.contactAdminMessage && (
+   944→              <div
+   945→                className="px-4 pb-3"
+   946→                style={{ borderTop: `1px solid ${isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)'}` }}
+   947→              >
+   948→                <p className="text-xs text-center pt-3 leading-relaxed" style={{ color: isDark ? '#AAA' : '#666' }}>
+   949→                  {socialLinks.contactAdminMessage}
+   950→                </p>
+   951→              </div>
+   952→            )}
+   953→          </div>
+   954→        </motion.div>
+   955→      )}
+   956→
+   957→      {/* Password Change Dialog */}
+   958→      <AnimatePresence>
+   959→        {showPasswordDialog && (
+   960→          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+   961→            className="fixed inset-0 z-50 flex items-end justify-center"
+   962→            style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)' }}
+   963→            onClick={() => { setShowPasswordDialog(false); setPasswordError(''); setPasswordSuccess(false); }}>
+   964→            <motion.div initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
+   965→              transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+   966→              className="w-full max-w-lg rounded-t-3xl p-5"
+   967→              style={{ background: isDark ? '#0F0F0F' : '#F5F5F5' }}
+   968→              onClick={(e) => e.stopPropagation()}>
+   969→              <div className="flex items-center gap-3 mb-4">
+   970→                <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'rgba(92,26,27,0.1)' }}>
+   971→                  <Lock size={20} color="#5C1A1B" />
+   972→                </div>
+   973→                <div>
+   974→                  <h3 className="text-base font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>تغيير كلمة المرور</h3>
+   975→                  <p className="text-[11px]" style={{ color: isDark ? '#888' : '#AAA' }}>أدخل كلمة المرور الحالية والجديدة</p>
+   976→                </div>
+   977→              </div>
+   978→              {passwordSuccess ? (
+   979→                <div className="flex items-center gap-2 p-4 rounded-xl" style={{ background: 'rgba(16,185,129,0.1)', border: '1px solid rgba(16,185,129,0.2)' }}>
+   980→                  <Check size={16} color="#10B981" />
+   981→                  <span className="text-sm" style={{ color: '#10B981' }}>تم تغيير كلمة المرور بنجاح!</span>
+   982→                </div>
+   983→              ) : (
+   984→                <div className="space-y-3">
+   985→                  {passwordError && (
+   986→                    <div className="flex items-center gap-2 p-3 rounded-xl" style={{ background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.2)' }}>
+   987→                      <Info size={14} color="#EF4444" />
+   988→                      <span className="text-xs" style={{ color: '#EF4444' }}>{passwordError}</span>
+   989→                    </div>
+   990→                  )}
+   991→                  <div>
+   992→                    <span className="text-[11px] font-medium block mb-1.5" style={{ color: isDark ? '#888' : '#999' }}>كلمة المرور الحالية</span>
+   993→                    <div className="flex items-center gap-2 p-3 rounded-xl" style={{ background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)' }}>
+   994→                      <input type={showCurrentPwd ? 'text' : 'password'} value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} placeholder="••••••" dir="ltr"
+   995→                        className="flex-1 bg-transparent outline-none text-sm" style={{ color: isDark ? '#FFF' : '#1a1a1a' }} />
+   996→                      <button onClick={() => setShowCurrentPwd(!showCurrentPwd)}>
+   997→                        {showCurrentPwd ? <EyeOff size={16} color={isDark ? '#666' : '#AAA'} /> : <Eye size={16} color={isDark ? '#666' : '#AAA'} />}
+   998→                      </button>
+   999→                    </div>
+  1000→                  </div>
+  1001→                  <div>
+  1002→                    <span className="text-[11px] font-medium block mb-1.5" style={{ color: isDark ? '#888' : '#999' }}>كلمة المرور الجديدة</span>
+  1003→                    <div className="flex items-center gap-2 p-3 rounded-xl" style={{ background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)' }}>
+  1004→                      <input type={showNewPwd ? 'text' : 'password'} value={newPassword} onChange={e => setNewPassword(e.target.value)} placeholder="6 أحرف على الأقل" dir="ltr"
+  1005→                        className="flex-1 bg-transparent outline-none text-sm" style={{ color: isDark ? '#FFF' : '#1a1a1a' }} />
+  1006→                      <button onClick={() => setShowNewPwd(!showNewPwd)}>
+  1007→                        {showNewPwd ? <EyeOff size={16} color={isDark ? '#666' : '#AAA'} /> : <Eye size={16} color={isDark ? '#666' : '#AAA'} />}
+  1008→                      </button>
+  1009→                    </div>
+  1010→                  </div>
+  1011→                  <div>
+  1012→                    <span className="text-[11px] font-medium block mb-1.5" style={{ color: isDark ? '#888' : '#999' }}>تأكيد كلمة المرور</span>
+  1013→                    <div className="flex items-center gap-2 p-3 rounded-xl" style={{ background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)' }}>
+  1014→                      <input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} placeholder="أعد كتابة كلمة المرور" dir="ltr"
+  1015→                        className="flex-1 bg-transparent outline-none text-sm" style={{ color: isDark ? '#FFF' : '#1a1a1a' }} />
+  1016→                    </div>
+  1017→                  </div>
+  1018→                  <div className="flex gap-3">
+  1019→                    <motion.button whileTap={{ scale: 0.95 }} onClick={() => { setShowPasswordDialog(false); setPasswordError(''); }}
+  1020→                      className="flex-1 py-3 rounded-xl text-sm font-bold"
+  1021→                      style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', color: isDark ? '#FFF' : '#1a1a1a' }}>
+  1022→                      إلغاء
+  1023→                    </motion.button>
+  1024→                    <motion.button whileTap={{ scale: 0.95 }} onClick={handleChangePassword}
+  1025→                      disabled={isChangingPassword || !currentPassword || !newPassword || !confirmPassword}
+  1026→                      className="flex-1 py-3 rounded-xl text-sm font-bold text-white"
+  1027→                      style={{ background: (isChangingPassword || !currentPassword || !newPassword || !confirmPassword) ? '#555' : '#5C1A1B' }}>
+  1028→                      {isChangingPassword ? 'جارٍ التغيير...' : 'تغيير كلمة المرور'}
+  1029→                    </motion.button>
+  1030→                  </div>
+  1031→                </div>
+  1032→              )}
+  1033→            </motion.div>
+  1034→          </motion.div>
+  1035→        )}
+  1036→      </AnimatePresence>
+  1037→
+  1038→      {/* Logout Button */}
+  1039→      <motion.div
+  1040→        initial={{ opacity: 0, y: 15 }}
+  1041→        animate={{ opacity: 1, y: 0 }}
+  1042→        transition={{ delay: 0.5 }}
+  1043→        className="px-4 mt-4"
+  1044→      >
+  1045→        <button
+  1046→          onClick={logout}
+  1047→          className="w-full flex items-center justify-center gap-2 py-4 rounded-2xl"
+  1048→          style={{
+  1049→            background: isDark ? '#1A1A1A' : '#FFFFFF',
+  1050→            border: `1px solid ${isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)'}`,
+  1051→            color: '#5C1A1B',
+  1052→          }}
+  1053→        >
+  1054→          <LogOut size={18} strokeWidth={1.5} />
+  1055→          <span className="text-sm font-bold">الخروج من التطبيق</span>
+  1056→        </button>
+  1057→        
+  1058→        {/* Delete Account */}
+  1059→        <button
+  1060→          onClick={() => {
+  1061→            if (confirm('هل أنت متأكد من حذف حسابك؟ لا يمكن التراجع عن هذا الإجراء.')) {
+  1062→              if (confirm('سيتم حذف جميع بياناتك ورصيدك نهائياً. هل تريد المتابعة؟')) {
+  1063→                logout();
+  1064→              }
+  1065→            }
+  1066→          }}
+  1067→          className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl mt-2"
+  1068→          style={{
+  1069→            background: 'rgba(239,68,68,0.08)',
+  1070→            border: '1px solid rgba(239,68,68,0.15)',
+  1071→            color: '#EF4444',
+  1072→          }}
+  1073→        >
+  1074→          <Trash2 size={16} strokeWidth={1.5} />
+  1075→          <span className="text-xs font-bold">حذف الحساب</span>
+  1076→        </button>
+  1077→        
+  1078→        <p className="text-center text-[10px] mt-2" style={{ color: isDark ? '#444' : '#CCC' }}>
+  1079→          v 0.5.0
+  1080→        </p>
+  1081→      </motion.div>
+  1082→    </div>
+  1083→  );
+  1084→}
+  1085→

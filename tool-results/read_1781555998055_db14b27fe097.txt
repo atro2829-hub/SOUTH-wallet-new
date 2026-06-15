@@ -1,0 +1,1211 @@
+     1→     1→'use client';
+     2→     2→
+     3→     3→import { useState, useRef, useEffect } from 'react';
+     4→     4→import { useTheme } from 'next-themes';
+     5→     5→import { motion, AnimatePresence } from 'framer-motion';
+     6→     6→import { QRCodeSVG } from 'qrcode.react';
+     7→     7→import {
+     8→     8→  ArrowRight,
+     9→     9→  QrCode,
+    10→    10→  Camera,
+    11→    11→  Copy,
+    12→    12→  Share2,
+    13→    13→  UserPlus,
+    14→    14→  HandCoins,
+    15→    15→  CheckCircle2,
+    16→    16→  Clipboard,
+    17→    17→  User,
+    18→    18→  Send,
+    19→    19→  Loader2,
+    20→    20→  AlertTriangle,
+    21→    21→  ArrowUpRight,
+    22→    22→  ArrowDownLeft,
+    23→    23→} from 'lucide-react';
+    24→    24→import { useAppStore } from '@/lib/store';
+    25→    25→import { currencySymbols, currencyBadgeColors, generateReference } from '@/lib/utils';
+    26→    26→import { LOGO_BASE64 } from '@/lib/logo';
+    27→    27→import { useToast } from '@/components/fahed/toast-provider';
+    28→    28→import { database } from '@/lib/firebase';
+    29→    29→import { ref, get, set, update } from 'firebase/database';
+    30→    30→
+    31→    31→type QRTab = 'scan' | 'generate';
+    32→    32→type GenerateType = 'receive' | 'request';
+    33→    33→
+    34→    34→interface ParsedQRData {
+    35→    35→  type: 'RECEIVE' | 'REQUEST';
+    36→    36→  userId: string;
+    37→    37→  name?: string;
+    38→    38→  phone?: string;
+    39→    39→  amount?: number;
+    40→    40→  currency?: 'YER' | 'SAR' | 'USD';
+    41→    41→}
+    42→    42→
+    43→    43→interface ScannedUserInfo {
+    44→    44→  uid: string;
+    45→    45→  name: string;
+    46→    46→  userId: string;
+    47→    47→  phone: string;
+    48→    48→  balanceYER?: number;
+    49→    49→  balanceSAR?: number;
+    50→    50→  balanceUSD?: number;
+    51→    51→  kycStatus?: 'pending' | 'submitted' | 'verified' | 'rejected';
+    52→    52→}
+    53→    53→
+    54→    54→export default function QRScreen() {
+    55→    55→  const { theme } = useTheme();
+    56→    56→  const isDark = theme === 'dark';
+    57→    57→  const { user, setUser, addTransaction, addNotification, setActiveScreen } = useAppStore();
+    58→    58→  const { showToast } = useToast();
+    59→    59→
+    60→    60→  const [activeTab, setActiveTab] = useState<QRTab>('generate');
+    61→    61→  const [generateType, setGenerateType] = useState<GenerateType>('receive');
+    62→    62→  const [amount, setAmount] = useState('');
+    63→    63→  const [currency, setCurrency] = useState<'YER' | 'SAR' | 'USD'>('YER');
+    64→    64→  const [scanResult, setScanResult] = useState('');
+    65→    65→  const [manualInput, setManualInput] = useState('');
+    66→    66→  const [copied, setCopied] = useState(false);
+    67→    67→
+    68→    68→  // Transfer confirmation state
+    69→    69→  const [parsedQR, setParsedQR] = useState<ParsedQRData | null>(null);
+    70→    70→  const [scannedUser, setScannedUser] = useState<ScannedUserInfo | null>(null);
+    71→    71→  const [isLookingUpUser, setIsLookingUpUser] = useState(false);
+    72→    72→  const [lookupError, setLookupError] = useState('');
+    73→    73→  const [isTransferring, setIsTransferring] = useState(false);
+    74→    74→  const [transferResult, setTransferResult] = useState<'success' | 'insufficient' | 'error' | null>(null);
+    75→    75→  const [transferAmount, setTransferAmount] = useState('');
+    76→    76→  const [transferCurrency, setTransferCurrency] = useState<'YER' | 'SAR' | 'USD'>('YER');
+    77→    77→
+    78→    78→  const fileInputRef = useRef<HTMLInputElement>(null);
+    79→    79→
+    80→    80→  // Parse QR data string
+    81→    81→  const parseQRData = (data: string): ParsedQRData | null => {
+    82→    82→    if (!data.startsWith('FAHED:')) return null;
+    83→    83→    const parts = data.split(':');
+    84→    84→    if (parts.length < 3) return null;
+    85→    85→
+    86→    86→    const type = parts[1] as 'RECEIVE' | 'REQUEST';
+    87→    87→    const userId = parts[2];
+    88→    88→
+    89→    89→    if (type !== 'RECEIVE' && type !== 'REQUEST') return null;
+    90→    90→
+    91→    91→    let name: string | undefined;
+    92→    92→    let phone: string | undefined;
+    93→    93→    let amount: number | undefined;
+    94→    94→    let currency: 'YER' | 'SAR' | 'USD' | undefined;
+    95→    95→
+    96→    96→    // Format: FAHED:RECEIVE:userId:NAME:encodedName:PHONE:phone:AMT:amount:currency
+    97→    97→    // or: FAHED:REQUEST:userId:NAME:encodedName:PHONE:phone:AMT:amount:currency
+    98→    98→    // Also supports legacy format: FAHED:RECEIVE:userId:AMT:amount:currency
+    99→    99→    for (let i = 3; i < parts.length; i++) {
+   100→   100→      if (parts[i] === 'NAME' && parts[i + 1]) {
+   101→   101→        name = decodeURIComponent(parts[i + 1]);
+   102→   102→        i++;
+   103→   103→      } else if (parts[i] === 'PHONE' && parts[i + 1]) {
+   104→   104→        phone = parts[i + 1];
+   105→   105→        i++;
+   106→   106→      } else if (parts[i] === 'AMT' && parts[i + 1] && parts[i + 2]) {
+   107→   107→        amount = parseFloat(parts[i + 1]);
+   108→   108→        const cur = parts[i + 2];
+   109→   109→        if (['YER', 'SAR', 'USD'].includes(cur)) {
+   110→   110→          currency = cur as 'YER' | 'SAR' | 'USD';
+   111→   111→        }
+   112→   112→        i += 2;
+   113→   113→      }
+   114→   114→    }
+   115→   115→
+   116→   116→    return { type, userId, name, phone, amount, currency };
+   117→   117→  };
+   118→   118→
+   119→   119→  // Look up user from Firebase
+   120→   120→  const lookupUser = async (userId: string): Promise<ScannedUserInfo | null> => {
+   121→   121→    try {
+   122→   122→      // First, look up the Firebase UID from the userId mapping
+   123→   123→      const userIdRef = ref(database, `userIds/${userId}`);
+   124→   124→      const userIdSnapshot = await get(userIdRef);
+   125→   125→
+   126→   126→      if (!userIdSnapshot.exists()) {
+   127→   127→        return null;
+   128→   128→      }
+   129→   129→
+   130→   130→      const uid = userIdSnapshot.val();
+   131→   131→
+   132→   132→      // Then, get the user data
+   133→   133→      const userRef = ref(database, `users/${uid}`);
+   134→   134→      const userSnapshot = await get(userRef);
+   135→   135→
+   136→   136→      if (!userSnapshot.exists()) {
+   137→   137→        return null;
+   138→   138→      }
+   139→   139→
+   140→   140→      const userData = userSnapshot.val();
+   141→   141→      return {
+   142→   142→        uid,
+   143→   143→        name: userData.name || 'مستخدم',
+   144→   144→        userId: userData.userId || userId,
+   145→   145→        phone: userData.phone || '',
+   146→   146→        balanceYER: userData.balanceYER || 0,
+   147→   147→        balanceSAR: userData.balanceSAR || 0,
+   148→   148→        balanceUSD: userData.balanceUSD || 0,
+   149→   149→        kycStatus: userData.kycStatus || 'pending',
+   150→   150→      };
+   151→   151→    } catch (error) {
+   152→   152→      console.error('Error looking up user:', error);
+   153→   153→      return null;
+   154→   154→    }
+   155→   155→  };
+   156→   156→
+   157→   157→  // Handle scan result - parse and look up user
+   158→   158→  const handleScanData = async (data: string) => {
+   159→   159→    setScanResult(data);
+   160→   160→    setLookupError('');
+   161→   161→    setScannedUser(null);
+   162→   162→    setParsedQR(null);
+   163→   163→    setTransferResult(null);
+   164→   164→
+   165→   165→    const parsed = parseQRData(data);
+   166→   166→    if (!parsed) {
+   167→   167→      setLookupError('رمز QR غير صالح - ليس رمز محفظة الجنوب');
+   168→   168→      return;
+   169→   169→    }
+   170→   170→
+   171→   171→    // Don't allow transferring to yourself
+   172→   172→    if (parsed.userId === user?.userId) {
+   173→   173→      setLookupError('لا يمكنك التحويل إلى حسابك الخاص');
+   174→   174→      return;
+   175→   175→    }
+   176→   176→
+   177→   177→    setParsedQR(parsed);
+   178→   178→
+   179→   179→    // Set default transfer amount/currency from QR
+   180→   180→    if (parsed.amount && parsed.amount > 0) {
+   181→   181→      setTransferAmount(parsed.amount.toString());
+   182→   182→    } else {
+   183→   183→      setTransferAmount('');
+   184→   184→    }
+   185→   185→    if (parsed.currency) {
+   186→   186→      setTransferCurrency(parsed.currency);
+   187→   187→    }
+   188→   188→
+   189→   189→    // Look up user
+   190→   190→    setIsLookingUpUser(true);
+   191→   191→    try {
+   192→   192→      const userInfo = await lookupUser(parsed.userId);
+   193→   193→      if (userInfo) {
+   194→   194→        setScannedUser(userInfo);
+   195→   195→      } else {
+   196→   196→        setLookupError('لم يتم العثور على المستخدم');
+   197→   197→      }
+   198→   198→    } catch {
+   199→   199→      setLookupError('حدث خطأ أثناء البحث عن المستخدم');
+   200→   200→    } finally {
+   201→   201→      setIsLookingUpUser(false);
+   202→   202→    }
+   203→   203→  };
+   204→   204→
+   205→   205→  // Handle transfer confirmation
+   206→   206→  const handleConfirmTransfer = async () => {
+   207→   207→    if (!user || !scannedUser || !parsedQR) return;
+   208→   208→
+   209→   209→    const amountNum = parseFloat(transferAmount);
+   210→   210→    if (!amountNum || amountNum <= 0) {
+   211→   211→      showToast('error', 'خطأ', 'يرجى إدخال مبلغ صحيح');
+   212→   212→      return;
+   213→   213→    }
+   214→   214→
+   215→   215→    const transferCur = transferCurrency;
+   216→   216→    const balanceField = `balance${transferCur}` as keyof typeof user;
+   217→   217→    const currentBalance = (user[balanceField] as number) || 0;
+   218→   218→
+   219→   219→    if (currentBalance < amountNum) {
+   220→   220→      setTransferResult('insufficient');
+   221→   221→      return;
+   222→   222→    }
+   223→   223→
+   224→   224→    setIsTransferring(true);
+   225→   225→
+   226→   226→    try {
+   227→   227→      const newSenderBalance = currentBalance - amountNum;
+   228→   228→
+   229→   229→      // Update sender balance in Firebase
+   230→   230→      const senderRef = ref(database, `users/${user.id}`);
+   231→   231→      await update(senderRef, { [balanceField]: newSenderBalance });
+   232→   232→
+   233→   233→      // Get receiver's current balance
+   234→   234→      const receiverRef = ref(database, `users/${scannedUser.uid}`);
+   235→   235→      const receiverSnapshot = await get(receiverRef);
+   236→   236→      let newReceiverBalance = amountNum;
+   237→   237→      if (receiverSnapshot.exists()) {
+   238→   238→        const receiverData = receiverSnapshot.val();
+   239→   239→        const receiverCurrentBalance = (receiverData[balanceField] as number) || 0;
+   240→   240→        newReceiverBalance = receiverCurrentBalance + amountNum;
+   241→   241→      }
+   242→   242→      await update(receiverRef, { [balanceField]: newReceiverBalance });
+   243→   243→
+   244→   244→      // Create transaction record for sender
+   245→   245→      const txId = generateReference();
+   246→   246→      const senderTx = {
+   247→   247→        id: txId,
+   248→   248→        fromUserId: user.id,
+   249→   249→        toUserId: scannedUser.uid,
+   250→   250→        amount: amountNum,
+   251→   251→        currency: transferCur,
+   252→   252→        type: 'transfer' as const,
+   253→   253→        status: 'completed' as const,
+   254→   254→        description: `تحويل إلى ${scannedUser.name}`,
+   255→   255→        createdAt: new Date().toISOString(),
+   256→   256→      };
+   257→   257→
+   258→   258→      const senderTxRef = ref(database, `transactions/${txId}`);
+   259→   259→      await set(senderTxRef, senderTx);
+   260→   260→
+   261→   261→      // Create transaction record for receiver
+   262→   262→      const rxTxId = generateReference();
+   263→   263→      const receiverTx = {
+   264→   264→        id: rxTxId,
+   265→   265→        fromUserId: user.id,
+   266→   266→        toUserId: scannedUser.uid,
+   267→   267→        amount: amountNum,
+   268→   268→        currency: transferCur,
+   269→   269→        type: 'transfer' as const,
+   270→   270→        status: 'completed' as const,
+   271→   271→        description: `تحويل من ${user.name}`,
+   272→   272→        createdAt: new Date().toISOString(),
+   273→   273→      };
+   274→   274→
+   275→   275→      const receiverTxRef = ref(database, `transactions/${rxTxId}`);
+   276→   276→      await set(receiverTxRef, receiverTx);
+   277→   277→
+   278→   278→      // Update local state
+   279→   279→      const updatedUser = {
+   280→   280→        ...user,
+   281→   281→        [balanceField]: newSenderBalance,
+   282→   282→      };
+   283→   283→      setUser(updatedUser);
+   284→   284→      addTransaction(senderTx);
+   285→   285→      addNotification({
+   286→   286→        id: generateReference(),
+   287→   287→        title: 'تم التحويل بنجاح',
+   288→   288→        body: `تم تحويل ${amountNum.toLocaleString('ar-SA')} ${currencySymbols[transferCur]} إلى ${scannedUser.name}`,
+   289→   289→        type: 'transaction',
+   290→   290→        isRead: false,
+   291→   291→        createdAt: new Date().toISOString(),
+   292→   292→      });
+   293→   293→
+   294→   294→      setTransferResult('success');
+   295→   295→      showToast('success', 'تم التحويل', `تم تحويل ${amountNum.toLocaleString('ar-SA')} ${currencySymbols[transferCur]} بنجاح`);
+   296→   296→    } catch (error) {
+   297→   297→      console.error('Transfer error:', error);
+   298→   298→      setTransferResult('error');
+   299→   299→      showToast('error', 'خطأ', 'حدث خطأ أثناء التحويل');
+   300→   300→    } finally {
+   301→   301→      setIsTransferring(false);
+   302→   302→    }
+   303→   303→  };
+   304→   304→
+   305→   305→  // Reset scan state
+   306→   306→  const resetScanState = () => {
+   307→   307→    setScanResult('');
+   308→   308→    setParsedQR(null);
+   309→   309→    setScannedUser(null);
+   310→   310→    setLookupError('');
+   311→   311→    setIsLookingUpUser(false);
+   312→   312→    setTransferResult(null);
+   313→   313→    setTransferAmount('');
+   314→   314→    setTransferCurrency('YER');
+   315→   315→    setManualInput('');
+   316→   316→  };
+   317→   317→
+   318→   318→  const qrData = (() => {
+   319→   319→    if (!user) return '';
+   320→   320→    const encodedName = encodeURIComponent(user.name || '');
+   321→   321→    const phone = user.phone || '';
+   322→   322→    switch (generateType) {
+   323→   323→      case 'receive':
+   324→   324→        return `FAHED:RECEIVE:${user.userId}:NAME:${encodedName}:PHONE:${phone}${amount ? `:AMT:${amount}:${currency}` : ''}`;
+   325→   325→      case 'request':
+   326→   326→        return `FAHED:REQUEST:${user.userId}:NAME:${encodedName}:PHONE:${phone}:AMT:${amount || '0'}:${currency}`;
+   327→   327→      default:
+   328→   328→        return '';
+   329→   329→    }
+   330→   330→  })();
+   331→   331→
+   332→   332→  const handleCopy = async () => {
+   333→   333→    try {
+   334→   334→      await navigator.clipboard.writeText(qrData);
+   335→   335→      setCopied(true);
+   336→   336→      showToast('success', 'تم النسخ', 'تم نسخ البيانات إلى الحافظة');
+   337→   337→      setTimeout(() => setCopied(false), 2000);
+   338→   338→    } catch {
+   339→   339→      showToast('error', 'خطأ', 'فشل نسخ البيانات');
+   340→   340→    }
+   341→   341→  };
+   342→   342→
+   343→   343→  const handleShare = async () => {
+   344→   344→    if (navigator.share) {
+   345→   345→      try {
+   346→   346→        await navigator.share({
+   347→   347→          title: 'محفظة الجنوب',
+   348→   348→          text: qrData,
+   349→   349→        });
+   350→   350→      } catch {
+   351→   351→        // User cancelled
+   352→   352→      }
+   353→   353→    } else {
+   354→   354→      handleCopy();
+   355→   355→    }
+   356→   356→  };
+   357→   357→
+   358→   358→  const generateTypes: { key: GenerateType; label: string; icon: typeof UserPlus }[] = [
+   359→   359→    { key: 'receive', label: 'استقبال تحويل', icon: UserPlus },
+   360→   360→    { key: 'request', label: 'طلب أموال', icon: HandCoins },
+   361→   361→  ];
+   362→   362→
+   363→   363→  const getBalance = (cur: string): number => {
+   364→   364→    if (!user) return 0;
+   365→   365→    const field = `balance${cur}` as keyof typeof user;
+   366→   366→    return (user[field] as number) || 0;
+   367→   367→  };
+   368→   368→
+   369→   369→  return (
+   370→   370→    <div
+   371→   371→      className="min-h-screen flex flex-col"
+   372→   372→      style={{ background: isDark ? '#0F0F0F' : '#F5F5F5' }}
+   373→   373→    >
+   374→   374→      {/* Header */}
+   375→   375→      <div className="px-5 pt-4 pb-3">
+   376→   376→        <div className="flex items-center gap-2">
+   377→   377→          <button
+   378→   378→            onClick={() => setActiveScreen('main')}
+   379→   379→            className="w-8 h-8 rounded-full flex items-center justify-center"
+   380→   380→            style={{ background: isDark ? '#1A1A1A' : '#F0F0F0' }}
+   381→   381→          >
+   382→   382→            <ArrowRight size={16} strokeWidth={1.5} color={isDark ? '#FFF' : '#666'} />
+   383→   383→          </button>
+   384→   384→          <h1
+   385→   385→            className="text-xl font-bold"
+   386→   386→            style={{ color: isDark ? '#FFF' : '#1a1a1a' }}
+   387→   387→          >
+   388→   388→            مسح QR
+   389→   389→          </h1>
+   390→   390→        </div>
+   391→   391→      </div>
+   392→   392→
+   393→   393→      {/* Tab Toggle */}
+   394→   394→      <div className="px-5 mt-2">
+   395→   395→        <div
+   396→   396→          className="flex rounded-2xl overflow-hidden"
+   397→   397→          style={{ background: isDark ? '#1A1A1A' : '#FFFFFF', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}
+   398→   398→        >
+   399→   399→          <button
+   400→   400→            onClick={() => setActiveTab('scan')}
+   401→   401→            className="flex-1 py-3 text-sm font-medium transition-all flex items-center justify-center gap-2"
+   402→   402→            style={{
+   403→   403→              background: activeTab === 'scan' ? '#5C1A1B' : 'transparent',
+   404→   404→              color: activeTab === 'scan' ? '#FFF' : isDark ? '#AAA' : '#888',
+   405→   405→            }}
+   406→   406→          >
+   407→   407→            <Camera size={16} strokeWidth={1.5} />
+   408→   408→            <span>مسح رمز</span>
+   409→   409→          </button>
+   410→   410→          <button
+   411→   411→            onClick={() => setActiveTab('generate')}
+   412→   412→            className="flex-1 py-3 text-sm font-medium transition-all flex items-center justify-center gap-2"
+   413→   413→            style={{
+   414→   414→              background: activeTab === 'generate' ? '#5C1A1B' : 'transparent',
+   415→   415→              color: activeTab === 'generate' ? '#FFF' : isDark ? '#AAA' : '#888',
+   416→   416→            }}
+   417→   417→          >
+   418→   418→            <QrCode size={16} strokeWidth={1.5} />
+   419→   419→            <span>توليد رمز</span>
+   420→   420→          </button>
+   421→   421→        </div>
+   422→   422→      </div>
+   423→   423→
+   424→   424→      {/* Content */}
+   425→   425→      <div className="flex-1 px-5 mt-4 pb-8">
+   426→   426→        <AnimatePresence mode="wait">
+   427→   427→          {activeTab === 'scan' ? (
+   428→   428→            <motion.div
+   429→   429→              key="scan"
+   430→   430→              initial={{ opacity: 0, x: -20 }}
+   431→   431→              animate={{ opacity: 1, x: 0 }}
+   432→   432→              exit={{ opacity: 0, x: 20 }}
+   433→   433→              className="space-y-4"
+   434→   434→            >
+   435→   435→              {/* Camera Placeholder */}
+   436→   436→              <div
+   437→   437→                className="w-full aspect-square rounded-3xl flex flex-col items-center justify-center gap-4"
+   438→   438→                style={{
+   439→   439→                  background: isDark
+   440→   440→                    ? 'rgba(255,255,255,0.04)'
+   441→   441→                    : 'rgba(0,0,0,0.02)',
+   442→   442→                  backdropFilter: 'blur(20px)',
+   443→   443→                  WebkitBackdropFilter: 'blur(20px)',
+   444→   444→                  border: `2px dashed ${isDark ? '#333' : '#DDD'}`,
+   445→   445→                }}
+   446→   446→              >
+   447→   447→                <div
+   448→   448→                  className="w-20 h-20 rounded-full flex items-center justify-center"
+   449→   449→                  style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}
+   450→   450→                >
+   451→   451→                  <Camera size={40} strokeWidth={1.5} color={isDark ? '#555' : '#CCC'} />
+   452→   452→                </div>
+   453→   453→                <p className="text-sm" style={{ color: isDark ? '#666' : '#AAA' }}>
+   454→   454→                  وجه الكاميرا نحو رمز QR
+   455→   455→                </p>
+   456→   456→                <button
+   457→   457→                  onClick={() => fileInputRef.current?.click()}
+   458→   458→                  className="px-6 py-2.5 rounded-xl text-sm font-medium text-white"
+   459→   459→                  style={{
+   460→   460→                    background: 'linear-gradient(135deg, #5C1A1B 0%, #CC0000 100%)',
+   461→   461→                    boxShadow: '0 4px 12px rgba(92,26,27,0.3)',
+   462→   462→                  }}
+   463→   463→                >
+   464→   464→                  اضغط للمسح
+   465→   465→                </button>
+   466→   466→                <input
+   467→   467→                  ref={fileInputRef}
+   468→   468→                  type="file"
+   469→   469→                  accept="image/*"
+   470→   470→                  capture="environment"
+   471→   471→                  className="hidden"
+   472→   472→                  onChange={async (e) => {
+   473→   473→                    const file = e.target.files?.[0];
+   474→   474→                    if (!file) return;
+   475→   475→
+   476→   476→                    // Try BarcodeDetector API (available in Chrome/Edge)
+   477→   477→                    if ('BarcodeDetector' in window) {
+   478→   478→                      try {
+   479→   479→                        // @ts-expect-error BarcodeDetector is not yet in standard types
+   480→   480→                        const detector = new BarcodeDetector({ formats: ['qr_code'] });
+   481→   481→                        const img = new Image();
+   482→   482→                        img.src = URL.createObjectURL(file);
+   483→   483→                        await new Promise(resolve => { img.onload = resolve; });
+   484→   484→                        const codes = await detector.detect(img);
+   485→   485→                        URL.revokeObjectURL(img.src);
+   486→   486→                        if (codes.length > 0) {
+   487→   487→                          const decoded = codes[0].rawValue;
+   488→   488→                          handleScanData(decoded);
+   489→   489→                          showToast('success', 'تم المسح', 'تم قراءة رمز QR بنجاح');
+   490→   490→                          return;
+   491→   491→                        }
+   492→   492→                      } catch {
+   493→   493→                        // Fall through to canvas-based approach
+   494→   494→                      }
+   495→   495→                    }
+   496→   496→
+   497→   497→                    // Fallback: try to decode using canvas-based approach
+   498→   498→                    try {
+   499→   499→                      const img = new Image();
+   500→   500→                      img.src = URL.createObjectURL(file);
+   501→   501→                      await new Promise(resolve => { img.onload = resolve; });
+   502→   502→                      const canvas = document.createElement('canvas');
+   503→   503→                      canvas.width = img.width;
+   504→   504→                      canvas.height = img.height;
+   505→   505→                      const ctx = canvas.getContext('2d');
+   506→   506→                      if (ctx) {
+   507→   507→                        ctx.drawImage(img, 0, 0);
+   508→   508→                        // Try to read text from image (basic approach - look for FAHED: prefix patterns)
+   509→   509→                        // Since we can't decode QR without a library, prompt user to use manual input
+   510→   510→                        URL.revokeObjectURL(img.src);
+   511→   511→                      }
+   512→   512→                    } catch {
+   513→   513→                      // Silent fail
+   514→   514→                    }
+   515→   515→
+   516→   516→                    // Simulation fallback: generate a random user ID for demo/testing
+   517→   517→                    const randomUserId = String(Math.floor(100000 + Math.random() * 900000));
+   518→   518→                    const simulatedData = `FAHED:RECEIVE:${randomUserId}`;
+   519→   519→                    handleScanData(simulatedData);
+   520→   520→                    showToast('info', 'مسح QR', `تم محاكاة مسح رمز QR لحساب ${randomUserId}`);
+   521→   521→                  }}
+   522→   522→                />
+   523→   523→                <p className="text-[10px] mt-1" style={{ color: isDark ? '#555' : '#BBB' }}>
+   524→   524→                  مسح الكاميرا يتطلب تطبيق الموبايل
+   525→   525→                </p>
+   526→   526→              </div>
+   527→   527→
+   528→   528→              {/* Manual Input */}
+   529→   529→              <div>
+   530→   530→                <label
+   531→   531→                  className="text-xs font-medium mb-1.5 block"
+   532→   532→                  style={{ color: isDark ? '#AAA' : '#888' }}
+   533→   533→                >
+   534→   534→                  أو أدخل البيانات يدوياً
+   535→   535→                </label>
+   536→   536→                <div
+   537→   537→                  className="flex items-center gap-2 px-4 py-3 rounded-2xl"
+   538→   538→                  style={{
+   539→   539→                    background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.02)',
+   540→   540→                    backdropFilter: 'blur(20px)',
+   541→   541→                    WebkitBackdropFilter: 'blur(20px)',
+   542→   542→                    border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}`,
+   543→   543→                  }}
+   544→   544→                >
+   545→   545→                  <Clipboard size={18} strokeWidth={1.5} color="#5C1A1B" />
+   546→   546→                  <input
+   547→   547→                    type="text"
+   548→   548→                    placeholder="الصق بيانات QR هنا"
+   549→   549→                    value={manualInput}
+   550→   550→                    onChange={(e) => setManualInput(e.target.value)}
+   551→   551→                    className="flex-1 bg-transparent outline-none text-sm"
+   552→   552→                    style={{ color: isDark ? '#FFF' : '#1a1a1a' }}
+   553→   553→                    dir="ltr"
+   554→   554→                  />
+   555→   555→                  <button
+   556→   556→                    onClick={() => {
+   557→   557→                      if (manualInput.trim()) {
+   558→   558→                        handleScanData(manualInput.trim());
+   559→   559→                      }
+   560→   560→                    }}
+   561→   561→                    disabled={!manualInput.trim()}
+   562→   562→                    className="px-3 py-1.5 rounded-xl text-xs font-medium text-white disabled:opacity-40"
+   563→   563→                    style={{ background: '#5C1A1B' }}
+   564→   564→                  >
+   565→   565→                    قراءة
+   566→   566→                  </button>
+   567→   567→                </div>
+   568→   568→              </div>
+   569→   569→
+   570→   570→              {/* Scan Result / Transfer Confirmation */}
+   571→   571→              <AnimatePresence>
+   572→   572→                {scanResult && (
+   573→   573→                  <motion.div
+   574→   574→                    initial={{ opacity: 0, y: 10 }}
+   575→   575→                    animate={{ opacity: 1, y: 0 }}
+   576→   576→                    exit={{ opacity: 0, y: -10 }}
+   577→   577→                  >
+   578→   578→                    {/* Error State */}
+   579→   579→                    {lookupError && (
+   580→   580→                      <div
+   581→   581→                        className="rounded-2xl p-4"
+   582→   582→                        style={{
+   583→   583→                          background: isDark ? 'rgba(92,26,27,0.08)' : 'rgba(92,26,27,0.05)',
+   584→   584→                          border: '1px solid rgba(92,26,27,0.2)',
+   585→   585→                        }}
+   586→   586→                      >
+   587→   587→                        <div className="flex items-center gap-2 mb-2">
+   588→   588→                          <AlertTriangle size={16} color="#5C1A1B" strokeWidth={1.5} />
+   589→   589→                          <span className="text-xs font-bold" style={{ color: '#5C1A1B' }}>
+   590→   590→                            خطأ
+   591→   591→                          </span>
+   592→   592→                        </div>
+   593→   593→                        <p className="text-sm" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
+   594→   594→                          {lookupError}
+   595→   595→                        </p>
+   596→   596→                        <button
+   597→   597→                          onClick={resetScanState}
+   598→   598→                          className="mt-3 px-4 py-2 rounded-xl text-xs font-medium text-white"
+   599→   599→                          style={{ background: '#5C1A1B' }}
+   600→   600→                        >
+   601→   601→                          محاولة أخرى
+   602→   602→                        </button>
+   603→   603→                      </div>
+   604→   604→                    )}
+   605→   605→
+   606→   606→                    {/* Loading State */}
+   607→   607→                    {isLookingUpUser && (
+   608→   608→                      <div
+   609→   609→                        className="rounded-2xl p-6 flex flex-col items-center"
+   610→   610→                        style={{
+   611→   611→                          background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.7)',
+   612→   612→                          border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}`,
+   613→   613→                        }}
+   614→   614→                      >
+   615→   615→                        <Loader2 size={24} className="animate-spin" color="#5C1A1B" />
+   616→   616→                        <p className="text-sm mt-3" style={{ color: isDark ? '#AAA' : '#888' }}>
+   617→   617→                          جاري البحث عن المستخدم...
+   618→   618→                        </p>
+   619→   619→                      </div>
+   620→   620→                    )}
+   621→   621→
+   622→   622→                    {/* Transfer Success */}
+   623→   623→                    {transferResult === 'success' && scannedUser && (
+   624→   624→                      <div
+   625→   625→                        className="rounded-2xl p-5"
+   626→   626→                        style={{
+   627→   627→                          background: isDark ? 'rgba(16,185,129,0.08)' : 'rgba(16,185,129,0.05)',
+   628→   628→                          border: '1px solid rgba(16,185,129,0.2)',
+   629→   629→                        }}
+   630→   630→                      >
+   631→   631→                        <div className="flex flex-col items-center">
+   632→   632→                          <div
+   633→   633→                            className="w-16 h-16 rounded-full flex items-center justify-center mb-3"
+   634→   634→                            style={{ background: 'rgba(16,185,129,0.15)' }}
+   635→   635→                          >
+   636→   636→                            <CheckCircle2 size={32} color="#10B981" strokeWidth={1.5} />
+   637→   637→                          </div>
+   638→   638→                          <h3 className="text-lg font-bold mb-1" style={{ color: '#10B981' }}>
+   639→   639→                            تم التحويل بنجاح
+   640→   640→                          </h3>
+   641→   641→                          <p className="text-sm" style={{ color: isDark ? '#AAA' : '#888' }}>
+   642→   642→                            تم تحويل {parseFloat(transferAmount).toLocaleString('ar-SA')} {currencySymbols[transferCurrency]} إلى {scannedUser.name}
+   643→   643→                          </p>
+   644→   644→                          <button
+   645→   645→                            onClick={resetScanState}
+   646→   646→                            className="mt-4 w-full py-3 rounded-2xl font-bold text-white text-sm"
+   647→   647→                            style={{
+   648→   648→                              background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)',
+   649→   649→                            }}
+   650→   650→                          >
+   651→   651→                            حسناً
+   652→   652→                          </button>
+   653→   653→                        </div>
+   654→   654→                      </div>
+   655→   655→                    )}
+   656→   656→
+   657→   657→                    {/* Insufficient Balance */}
+   658→   658→                    {transferResult === 'insufficient' && (
+   659→   659→                      <div
+   660→   660→                        className="rounded-2xl p-5"
+   661→   661→                        style={{
+   662→   662→                          background: isDark ? 'rgba(92,26,27,0.08)' : 'rgba(92,26,27,0.05)',
+   663→   663→                          border: '1px solid rgba(92,26,27,0.2)',
+   664→   664→                        }}
+   665→   665→                      >
+   666→   666→                        <div className="flex flex-col items-center">
+   667→   667→                          <div
+   668→   668→                            className="w-16 h-16 rounded-full flex items-center justify-center mb-3"
+   669→   669→                            style={{ background: 'rgba(92,26,27,0.15)' }}
+   670→   670→                          >
+   671→   671→                            <AlertTriangle size={32} color="#5C1A1B" strokeWidth={1.5} />
+   672→   672→                          </div>
+   673→   673→                          <h3 className="text-lg font-bold mb-1" style={{ color: '#5C1A1B' }}>
+   674→   674→                            رصيد غير كافٍ
+   675→   675→                          </h3>
+   676→   676→                          <p className="text-sm" style={{ color: isDark ? '#AAA' : '#888' }}>
+   677→   677→                            رصيدك الحالي لا يكفي لإتمام التحويل
+   678→   678→                          </p>
+   679→   679→                          <div className="flex items-center gap-2 mt-2 mb-4">
+   680→   680→                            <span className="text-xs" style={{ color: isDark ? '#888' : '#AAA' }}>رصيدك:</span>
+   681→   681→                            <span className="text-sm font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
+   682→   682→                              {getBalance(transferCurrency).toLocaleString()} {currencySymbols[transferCurrency]}
+   683→   683→                            </span>
+   684→   684→                          </div>
+   685→   685→                          <button
+   686→   686→                            onClick={() => setTransferResult(null)}
+   687→   687→                            className="w-full py-3 rounded-2xl font-bold text-white text-sm"
+   688→   688→                            style={{ background: '#5C1A1B' }}
+   689→   689→                          >
+   690→   690→                            حسناً
+   691→   691→                          </button>
+   692→   692→                        </div>
+   693→   693→                      </div>
+   694→   694→                    )}
+   695→   695→
+   696→   696→                    {/* Transfer Confirmation UI */}
+   697→   697→                    {scannedUser && !isLookingUpUser && !transferResult && (
+   698→   698→                      <div
+   699→   699→                        className="rounded-2xl overflow-hidden"
+   700→   700→                        style={{
+   701→   701→                          background: isDark ? '#1A1A1A' : '#FFFFFF',
+   702→   702→                          border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}`,
+   703→   703→                          boxShadow: '0 4px 16px rgba(0,0,0,0.08)',
+   704→   704→                        }}
+   705→   705→                      >
+   706→   706→                        {/* Transfer type badge */}
+   707→   707→                        <div
+   708→   708→                          className="px-4 py-2 flex items-center justify-between"
+   709→   709→                          style={{ background: isDark ? '#222' : '#F8F8F8' }}
+   710→   710→                        >
+   711→   711→                          <div className="flex items-center gap-2">
+   712→   712→                            {parsedQR?.type === 'REQUEST' ? (
+   713→   713→                              <ArrowDownLeft size={16} color="#10B981" strokeWidth={1.5} />
+   714→   714→                            ) : (
+   715→   715→                              <ArrowUpRight size={16} color="#5C1A1B" strokeWidth={1.5} />
+   716→   716→                            )}
+   717→   717→                            <span className="text-xs font-bold" style={{ color: parsedQR?.type === 'REQUEST' ? '#10B981' : '#5C1A1B' }}>
+   718→   718→                              {parsedQR?.type === 'REQUEST' ? 'طلب تحويل' : 'تحويل أموال'}
+   719→   719→                            </span>
+   720→   720→                          </div>
+   721→   721→                          <span className="text-[10px] font-bold text-white px-2 py-0.5 rounded-full" style={{ background: '#5C1A1B' }}>
+   722→   722→                            الجنوب
+   723→   723→                          </span>
+   724→   724→                        </div>
+   725→   725→
+   726→   726→                        {/* User Info */}
+   727→   727→                        <div className="p-4">
+   728→   728→                          <div className="flex items-center gap-3">
+   729→   729→                            <div
+   730→   730→                              className="w-14 h-14 rounded-2xl flex items-center justify-center shrink-0"
+   731→   731→                              style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}
+   732→   732→                            >
+   733→   733→                              <User size={24} strokeWidth={1.5} color={isDark ? '#CCC' : '#666'} />
+   734→   734→                            </div>
+   735→   735→                            <div className="flex-1 min-w-0">
+   736→   736→                              <div className="flex items-center gap-2">
+   737→   737→                                <p className="text-sm font-bold truncate" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
+   738→   738→                                  {scannedUser.name}
+   739→   739→                                </p>
+   740→   740→                                {/* Verification Badge */}
+   741→   741→                                {scannedUser.kycStatus === 'verified' ? (
+   742→   742→                                  <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(16,185,129,0.1)' }}>
+   743→   743→                                    <CheckCircle2 size={10} strokeWidth={2} color="#10B981" />
+   744→   744→                                    <span className="text-[9px] font-bold" style={{ color: '#10B981' }}>موثق</span>
+   745→   745→                                  </div>
+   746→   746→                                ) : (
+   747→   747→                                  <div className="flex items-center gap-1 px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(245,158,11,0.1)' }}>
+   748→   748→                                    <AlertTriangle size={10} strokeWidth={2} color="#F59E0B" />
+   749→   749→                                    <span className="text-[9px] font-bold" style={{ color: '#F59E0B' }}>غير موثق</span>
+   750→   750→                                  </div>
+   751→   751→                                )}
+   752→   752→                              </div>
+   753→   753→                              <p className="text-xs font-mono mt-0.5" style={{ color: isDark ? '#888' : '#AAA' }} dir="ltr">
+   754→   754→                                {scannedUser.userId}
+   755→   755→                              </p>
+   756→   756→                              {scannedUser.phone && (
+   757→   757→                                <p className="text-[10px] mt-0.5" style={{ color: isDark ? '#666' : '#BBB' }} dir="ltr">
+   758→   758→                                  {scannedUser.phone}
+   759→   759→                                </p>
+   760→   760→                              )}
+   761→   761→                            </div>
+   762→   762→                          </div>
+   763→   763→                          {/* Unverified User Warning */}
+   764→   764→                          {scannedUser.kycStatus !== 'verified' && (
+   765→   765→                            <div
+   766→   766→                              className="mt-3 flex items-start gap-2 p-3 rounded-xl"
+   767→   767→                              style={{
+   768→   768→                                background: 'rgba(245,158,11,0.08)',
+   769→   769→                                border: '1px solid rgba(245,158,11,0.15)',
+   770→   770→                              }}
+   771→   771→                            >
+   772→   772→                              <AlertTriangle size={14} strokeWidth={1.5} color="#F59E0B" className="shrink-0 mt-0.5" />
+   773→   773→                              <p className="text-[11px] leading-relaxed" style={{ color: '#F59E0B' }}>
+   774→   774→                                تنبيه: هذا الحساب غير موثق. يرجى التأكد قبل التحويل
+   775→   775→                              </p>
+   776→   776→                            </div>
+   777→   777→                          )}
+   778→   778→
+   779→   779→                          {/* Recipient Balance Info (if available and user has permission) */}
+   780→   780→                          {(scannedUser.balanceYER !== undefined || scannedUser.balanceSAR !== undefined || scannedUser.balanceUSD !== undefined) && (
+   781→   781→                            <div
+   782→   782→                              className="mt-3 rounded-xl p-2.5"
+   783→   783→                              style={{ background: isDark ? '#222' : '#F8F8F8' }}
+   784→   784→                            >
+   785→   785→                              <p className="text-[10px] font-medium mb-1.5" style={{ color: isDark ? '#666' : '#AAA' }}>أرصدة المستلم</p>
+   786→   786→                              <div className="flex gap-3">
+   787→   787→                                {scannedUser.balanceYER !== undefined && (
+   788→   788→                                  <div className="flex items-center gap-1">
+   789→   789→                                    <span className="text-[9px] px-1.5 py-0.5 rounded font-bold text-white" style={{ background: '#5C1A1B' }}>YER</span>
+   790→   790→                                    <span className="text-[11px] font-bold" style={{ color: isDark ? '#CCC' : '#555' }}>{scannedUser.balanceYER.toLocaleString()}</span>
+   791→   791→                                  </div>
+   792→   792→                                )}
+   793→   793→                                {scannedUser.balanceSAR !== undefined && (
+   794→   794→                                  <div className="flex items-center gap-1">
+   795→   795→                                    <span className="text-[9px] px-1.5 py-0.5 rounded font-bold text-white" style={{ background: '#0D5A1F' }}>SAR</span>
+   796→   796→                                    <span className="text-[11px] font-bold" style={{ color: isDark ? '#CCC' : '#555' }}>{scannedUser.balanceSAR.toLocaleString()}</span>
+   797→   797→                                  </div>
+   798→   798→                                )}
+   799→   799→                                {scannedUser.balanceUSD !== undefined && (
+   800→   800→                                  <div className="flex items-center gap-1">
+   801→   801→                                    <span className="text-[9px] px-1.5 py-0.5 rounded font-bold text-white" style={{ background: '#0D47A1' }}>USD</span>
+   802→   802→                                    <span className="text-[11px] font-bold" style={{ color: isDark ? '#CCC' : '#555' }}>{scannedUser.balanceUSD.toLocaleString()}</span>
+   803→   803→                                  </div>
+   804→   804→                                )}
+   805→   805→                              </div>
+   806→   806→                            </div>
+   807→   807→                          )}
+   808→   808→                        </div>
+   809→   809→
+   810→   810→                        {/* Amount Input */}
+   811→   811→                        <div className="px-4 pb-3">
+   812→   812→                          <label className="text-xs font-medium mb-1.5 block" style={{ color: isDark ? '#AAA' : '#888' }}>
+   813→   813→                            مبلغ التحويل
+   814→   814→                          </label>
+   815→   815→                          <div
+   816→   816→                            className="flex items-center gap-2 px-4 py-3 rounded-2xl"
+   817→   817→                            style={{
+   818→   818→                              background: isDark ? '#222' : '#F8F8F8',
+   819→   819→                              border: `1px solid ${isDark ? '#333' : '#EEE'}`,
+   820→   820→                            }}
+   821→   821→                          >
+   822→   822→                            <input
+   823→   823→                              type="number"
+   824→   824→                              placeholder="0"
+   825→   825→                              value={transferAmount}
+   826→   826→                              onChange={(e) => setTransferAmount(e.target.value)}
+   827→   827→                              className="flex-1 bg-transparent outline-none text-sm"
+   828→   828→                              style={{ color: isDark ? '#FFF' : '#1a1a1a' }}
+   829→   829→                              dir="ltr"
+   830→   830→                            />
+   831→   831→                            <span className="text-sm font-medium" style={{ color: isDark ? '#AAA' : '#888' }}>
+   832→   832→                              {currencySymbols[transferCurrency]}
+   833→   833→                            </span>
+   834→   834→                          </div>
+   835→   835→                        </div>
+   836→   836→
+   837→   837→                        {/* Currency Selector */}
+   838→   838→                        <div className="px-4 pb-3 flex gap-2">
+   839→   839→                          {(['YER', 'SAR', 'USD'] as const).map((c) => (
+   840→   840→                            <button
+   841→   841→                              key={c}
+   842→   842→                              onClick={() => setTransferCurrency(c)}
+   843→   843→                              className="flex-1 py-2 rounded-xl flex items-center justify-center gap-1.5 text-xs font-medium transition-all"
+   844→   844→                              style={{
+   845→   845→                                background: transferCurrency === c
+   846→   846→                                  ? `${currencyBadgeColors[c]}15`
+   847→   847→                                  : isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.02)',
+   848→   848→                                border: transferCurrency === c
+   849→   849→                                  ? `1px solid ${currencyBadgeColors[c]}`
+   850→   850→                                  : `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}`,
+   851→   851→                                color: transferCurrency === c ? currencyBadgeColors[c] : isDark ? '#AAA' : '#888',
+   852→   852→                              }}
+   853→   853→                            >
+   854→   854→                              <span
+   855→   855→                                className="w-4 h-4 rounded flex items-center justify-center text-[8px] font-bold text-white"
+   856→   856→                                style={{ background: currencyBadgeColors[c] }}
+   857→   857→                              >
+   858→   858→                                {c.charAt(0)}
+   859→   859→                              </span>
+   860→   860→                              {c}
+   861→   861→                            </button>
+   862→   862→                          ))}
+   863→   863→                        </div>
+   864→   864→
+   865→   865→                        {/* Balance Info */}
+   866→   866→                        <div className="px-4 pb-3">
+   867→   867→                          <div
+   868→   868→                            className="rounded-2xl p-3"
+   869→   869→                            style={{ background: isDark ? '#222' : '#F8F8F8' }}
+   870→   870→                          >
+   871→   871→                            <div className="flex items-center justify-between">
+   872→   872→                              <span className="text-xs" style={{ color: isDark ? '#888' : '#AAA' }}>رصيدك الحالي</span>
+   873→   873→                              <span className="text-xs font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
+   874→   874→                                {getBalance(transferCurrency).toLocaleString()} {currencySymbols[transferCurrency]}
+   875→   875→                              </span>
+   876→   876→                            </div>
+   877→   877→                            {transferAmount && parseFloat(transferAmount) > 0 && (
+   878→   878→                              <>
+   879→   879→                                <div className="h-px my-2" style={{ background: isDark ? '#333' : '#EEE' }} />
+   880→   880→                                <div className="flex items-center justify-between">
+   881→   881→                                  <span className="text-xs" style={{ color: isDark ? '#888' : '#AAA' }}>الرصيد بعد التحويل</span>
+   882→   882→                                  <span
+   883→   883→                                    className="text-xs font-bold"
+   884→   884→                                    style={{
+   885→   885→                                      color: getBalance(transferCurrency) - parseFloat(transferAmount) >= 0
+   886→   886→                                        ? '#10B981'
+   887→   887→                                        : '#5C1A1B',
+   888→   888→                                    }}
+   889→   889→                                  >
+   890→   890→                                    {(getBalance(transferCurrency) - parseFloat(transferAmount)).toLocaleString()} {currencySymbols[transferCurrency]}
+   891→   891→                                  </span>
+   892→   892→                                </div>
+   893→   893→                              </>
+   894→   894→                            )}
+   895→   895→                          </div>
+   896→   896→                        </div>
+   897→   897→
+   898→   898→                        {/* Confirm Button */}
+   899→   899→                        <div className="px-4 pb-4">
+   900→   900→                          <button
+   901→   901→                            onClick={handleConfirmTransfer}
+   902→   902→                            disabled={isTransferring || !transferAmount || parseFloat(transferAmount) <= 0}
+   903→   903→                            className="w-full py-3.5 rounded-2xl flex items-center justify-center gap-2 font-bold text-white text-sm transition-all active:scale-[0.98] disabled:opacity-40"
+   904→   904→                            style={{
+   905→   905→                              background: 'linear-gradient(135deg, #5C1A1B 0%, #CC0000 100%)',
+   906→   906→                              boxShadow: '0 4px 16px rgba(92,26,27,0.3)',
+   907→   907→                            }}
+   908→   908→                          >
+   909→   909→                            {isTransferring ? (
+   910→   910→                              <Loader2 size={20} className="animate-spin" />
+   911→   911→                            ) : (
+   912→   912→                              <>
+   913→   913→                                <Send size={16} strokeWidth={1.5} />
+   914→   914→                                <span>تأكيد التحويل</span>
+   915→   915→                              </>
+   916→   916→                            )}
+   917→   917→                          </button>
+   918→   918→                        </div>
+   919→   919→                      </div>
+   920→   920→                    )}
+   921→   921→
+   922→   922→                    {/* Transfer Error */}
+   923→   923→                    {transferResult === 'error' && (
+   924→   924→                      <div
+   925→   925→                        className="rounded-2xl p-5"
+   926→   926→                        style={{
+   927→   927→                          background: isDark ? 'rgba(92,26,27,0.08)' : 'rgba(92,26,27,0.05)',
+   928→   928→                          border: '1px solid rgba(92,26,27,0.2)',
+   929→   929→                        }}
+   930→   930→                      >
+   931→   931→                        <div className="flex flex-col items-center">
+   932→   932→                          <div
+   933→   933→                            className="w-16 h-16 rounded-full flex items-center justify-center mb-3"
+   934→   934→                            style={{ background: 'rgba(92,26,27,0.15)' }}
+   935→   935→                          >
+   936→   936→                            <AlertTriangle size={32} color="#5C1A1B" strokeWidth={1.5} />
+   937→   937→                          </div>
+   938→   938→                          <h3 className="text-lg font-bold mb-1" style={{ color: '#5C1A1B' }}>
+   939→   939→                            فشل التحويل
+   940→   940→                          </h3>
+   941→   941→                          <p className="text-sm" style={{ color: isDark ? '#AAA' : '#888' }}>
+   942→   942→                            حدث خطأ أثناء التحويل، يرجى المحاولة مرة أخرى
+   943→   943→                          </p>
+   944→   944→                          <button
+   945→   945→                            onClick={() => { setTransferResult(null); }}
+   946→   946→                            className="mt-4 w-full py-3 rounded-2xl font-bold text-white text-sm"
+   947→   947→                            style={{ background: '#5C1A1B' }}
+   948→   948→                          >
+   949→   949→                            محاولة أخرى
+   950→   950→                          </button>
+   951→   951→                        </div>
+   952→   952→                      </div>
+   953→   953→                    )}
+   954→   954→                  </motion.div>
+   955→   955→                )}
+   956→   956→              </AnimatePresence>
+   957→   957→            </motion.div>
+   958→   958→          ) : (
+   959→   959→            <motion.div
+   960→   960→              key="generate"
+   961→   961→              initial={{ opacity: 0, x: 20 }}
+   962→   962→              animate={{ opacity: 1, x: 0 }}
+   963→   963→              exit={{ opacity: 0, x: -20 }}
+   964→   964→              className="space-y-4"
+   965→   965→            >
+   966→   966→              {/* Generate Type Selection */}
+   967→   967→              <div className="flex gap-2">
+   968→   968→                {generateTypes.map(({ key, label, icon: Icon }) => (
+   969→   969→                  <button
+   970→   970→                    key={key}
+   971→   971→                    onClick={() => {
+   972→   972→                      setGenerateType(key);
+   973→   973→                      setAmount('');
+   974→   974→                      setScanResult('');
+   975→   975→                    }}
+   976→   976→                    className="flex-1 py-3 rounded-2xl flex flex-col items-center gap-1.5 transition-all"
+   977→   977→                    style={{
+   978→   978→                      background: generateType === key
+   979→   979→                        ? 'rgba(92,26,27,0.1)'
+   980→   980→                        : isDark
+   981→   981→                          ? 'rgba(255,255,255,0.04)'
+   982→   982→                          : 'rgba(0,0,0,0.02)',
+   983→   983→                      backdropFilter: 'blur(20px)',
+   984→   984→                      WebkitBackdropFilter: 'blur(20px)',
+   985→   985→                      border: generateType === key
+   986→   986→                        ? '2px solid #5C1A1B'
+   987→   987→                        : `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}`,
+   988→   988→                    }}
+   989→   989→                  >
+   990→   990→                    <Icon
+   991→   991→                      size={20}
+   992→   992→                      strokeWidth={1.5}
+   993→   993→                      color={generateType === key ? '#5C1A1B' : isDark ? '#888' : '#AAA'}
+   994→   994→                    />
+   995→   995→                    <span
+   996→   996→                      className="text-[10px] font-medium"
+   997→   997→                      style={{ color: generateType === key ? '#5C1A1B' : isDark ? '#888' : '#AAA' }}
+   998→   998→                    >
+   999→   999→                      {label}
+  1000→  1000→                    </span>
+  1001→  1001→                  </button>
+  1002→  1002→                ))}
+  1003→  1003→              </div>
+  1004→  1004→
+  1005→  1005→              {/* Amount Input (for receive and request) */}
+  1006→  1006→              {(generateType === 'receive' || generateType === 'request') && (
+  1007→  1007→                <div className="space-y-3">
+  1008→  1008→                  <div>
+  1009→  1009→                    <label
+  1010→  1010→                      className="text-xs font-medium mb-1.5 block"
+  1011→  1011→                      style={{ color: isDark ? '#AAA' : '#888' }}
+  1012→  1012→                    >
+  1013→  1013→                      المبلغ {generateType === 'receive' ? '(اختياري)' : ''}
+  1014→  1014→                    </label>
+  1015→  1015→                    <div
+  1016→  1016→                      className="flex items-center gap-2 px-4 py-3 rounded-2xl"
+  1017→  1017→                      style={{
+  1018→  1018→                        background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.02)',
+  1019→  1019→                        backdropFilter: 'blur(20px)',
+  1020→  1020→                        WebkitBackdropFilter: 'blur(20px)',
+  1021→  1021→                        border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}`,
+  1022→  1022→                      }}
+  1023→  1023→                    >
+  1024→  1024→                      <input
+  1025→  1025→                        type="number"
+  1026→  1026→                        placeholder="0"
+  1027→  1027→                        value={amount}
+  1028→  1028→                        onChange={(e) => setAmount(e.target.value)}
+  1029→  1029→                        className="flex-1 bg-transparent outline-none text-sm"
+  1030→  1030→                        style={{ color: isDark ? '#FFF' : '#1a1a1a' }}
+  1031→  1031→                        dir="ltr"
+  1032→  1032→                      />
+  1033→  1033→                      <span
+  1034→  1034→                        className="text-sm font-medium"
+  1035→  1035→                        style={{ color: isDark ? '#AAA' : '#888' }}
+  1036→  1036→                      >
+  1037→  1037→                        {currencySymbols[currency]}
+  1038→  1038→                      </span>
+  1039→  1039→                    </div>
+  1040→  1040→                  </div>
+  1041→  1041→
+  1042→  1042→                  {/* Currency Selector */}
+  1043→  1043→                  <div className="flex gap-2">
+  1044→  1044→                    {(['YER', 'SAR', 'USD'] as const).map((c) => (
+  1045→  1045→                      <button
+  1046→  1046→                        key={c}
+  1047→  1047→                        onClick={() => setCurrency(c)}
+  1048→  1048→                        className="flex-1 py-2 rounded-xl flex items-center justify-center gap-1.5 text-xs font-medium transition-all"
+  1049→  1049→                        style={{
+  1050→  1050→                          background: currency === c
+  1051→  1051→                            ? `${currencyBadgeColors[c]}15`
+  1052→  1052→                            : isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.02)',
+  1053→  1053→                          border: currency === c
+  1054→  1054→                            ? `1px solid ${currencyBadgeColors[c]}`
+  1055→  1055→                            : `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}`,
+  1056→  1056→                          color: currency === c ? currencyBadgeColors[c] : isDark ? '#AAA' : '#888',
+  1057→  1057→                        }}
+  1058→  1058→                      >
+  1059→  1059→                        <span
+  1060→  1060→                          className="w-4 h-4 rounded flex items-center justify-center text-[8px] font-bold text-white"
+  1061→  1061→                          style={{ background: currencyBadgeColors[c] }}
+  1062→  1062→                        >
+  1063→  1063→                          {c.charAt(0)}
+  1064→  1064→                        </span>
+  1065→  1065→                        {c}
+  1066→  1066→                      </button>
+  1067→  1067→                    ))}
+  1068→  1068→                  </div>
+  1069→  1069→                </div>
+  1070→  1070→              )}
+  1071→  1071→
+  1072→  1072→              {/* QR Card - Premium Wallet Card */}
+  1073→  1073→              <motion.div
+  1074→  1074→                layout
+  1075→  1075→                className="relative rounded-3xl overflow-hidden"
+  1076→  1076→                style={{
+  1077→  1077→                  background: 'linear-gradient(145deg, #0A1A3A 0%, #0D2248 40%, #0A1630 100%)',
+  1078→  1078→                  boxShadow: '0 12px 40px rgba(10,26,58,0.5), 0 2px 8px rgba(0,0,0,0.3)',
+  1079→  1079→                  border: '1px solid rgba(201,168,76,0.2)',
+  1080→  1080→                }}
+  1081→  1081→              >
+  1082→  1082→                {/* Decorative gold line at top */}
+  1083→  1083→                <div className="h-1" style={{ background: 'linear-gradient(90deg, transparent 0%, #C9A84C 30%, #C9A84C 70%, transparent 100%)' }} />
+  1084→  1084→
+  1085→  1085→                <div className="px-6 pt-5 pb-6">
+  1086→  1086→                  {/* Logo and App Name */}
+  1087→  1087→                  <div className="flex flex-col items-center mb-4">
+  1088→  1088→                    <div className="w-12 h-12 rounded-xl overflow-hidden mb-2 flex items-center justify-center" style={{ boxShadow: '0 4px 16px rgba(201,168,76,0.3)', border: '1px solid rgba(201,168,76,0.3)' }}>
+  1089→  1089→                      <img src={LOGO_BASE64} alt="الجنوب" className="w-full h-full object-cover" />
+  1090→  1090→                    </div>
+  1091→  1091→                    <h3 className="text-sm font-bold" style={{ color: '#C9A84C' }}>محفظة الجنوب</h3>
+  1092→  1092→                    <p className="text-[10px]" style={{ color: 'rgba(201,168,76,0.6)' }}>محفظتك الرقمية الموثوقة</p>
+  1093→  1093→                  </div>
+  1094→  1094→
+  1095→  1095→                  {/* User Info Section */}
+  1096→  1096→                  <div className="flex flex-col items-center text-center mb-4">
+  1097→  1097→                    <p className="text-lg font-bold" style={{ color: '#FFFFFF' }}>
+  1098→  1098→                      {user?.name || 'مستخدم'}
+  1099→  1099→                    </p>
+  1100→  1100→                    <p className="text-2xl font-bold mt-1 tracking-wider" style={{ color: '#C9A84C' }} dir="ltr">
+  1101→  1101→                      {user?.userId || '------'}
+  1102→  1102→                    </p>
+  1103→  1103→                    {user?.phone && (
+  1104→  1104→                      <p className="text-xs mt-1.5 font-medium" style={{ color: 'rgba(255,255,255,0.6)' }} dir="ltr">
+  1105→  1105→                        {user.phone}
+  1106→  1106→                      </p>
+  1107→  1107→                    )}
+  1108→  1108→                    {user?.kycStatus === 'verified' && (
+  1109→  1109→                      <div className="flex items-center gap-1.5 mt-2 px-3 py-1 rounded-full" style={{ background: 'rgba(16,185,129,0.15)', border: '1px solid rgba(16,185,129,0.3)' }}>
+  1110→  1110→                        <CheckCircle2 size={12} strokeWidth={2} color="#10B981" />
+  1111→  1111→                        <span className="text-[10px] font-bold" style={{ color: '#10B981' }}>موثق</span>
+  1112→  1112→                      </div>
+  1113→  1113→                    )}
+  1114→  1114→                    {amount && (
+  1115→  1115→                      <div className="mt-2 px-4 py-1.5 rounded-xl" style={{ background: 'rgba(201,168,76,0.1)', border: '1px solid rgba(201,168,76,0.2)' }}>
+  1116→  1116→                        <p className="text-sm font-bold" style={{ color: '#C9A84C' }}>
+  1117→  1117→                          {parseInt(amount).toLocaleString('ar-SA')} {currencySymbols[currency]}
+  1118→  1118→                        </p>
+  1119→  1119→                      </div>
+  1120→  1120→                    )}
+  1121→  1121→                  </div>
+  1122→  1122→
+  1123→  1123→                  {/* QR Code Section */}
+  1124→  1124→                  <div className="flex justify-center mb-4">
+  1125→  1125→                    <motion.div
+  1126→  1126→                      initial={{ scale: 0.8, opacity: 0 }}
+  1127→  1127→                      animate={{ scale: 1, opacity: 1 }}
+  1128→  1128→                      transition={{ type: 'spring', stiffness: 200, damping: 15 }}
+  1129→  1129→                    >
+  1130→  1130→                      <div
+  1131→  1131→                        className="p-3 rounded-2xl"
+  1132→  1132→                        style={{
+  1133→  1133→                          background: '#FFFFFF',
+  1134→  1134→                          boxShadow: '0 4px 24px rgba(0,0,0,0.3), 0 0 0 1px rgba(201,168,76,0.15)',
+  1135→  1135→                        }}
+  1136→  1136→                      >
+  1137→  1137→                        <QRCodeSVG
+  1138→  1138→                          value={qrData}
+  1139→  1139→                          size={180}
+  1140→  1140→                          level="H"
+  1141→  1141→                          bgColor="#FFFFFF"
+  1142→  1142→                          fgColor="#0A1A3A"
+  1143→  1143→                          marginSize={0}
+  1144→  1144→                          imageSettings={{
+  1145→  1145→                            src: LOGO_BASE64,
+  1146→  1146→                            height: 36,
+  1147→  1147→                            width: 36,
+  1148→  1148→                            excavate: true,
+  1149→  1149→                          }}
+  1150→  1150→                        />
+  1151→  1151→                      </div>
+  1152→  1152→                    </motion.div>
+  1153→  1153→                  </div>
+  1154→  1154→
+  1155→  1155→                  {/* Decorative divider */}
+  1156→  1156→                  <div className="flex items-center gap-3 mb-4">
+  1157→  1157→                    <div className="flex-1 h-px" style={{ background: 'linear-gradient(90deg, transparent, rgba(201,168,76,0.3), transparent)' }} />
+  1158→  1158→                    <span className="text-[9px] font-bold" style={{ color: 'rgba(201,168,76,0.5)' }}>محفظة الجنوب</span>
+  1159→  1159→                    <div className="flex-1 h-px" style={{ background: 'linear-gradient(90deg, transparent, rgba(201,168,76,0.3), transparent)' }} />
+  1160→  1160→                  </div>
+  1161→  1161→
+  1162→  1162→                  {/* Actions */}
+  1163→  1163→                  <div className="flex gap-2">
+  1164→  1164→                    <button
+  1165→  1165→                      onClick={handleCopy}
+  1166→  1166→                      className="flex-1 py-3 rounded-2xl flex items-center justify-center gap-2 text-sm font-medium transition-all active:scale-[0.98]"
+  1167→  1167→                      style={{
+  1168→  1168→                        background: 'rgba(255,255,255,0.08)',
+  1169→  1169→                        color: '#FFFFFF',
+  1170→  1170→                        border: '1px solid rgba(201,168,76,0.2)',
+  1171→  1171→                      }}
+  1172→  1172→                    >
+  1173→  1173→                      {copied ? (
+  1174→  1174→                        <>
+  1175→  1175→                          <CheckCircle2 size={16} strokeWidth={1.5} color="#10B981" />
+  1176→  1176→                          <span style={{ color: '#10B981' }}>تم النسخ</span>
+  1177→  1177→                        </>
+  1178→  1178→                      ) : (
+  1179→  1179→                        <>
+  1180→  1180→                          <Copy size={16} strokeWidth={1.5} />
+  1181→  1181→                          <span>نسخ</span>
+  1182→  1182→                        </>
+  1183→  1183→                      )}
+  1184→  1184→                    </button>
+  1185→  1185→                    <button
+  1186→  1186→                      onClick={handleShare}
+  1187→  1187→                      className="flex-1 py-3 rounded-2xl flex items-center justify-center gap-2 text-sm font-medium text-white transition-all active:scale-[0.98]"
+  1188→  1188→                      style={{
+  1189→  1189→                        background: 'linear-gradient(135deg, #C9A84C 0%, #A88A3A 100%)',
+  1190→  1190→                        boxShadow: '0 4px 16px rgba(201,168,76,0.3)',
+  1191→  1191→                      }}
+  1192→  1192→                    >
+  1193→  1193→                      <Share2 size={16} strokeWidth={1.5} />
+  1194→  1194→                      <span>مشاركة</span>
+  1195→  1195→                    </button>
+  1196→  1196→                  </div>
+  1197→  1197→                </div>
+  1198→  1198→
+  1199→  1199→                {/* Decorative gold line at bottom */}
+  1200→  1200→                <div className="h-0.5" style={{ background: 'linear-gradient(90deg, transparent 0%, rgba(201,168,76,0.3) 30%, rgba(201,168,76,0.3) 70%, transparent 100%)' }} />
+  1201→  1201→              </motion.div>
+  1202→  1202→
+  1203→  1203→
+  1204→  1204→            </motion.div>
+  1205→  1205→          )}
+  1206→  1206→        </AnimatePresence>
+  1207→  1207→      </div>
+  1208→  1208→    </div>
+  1209→  1209→  );
+  1210→  1210→}
+  1211→  1211→

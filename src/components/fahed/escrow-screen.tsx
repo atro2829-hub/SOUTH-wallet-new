@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useTheme } from 'next-themes';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -12,7 +12,15 @@ import {
 import { useAppStore } from '@/lib/store';
 import { currencySymbols, formatNumber, formatBalance, generateReference } from '@/lib/utils';
 import { database } from '@/lib/firebase';
-import { ref, set, get, update, onValue, off, push, runTransaction } from 'firebase/database';
+import { ref, set, get, update, onValue, off, runTransaction } from 'firebase/database';
+import {
+  getOrCreateEscrowChat,
+  getEscrowChatMessages,
+  sendEscrowChatMessage,
+  subscribeToEscrowChat,
+  markMessagesAsRead,
+  type EscrowChatMessage as SupabaseEscrowChatMessage,
+} from '@/lib/escrow-chat';
 
 // Escrow status type
 type EscrowStatus = 'pending' | 'funded' | 'buyer_confirmed' | 'seller_confirmed' | 'completed' | 'disputed' | 'cancelled';
@@ -54,7 +62,7 @@ const statusConfig: Record<EscrowStatus, { label: string; color: string; bgColor
 
 type ScreenTab = 'active' | 'create' | 'history';
 
-// Escrow chat message
+// Escrow chat message (UI model)
 interface EscrowChatMessage {
   id: string;
   senderId: string;
@@ -90,11 +98,13 @@ export default function EscrowScreen() {
   const [disputeReason, setDisputeReason] = useState('');
   const [copiedRef, setCopiedRef] = useState(false);
 
-  // Escrow chat state - 3-party chat (buyer, seller, admin)
+  // Escrow chat state - 3-party chat (buyer, seller, admin) via Supabase
   const [chatMessages, setChatMessages] = useState<EscrowChatMessage[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [showChat, setShowChat] = useState(false);
-  const chatEndRef = useState<HTMLDivElement | null>(null)[0];
+  const [chatId, setChatId] = useState<string | null>(null);
+  const [chatLoading, setChatLoading] = useState(false);
+  const chatEndRef = useRef<HTMLDivElement | null>(null);
 
   // Fetch user escrows from Firebase
   useEffect(() => {
@@ -118,57 +128,98 @@ export default function EscrowScreen() {
   const activeEscrows = escrows.filter(e => e.status !== 'completed' && e.status !== 'cancelled');
   const historyEscrows = escrows.filter(e => e.status === 'completed' || e.status === 'cancelled');
 
-  // Listen to escrow chat messages (3-party: buyer, seller, admin)
+  // Load escrow chat messages via Supabase and subscribe to real-time updates
   useEffect(() => {
-    if (!selectedEscrow?.id) {
+    if (!selectedEscrow?.id || !user?.id) {
       setChatMessages([]);
+      setChatId(null);
       return;
     }
-    const chatRef = ref(database, `escrowChat/${selectedEscrow.id}/messages`);
-    const unsubscribe = onValue(chatRef, (snapshot) => {
-      if (snapshot.exists()) {
-        const data = snapshot.val();
-        const msgs = Object.entries(data).map(([id, val]: [string, any]) => ({
-          id,
-          senderId: val.senderId || '',
-          senderName: val.senderName || '',
-          senderRole: val.senderRole || 'buyer',
-          text: val.text || '',
-          time: val.time || '',
-        })) as EscrowChatMessage[];
-        msgs.sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
-        setChatMessages(msgs);
-      } else {
-        setChatMessages([]);
-      }
-    });
-    return () => off(chatRef);
-  }, [selectedEscrow?.id]);
 
-  // Send chat message in escrow
+    let unsubscribe: (() => void) | null = null;
+
+    const initChat = async () => {
+      setChatLoading(true);
+      try {
+        // Get or create the Supabase chat room for this escrow
+        const id = await getOrCreateEscrowChat(
+          selectedEscrow.id,
+          selectedEscrow.buyerId,
+          selectedEscrow.buyerName,
+          selectedEscrow.sellerId,
+          selectedEscrow.sellerName
+        );
+        setChatId(id);
+
+        if (id) {
+          // Fetch existing messages
+          const messages = await getEscrowChatMessages(id);
+          setChatMessages(messages.map(m => ({
+            id: m.id,
+            senderId: m.senderId,
+            senderName: m.senderName,
+            senderRole: m.senderRole,
+            text: m.message,
+            time: m.createdAt,
+          })));
+
+          // Mark messages as read
+          await markMessagesAsRead(id, user.id);
+
+          // Subscribe to real-time new messages
+          unsubscribe = subscribeToEscrowChat(id, (newMsg) => {
+            setChatMessages(prev => {
+              // Avoid duplicates
+              if (prev.some(m => m.id === newMsg.id)) return prev;
+              return [...prev, {
+                id: newMsg.id,
+                senderId: newMsg.senderId,
+                senderName: newMsg.senderName,
+                senderRole: newMsg.senderRole,
+                text: newMsg.message,
+                time: newMsg.createdAt,
+              }];
+            });
+            // Mark new incoming messages as read
+            if (newMsg.senderId !== user.id) {
+              markMessagesAsRead(id, user.id);
+            }
+          });
+        }
+      } catch (error) {
+        console.error('Error initializing escrow chat:', error);
+      } finally {
+        setChatLoading(false);
+      }
+    };
+
+    initChat();
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, [selectedEscrow?.id, user?.id]);
+
+  // Auto-scroll chat to bottom on new messages
+  useEffect(() => {
+    if (chatEndRef.current) {
+      chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [chatMessages]);
+
+  // Send chat message in escrow via Supabase
   const handleSendEscrowChat = async () => {
-    if (!chatInput.trim() || !selectedEscrow?.id || !user?.id) return;
+    if (!chatInput.trim() || !chatId || !user?.id || !selectedEscrow) return;
     const msgText = chatInput.trim();
     const senderRole = selectedEscrow.buyerId === user.id ? 'buyer' : 'seller';
     try {
-      await push(ref(database, `escrowChat/${selectedEscrow.id}/messages`), {
-        senderId: user.id,
-        senderName: user.name || 'مستخدم',
+      await sendEscrowChatMessage(
+        chatId,
+        user.id,
+        user.name || 'مستخدم',
         senderRole,
-        text: msgText,
-        time: new Date().toISOString(),
-      });
-      // Also store in global escrow for admin to see
-      const escrowChatMeta = ref(database, `escrowChat/${selectedEscrow.id}`);
-      await update(escrowChatMeta, {
-        escrowId: selectedEscrow.id,
-        buyerId: selectedEscrow.buyerId,
-        buyerName: selectedEscrow.buyerName,
-        sellerId: selectedEscrow.sellerId,
-        sellerName: selectedEscrow.sellerName,
-        lastMessage: msgText,
-        lastMessageTime: new Date().toISOString(),
-      });
+        msgText
+      );
       setChatInput('');
     } catch (error) {
       console.error('Error sending escrow chat message:', error);
@@ -853,7 +904,11 @@ export default function EscrowScreen() {
 
                 {/* Chat messages */}
                 <div className="max-h-[250px] overflow-y-auto p-3 space-y-2" style={{ background: isDark ? '#111' : '#FFF' }}>
-                  {chatMessages.length === 0 ? (
+                  {chatLoading ? (
+                    <div className="flex items-center justify-center py-4">
+                      <div className="w-5 h-5 border-2 border-[#5C1A1B]/30 border-t-[#5C1A1B] rounded-full animate-spin" />
+                    </div>
+                  ) : chatMessages.length === 0 ? (
                     <p className="text-center text-xs py-4" style={{ color: isDark ? '#666' : '#999' }}>لا توجد رسائل بعد</p>
                   ) : (
                     chatMessages.map((msg) => {
@@ -885,6 +940,7 @@ export default function EscrowScreen() {
                       );
                     })
                   )}
+                  <div ref={chatEndRef} />
                 </div>
 
                 {/* Chat input */}
@@ -1137,44 +1193,66 @@ export default function EscrowScreen() {
                 const StatusIcon = statusCfg.icon;
                 const isBuyer = escrow.buyerId === user?.id;
                 return (
-                  <motion.button
+                  <motion.div
                     key={escrow.id}
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.05 * index }}
-                    onClick={() => setSelectedEscrow(escrow)}
-                    whileTap={{ scale: 0.98 }}
                     className="w-full rounded-2xl p-4 text-right"
                     style={{
                       background: isDark ? '#1A1A1A' : '#FFF',
                       border: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'}`,
                     }}
                   >
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: statusCfg.bgColor }}>
-                        <StatusIcon size={18} color={statusCfg.color} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between">
-                          <p className="text-sm font-bold truncate" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>{escrow.title}</p>
-                          <span
-                            className="text-[9px] px-2 py-0.5 rounded-full font-bold shrink-0 mr-2"
-                            style={{ background: statusCfg.bgColor, color: statusCfg.color }}
-                          >
-                            {statusCfg.label}
-                          </span>
+                    <button
+                      onClick={() => setSelectedEscrow(escrow)}
+                      className="w-full text-right"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: statusCfg.bgColor }}>
+                          <StatusIcon size={18} color={statusCfg.color} />
                         </div>
-                        <div className="flex items-center justify-between mt-1">
-                          <p className="text-xs" style={{ color: isDark ? '#888' : '#999' }}>
-                            {isBuyer ? 'مشتري' : 'بائع'} • {timeAgo(escrow.createdAt)}
-                          </p>
-                          <p className="text-xs font-bold" style={{ color: isDark ? '#CCC' : '#333' }}>
-                            {formatBalance(escrow.amount, escrow.currency)} {currencySymbols[escrow.currency]}
-                          </p>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between">
+                            <p className="text-sm font-bold truncate" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>{escrow.title}</p>
+                            <span
+                              className="text-[9px] px-2 py-0.5 rounded-full font-bold shrink-0 mr-2"
+                              style={{ background: statusCfg.bgColor, color: statusCfg.color }}
+                            >
+                              {statusCfg.label}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between mt-1">
+                            <p className="text-xs" style={{ color: isDark ? '#888' : '#999' }}>
+                              {isBuyer ? 'مشتري' : 'بائع'} • {timeAgo(escrow.createdAt)}
+                            </p>
+                            <p className="text-xs font-bold" style={{ color: isDark ? '#CCC' : '#333' }}>
+                              {formatBalance(escrow.amount, escrow.currency)} {currencySymbols[escrow.currency]}
+                            </p>
+                          </div>
                         </div>
                       </div>
+                    </button>
+                    {/* Quick chat button */}
+                    <div className="flex justify-end mt-2">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedEscrow(escrow);
+                          setShowChat(true);
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium"
+                        style={{
+                          background: isDark ? 'rgba(92,26,27,0.15)' : 'rgba(92,26,27,0.06)',
+                          color: '#5C1A1B',
+                          border: `1px solid ${isDark ? 'rgba(92,26,27,0.25)' : 'rgba(92,26,27,0.12)'}`,
+                        }}
+                      >
+                        <MessageSquare size={12} />
+                        محادثة
+                      </button>
                     </div>
-                  </motion.button>
+                  </motion.div>
                 );
               })
             )}
@@ -1400,30 +1478,32 @@ export default function EscrowScreen() {
                 const StatusIcon = statusCfg.icon;
                 const isBuyer = escrow.buyerId === user?.id;
                 return (
-                  <motion.button
+                  <motion.div
                     key={escrow.id}
                     initial={{ opacity: 0, y: 10 }}
                     animate={{ opacity: 1, y: 0 }}
                     transition={{ delay: 0.05 * index }}
-                    onClick={() => setSelectedEscrow(escrow)}
-                    whileTap={{ scale: 0.98 }}
                     className="w-full rounded-2xl p-4 text-right"
                     style={{
                       background: isDark ? '#1A1A1A' : '#FFF',
                       border: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'}`,
                     }}
                   >
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: statusCfg.bgColor }}>
-                        <StatusIcon size={18} color={statusCfg.color} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center justify-between">
-                          <p className="text-sm font-bold truncate" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>{escrow.title}</p>
-                          <span
-                            className="text-[9px] px-2 py-0.5 rounded-full font-bold shrink-0 mr-2"
-                            style={{ background: statusCfg.bgColor, color: statusCfg.color }}
-                          >
+                    <button
+                      onClick={() => setSelectedEscrow(escrow)}
+                      className="w-full text-right"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: statusCfg.bgColor }}>
+                          <StatusIcon size={18} color={statusCfg.color} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center justify-between">
+                            <p className="text-sm font-bold truncate" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>{escrow.title}</p>
+                            <span
+                              className="text-[9px] px-2 py-0.5 rounded-full font-bold shrink-0 mr-2"
+                              style={{ background: statusCfg.bgColor, color: statusCfg.color }}
+                            >
                             {statusCfg.label}
                           </span>
                         </div>
@@ -1435,9 +1515,29 @@ export default function EscrowScreen() {
                             {formatBalance(escrow.amount, escrow.currency)} {currencySymbols[escrow.currency]}
                           </p>
                         </div>
+                        </div>
                       </div>
+                    </button>
+                    {/* Quick chat button for history */}
+                    <div className="flex justify-end mt-2">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedEscrow(escrow);
+                          setShowChat(true);
+                        }}
+                        className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-medium"
+                        style={{
+                          background: isDark ? 'rgba(92,26,27,0.15)' : 'rgba(92,26,27,0.06)',
+                          color: '#5C1A1B',
+                          border: `1px solid ${isDark ? 'rgba(92,26,27,0.25)' : 'rgba(92,26,27,0.12)'}`,
+                        }}
+                      >
+                        <MessageSquare size={12} />
+                        محادثة
+                      </button>
                     </div>
-                  </motion.button>
+                  </motion.div>
                 );
               })
             )}

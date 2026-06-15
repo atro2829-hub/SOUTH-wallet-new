@@ -44,10 +44,10 @@ import { formatBalance, formatNumber, currencySymbols, currencyNames, currencyBa
 import { LOGO_BASE64, RED_LOGO_FILTER } from '@/lib/logo';
 import { serviceIcons } from '@/lib/service-icons';
 import { productIcons } from '@/lib/product-icons';
-import { database } from '@/lib/firebase';
-import { ref, onValue } from 'firebase/database';
+import { supabase } from '@/lib/supabase';
+import { getCategories, subscribeToCategories, type DynamicCategory } from '@/lib/categories';
 import { useAdminSettings } from '@/lib/use-admin-settings';
-import { useFirebaseSync } from '@/lib/use-firebase-sync';
+import { useSupabaseSync } from '@/lib/use-supabase-sync';
 import {
   onForegroundNotification,
   handleNotificationTap,
@@ -216,13 +216,11 @@ export default function HomeScreen() {
     savingsGoals,
     cardColors,
     featureFlags,
-    fbSections,
-    fbApiProviders,
     fbVisibility,
   } = useAppStore();
 
   const { refreshAll } = useAdminSettings();
-  const { refreshUser } = useFirebaseSync();
+  const { refreshUser } = useSupabaseSync();
 
   // Derive balance cards from Firebase card colors in the store
   const balanceCards: BalanceCard[] = [
@@ -318,34 +316,47 @@ export default function HomeScreen() {
     }, 3000);
   };
 
-  // Firebase banners listener
+  // Supabase banners listener
   useEffect(() => {
-    const bannersRef = ref(database, 'adminSettings/banners');
-    const unsubscribe = onValue(bannersRef, (snapshot) => {
-      if (snapshot.exists()) {
-        const data = snapshot.val();
-        const bannersList: Banner[] = Object.keys(data)
-          .map((key) => ({
-            id: key,
-            title: data[key].title || '',
-            description: data[key].description || '',
-            imageUrl: data[key].imageUrl || '',
-            isActive: data[key].isActive ?? true,
-            order: data[key].order ?? 0,
-            link: data[key].link || undefined,
-          }))
-          .filter((b) => b.isActive)
-          .sort((a, b) => a.order - b.order);
-        setBanners(bannersList);
-        setBannerIndex(0);
-      } else {
-        setBanners([]);
-      }
-    }, (error) => {
-      console.error('Firebase banners error:', error);
-    });
+    const fetchBanners = async () => {
+      const { data, error } = await supabase
+        .from('banners')
+        .select('*')
+        .eq('is_active', true)
+        .order('sort_order', { ascending: true });
 
-    return () => unsubscribe();
+      if (error) {
+        console.error('Supabase banners error:', error);
+        setBanners([]);
+        return;
+      }
+
+      const bannersList: Banner[] = (data || []).map((b: any) => ({
+        id: b.id,
+        title: b.title || '',
+        description: b.description || '',
+        imageUrl: b.image_url || '',
+        isActive: b.is_active ?? true,
+        order: b.sort_order ?? 0,
+        link: b.link_target || b.link || undefined,
+      }));
+      setBanners(bannersList);
+      setBannerIndex(0);
+    };
+
+    fetchBanners();
+
+    // Subscribe to realtime changes
+    const channel = supabase
+      .channel('banners-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'banners' }, () => {
+        fetchBanners();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   // Use fbVisibility from store instead of local Firebase listener
@@ -607,57 +618,49 @@ export default function HomeScreen() {
 
   const dividerColor = isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.06)';
 
-  // ─── Build dynamic services from Firebase sections ─────────────────
+  // ─── Build dynamic services from Supabase categories ─────────────────
   interface DynamicService {
     id: string;
     label: string;
     iconKey: string;
-    firebaseIcon?: string; // base64 icon from Firebase
     color?: string;
   }
 
+  // Subscribe to categories realtime changes
+  useEffect(() => {
+    const unsubscribe = subscribeToCategories((_cats) => {
+      // Categories are already synced via use-supabase-sync, this just ensures realtime updates
+    });
+    return () => unsubscribe();
+  }, []);
+
   const dynamicServices = useMemo(() => {
-    const sections = fbSections as Record<string, any> | null;
-    const apiProviders = fbApiProviders as Record<string, any> | null;
-    if (!sections || Object.keys(sections).length === 0) return homeServices as DynamicService[];
+    // Build services from Supabase categories (synced via use-supabase-sync)
+    const supabaseServices: DynamicService[] = categories
+      .filter(c => {
+        // Check visibility from fbVisibility (still used for admin visibility control)
+        const isVisible = (fbVisibility.sections || {})[c.id] !== false;
+        return isVisible;
+      })
+      .map(c => ({
+        id: c.id,
+        label: c.name,
+        iconKey: c.type || c.id,
+      }));
 
-    // Start with the hardcoded services (non-section ones like transfer, recharge, etc.)
-    const staticOnly: DynamicService[] = homeServices.filter(s =>
-      ['transfer', 'recharge', 'digital-wallet', 'currency-exchange'].includes(s.id)
-    );
-
-    // Build services from Firebase sections
-    const fbServices: DynamicService[] = [];
-    const sortedSections = Object.values(sections)
-      .filter((s: any) => s.isActive !== false && (fbVisibility.sections || {})[s.id] !== false)
-      .sort((a: any, b: any) => (a.sortOrder ?? 999) - (b.sortOrder ?? 999));
-
-    for (const section of sortedSections) {
-      const s = section as any;
-      // Determine icon key as fallback
-      let iconKey = s.id;
-      if (s.apiProviderId && apiProviders) {
-        iconKey = 'providers-category';
-      }
-      if (s.type === 'wallet-services' || s.id === 'wallet-services') {
-        iconKey = 'wallet-services-category';
-      }
-
-      fbServices.push({
-        id: s.id,
-        label: s.name || s.id,
-        iconKey,
-        firebaseIcon: s.icon || undefined, // base64 icon from Firebase
-        color: s.color || undefined,
-      });
+    // If we have Supabase categories, use them; otherwise fall back to homeServices
+    if (supabaseServices.length > 0) {
+      // Add static utility services (transfer, recharge, etc.) that aren't categories
+      const staticOnly: DynamicService[] = homeServices.filter(s =>
+        ['transfer', 'recharge'].includes(s.id)
+      );
+      const existingIds = new Set(supabaseServices.map(s => s.id));
+      const remaining: DynamicService[] = homeServices.filter(s => !existingIds.has(s.id) && !['transfer', 'recharge'].includes(s.id));
+      return [...supabaseServices, ...remaining, ...staticOnly];
     }
 
-    // Merge: Firebase sections first, then static services not already covered
-    const sectionIds = new Set(fbServices.map(s => s.id));
-    const remaining: DynamicService[] = homeServices.filter(s => !sectionIds.has(s.id) && !['transfer', 'recharge', 'digital-wallet', 'currency-exchange'].includes(s.id));
-
-    return [...fbServices, ...remaining, ...staticOnly];
-  }, [fbSections, fbApiProviders, fbVisibility]);
+    return homeServices as DynamicService[];
+  }, [categories, fbVisibility]);
 
   return (
     <div className="pb-4">

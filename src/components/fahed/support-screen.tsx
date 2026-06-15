@@ -11,8 +11,7 @@ import {
 } from 'lucide-react';
 import { useAppStore, type SupportTicket } from '@/lib/store';
 import { timeAgo, generateReference, compressBase64Image, faqItems } from '@/lib/utils';
-import { ref, set, get, update, push, onValue, remove } from 'firebase/database';
-import { database } from '@/lib/firebase';
+import { supabase } from '@/lib/supabase';
 
 type SupportView = 'main' | 'ticket-detail' | 'create-ticket';
 type MainTab = 'faq' | 'tickets' | 'chat';
@@ -24,7 +23,7 @@ interface TicketMessage {
   image?: string;
 }
 
-interface FirebaseTicket {
+interface SupabaseTicket {
   id: string;
   userId: string;
   userName: string;
@@ -57,29 +56,63 @@ export default function SupportScreen() {
   const [faqSearch, setFaqSearch] = useState('');
   const [expandedFaq, setExpandedFaq] = useState<number | null>(null);
 
-  // Social links from Firebase
+  // Social links from Supabase
   const [socialLinks, setSocialLinks] = useState<{
     whatsapp: string; contactAdmin: string; contactAdminMessage: string;
   }>({ whatsapp: '', contactAdmin: '', contactAdminMessage: '' });
 
   useEffect(() => {
-    const linksRef = ref(database, 'adminSettings/socialLinks');
-    const unsubscribe = onValue(linksRef, (snapshot) => {
-      if (snapshot.exists()) {
-        const data = snapshot.val();
-        setSocialLinks({
-          whatsapp: data.whatsapp || '',
-          contactAdmin: data.contactAdmin || '',
-          contactAdminMessage: data.contactAdminMessage || '',
-        });
+    const fetchSocialLinks = async () => {
+      try {
+        const { data, error } = await supabase
+          .from('app_config')
+          .select('value')
+          .eq('key', 'socialLinks')
+          .single();
+        if (data?.value) {
+          const val = data.value as Record<string, string>;
+          setSocialLinks({
+            whatsapp: val.whatsapp || '',
+            contactAdmin: val.contactAdmin || '',
+            contactAdminMessage: val.contactAdminMessage || '',
+          });
+        }
+      } catch {
+        // Fallback: try admin_settings table
+        try {
+          const { data: data2 } = await supabase
+            .from('admin_settings')
+            .select('*')
+            .eq('id', 'socialLinks')
+            .single();
+          if (data2) {
+            setSocialLinks({
+              whatsapp: data2.whatsapp || data2.value?.whatsapp || '',
+              contactAdmin: data2.contactAdmin || data2.value?.contactAdmin || '',
+              contactAdminMessage: data2.contactAdminMessage || data2.value?.contactAdminMessage || '',
+            });
+          }
+        } catch {}
       }
-    });
-    return () => unsubscribe();
+    };
+    fetchSocialLinks();
+
+    // Subscribe to changes
+    const channel = supabase
+      .channel('social-links-changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'app_config', filter: 'key=eq.socialLinks' }, () => {
+        fetchSocialLinks();
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   // Tickets
-  const [tickets, setTickets] = useState<FirebaseTicket[]>([]);
-  const [selectedTicket, setSelectedTicket] = useState<FirebaseTicket | null>(null);
+  const [tickets, setTickets] = useState<SupabaseTicket[]>([]);
+  const [selectedTicket, setSelectedTicket] = useState<SupabaseTicket | null>(null);
   const [messageInput, setMessageInput] = useState('');
 
   // Create ticket
@@ -88,72 +121,200 @@ export default function SupportScreen() {
   const [newMessage, setNewMessage] = useState('');
   const [newImage, setNewImage] = useState('');
 
-  // Live chat - real Firebase chat
+  // Live chat
   const [chatMessages, setChatMessages] = useState<{ id: string; sender: 'user' | 'admin'; text: string; time: string; adminName?: string }[]>([]);
   const [chatInput, setChatInput] = useState('');
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Listen to tickets from Firebase
-  useEffect(() => {
-    if (!user?.id) return;
-    const ticketsRef = ref(database, 'supportTickets');
-    const unsubscribe = onValue(ticketsRef, (snapshot) => {
-      if (snapshot.exists()) {
-        const data = snapshot.val();
-        const allTickets = Object.entries(data).map(([key, val]: [string, any]) => ({
-          id: key,
-          userId: val.userId || '',
-          userName: val.userName || '',
-          subject: val.subject || '',
-          message: val.message || '',
-          category: val.category || 'general',
-          status: val.status || 'open',
-          messages: val.messages || [],
-          createdAt: val.createdAt || new Date().toISOString(),
-          image: val.image || undefined,
-        })) as FirebaseTicket[];
-        const userTickets = allTickets
-          .filter(t => t.userId === user.id)
-          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-        setTickets(userTickets);
-      } else {
+  // Load tickets from Supabase
+  const loadTickets = async () => {
+    if (!user?.userId) return;
+    try {
+      const { data: ticketData, error: ticketError } = await supabase
+        .from('support_tickets')
+        .select('*')
+        .eq('user_id', user.userId)
+        .order('created_at', { ascending: false });
+
+      if (ticketError) throw ticketError;
+
+      if (!ticketData || ticketData.length === 0) {
         setTickets([]);
+        return;
       }
-    });
-    return () => unsubscribe();
-  }, [user?.id]);
+
+      // Load messages for all tickets
+      const ticketIds = ticketData.map(t => t.id);
+      const { data: messagesData, error: messagesError } = await supabase
+        .from('support_messages')
+        .select('*')
+        .in('ticket_id', ticketIds)
+        .order('created_at', { ascending: true });
+
+      if (messagesError) throw messagesError;
+
+      const formattedTickets: SupabaseTicket[] = ticketData.map(ticket => {
+        const ticketMessages = (messagesData || [])
+          .filter(m => m.ticket_id === ticket.id)
+          .map(m => ({
+            sender: m.sender_type === 'admin' ? 'support' as const : m.sender_type as 'user',
+            text: m.message || '',
+            time: m.created_at || new Date().toISOString(),
+            image: m.attachment_url || undefined,
+          }));
+
+        return {
+          id: ticket.id,
+          userId: ticket.user_id || '',
+          userName: user.name || 'مستخدم',
+          subject: ticket.subject || '',
+          message: ticket.message || '',
+          category: ticket.category || 'general',
+          status: ticket.status || 'open',
+          messages: ticketMessages,
+          createdAt: ticket.created_at || new Date().toISOString(),
+          image: undefined,
+        };
+      });
+
+      setTickets(formattedTickets);
+    } catch (e) {
+      console.error('Failed to load tickets:', e);
+      setTickets([]);
+    }
+  };
+
+  // Listen to tickets from Supabase
+  useEffect(() => {
+    if (!user?.userId) return;
+    loadTickets();
+
+    // Subscribe to ticket changes
+    const ticketsChannel = supabase
+      .channel('user-support-tickets')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'support_tickets', filter: `user_id=eq.${user.userId}` }, () => {
+        loadTickets();
+      })
+      .subscribe();
+
+    // Subscribe to new messages for user's tickets
+    const messagesChannel = supabase
+      .channel('user-support-messages')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'support_messages' }, (payload) => {
+        // Reload tickets when a new message arrives
+        loadTickets();
+        // Also update selected ticket if viewing it
+        if (selectedTicket && payload.new.ticket_id === selectedTicket.id) {
+          const newMsg: TicketMessage = {
+            sender: payload.new.sender_type === 'admin' ? 'support' : 'user',
+            text: payload.new.message || '',
+            time: payload.new.created_at || new Date().toISOString(),
+            image: payload.new.attachment_url || undefined,
+          };
+          setSelectedTicket(prev => prev ? { ...prev, messages: [...prev.messages, newMsg] } : prev);
+        }
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(ticketsChannel);
+      supabase.removeChannel(messagesChannel);
+    };
+  }, [user?.userId]);
 
   // Auto-scroll to bottom of messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [selectedTicket?.messages?.length]);
 
-  // Listen to live chat messages from Firebase
-  useEffect(() => {
-    if (!user?.id) return;
-    const chatRef = ref(database, `liveChats/${user.id}`);
-    const unsubscribe = onValue(chatRef, (snapshot) => {
-      if (snapshot.exists()) {
-        const data = snapshot.val();
-        const msgsData = data.messages || {};
-        const msgs = Object.entries(msgsData).map(([id, val]: [string, any]) => ({
-          id,
-          sender: val.sender as 'user' | 'admin',
-          text: val.text || '',
-          time: val.time || '',
-          adminName: val.senderName || '',
+  // Load live chat from Supabase
+  const loadLiveChat = async () => {
+    if (!user?.userId) return;
+    try {
+      // Find or create active chat
+      const { data: chatData, error: chatError } = await supabase
+        .from('support_livechat')
+        .select('*')
+        .eq('user_id', user.userId)
+        .neq('status', 'closed')
+        .order('created_at', { ascending: false })
+        .limit(1);
+
+      if (chatError) throw chatError;
+
+      if (chatData && chatData.length > 0) {
+        const chat = chatData[0];
+        setActiveChatId(chat.id);
+
+        // Load messages for this chat
+        const { data: msgsData, error: msgsError } = await supabase
+          .from('livechat_messages')
+          .select('*')
+          .eq('chat_id', chat.id)
+          .order('created_at', { ascending: true });
+
+        if (msgsError) throw msgsError;
+
+        const formatted = (msgsData || []).map(m => ({
+          id: m.id,
+          sender: m.sender_type as 'user' | 'admin',
+          text: m.content || m.message_type === 'text' ? (m.content || '') : '',
+          time: m.created_at || new Date().toISOString(),
+          adminName: m.sender_type === 'admin' ? 'فريق الدعم' : '',
         }));
-        msgs.sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
-        setChatMessages(msgs);
+        setChatMessages(formatted);
       } else {
+        setActiveChatId(null);
         setChatMessages([]);
       }
-    });
-    return () => unsubscribe();
-  }, [user?.id]);
+    } catch (e) {
+      console.error('Failed to load live chat:', e);
+      setChatMessages([]);
+    }
+  };
+
+  // Listen to live chat messages from Supabase
+  useEffect(() => {
+    if (!user?.userId) return;
+    loadLiveChat();
+
+    // Subscribe to livechat changes
+    const livechatChannel = supabase
+      .channel('user-livechat')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'support_livechat', filter: `user_id=eq.${user.userId}` }, () => {
+        loadLiveChat();
+      })
+      .subscribe();
+
+    // Subscribe to livechat messages
+    const livechatMessagesChannel = supabase
+      .channel('user-livechat-messages')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'livechat_messages' }, (payload) => {
+        if (activeChatId && payload.new.chat_id === activeChatId) {
+          const newMsg = {
+            id: payload.new.id,
+            sender: payload.new.sender_type as 'user' | 'admin',
+            text: payload.new.content || '',
+            time: payload.new.created_at || new Date().toISOString(),
+            adminName: payload.new.sender_type === 'admin' ? 'فريق الدعم' : '',
+          };
+          setChatMessages(prev => [...prev, newMsg]);
+        } else {
+          // Reload if it's for our chat but we don't have activeChatId set yet
+          loadLiveChat();
+        }
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(livechatChannel);
+      supabase.removeChannel(livechatMessagesChannel);
+    };
+  }, [user?.userId, activeChatId]);
 
   // Auto-scroll chat
   useEffect(() => {
@@ -166,75 +327,105 @@ export default function SupportScreen() {
   });
 
   const handleCreateTicket = async () => {
-    if (!newSubject || !newMessage || !user) return;
-    const id = generateReference();
-    const ticket: FirebaseTicket = {
-      id, userId: user.id, userName: user.name, subject: newSubject,
-      message: newMessage, category: newCategory, status: 'open',
-      messages: [{ sender: 'user', text: newMessage, time: new Date().toISOString(), image: newImage || undefined }],
-      createdAt: new Date().toISOString(), image: newImage || undefined,
-    };
+    if (!newSubject || !newMessage || !user?.userId) return;
     try {
-      await set(ref(database, `supportTickets/${id}`), ticket);
-    } catch {}
-    addTicket({ id, userId: user.id, userName: user.name, subject: newSubject, message: newMessage, category: newCategory, status: 'open', messages: [{ sender: 'user', text: newMessage, time: new Date().toISOString() }], createdAt: new Date().toISOString() });
-    setNewSubject(''); setNewMessage(''); setNewImage(''); setView('main'); setActiveTab('tickets');
+      // Create ticket in support_tickets table
+      const { data: ticketData, error: ticketError } = await supabase
+        .from('support_tickets')
+        .insert({
+          user_id: user.userId,
+          subject: newSubject,
+          message: newMessage,
+          category: newCategory,
+          status: 'open',
+          priority: 'medium',
+        })
+        .select()
+        .single();
+
+      if (ticketError) throw ticketError;
+
+      // Insert first message into support_messages
+      const { error: msgError } = await supabase
+        .from('support_messages')
+        .insert({
+          ticket_id: ticketData.id,
+          sender_type: 'user',
+          message: newMessage,
+          attachment_url: newImage || null,
+        });
+
+      if (msgError) throw msgError;
+
+      addTicket({ id: ticketData.id, userId: user.userId, userName: user.name, subject: newSubject, message: newMessage, category: newCategory, status: 'open', messages: [{ sender: 'user', text: newMessage, time: new Date().toISOString() }], createdAt: new Date().toISOString() });
+      setNewSubject(''); setNewMessage(''); setNewImage(''); setView('main'); setActiveTab('tickets');
+    } catch (e) {
+      console.error('Failed to create ticket:', e);
+    }
   };
 
   const handleSendMessage = async () => {
     if (!messageInput.trim() || !selectedTicket || !user) return;
-    const newMsg: TicketMessage = { sender: 'user', text: messageInput, time: new Date().toISOString() };
-    const updatedMessages = [...(selectedTicket.messages || []), newMsg];
-    const updatedTicket = { ...selectedTicket, messages: updatedMessages };
+    const messageText = messageInput.trim();
     try {
-      await update(ref(database, `supportTickets/${selectedTicket.id}`), { messages: updatedMessages });
-    } catch {}
-    setSelectedTicket(updatedTicket);
-    setMessageInput('');
+      const { error } = await supabase
+        .from('support_messages')
+        .insert({
+          ticket_id: selectedTicket.id,
+          sender_type: 'user',
+          message: messageText,
+        });
+
+      if (error) throw error;
+
+      const newMsg: TicketMessage = { sender: 'user', text: messageText, time: new Date().toISOString() };
+      setSelectedTicket(prev => prev ? { ...prev, messages: [...prev.messages, newMsg] } : prev);
+      setMessageInput('');
+    } catch (e) {
+      console.error('Failed to send message:', e);
+    }
   };
 
-  // Send live chat message to Firebase (using liveChats path to match admin panel)
+  // Send live chat message to Supabase
   const handleSendChat = async () => {
-    if (!chatInput.trim() || !user?.id) return;
+    if (!chatInput.trim() || !user?.userId) return;
     const messageText = chatInput.trim();
     try {
-      const newMsg = {
-        sender: 'user',
-        text: messageText,
-        time: new Date().toISOString(),
-        senderName: user.name || 'مستخدم',
-      };
+      let chatId = activeChatId;
 
-      // Push message to liveChats/{userId}/messages (same path admin reads from)
-      await push(ref(database, `liveChats/${user.id}/messages`), newMsg);
+      // Create a new chat if none exists
+      if (!chatId) {
+        const { data: newChat, error: chatError } = await supabase
+          .from('support_livechat')
+          .insert({
+            user_id: user.userId,
+            status: 'waiting',
+          })
+          .select()
+          .single();
 
-      // Update conversation metadata for admin panel
-      await update(ref(database, `liveChats/${user.id}`), {
-        userId: user.id,
-        userName: user.name || 'مستخدم',
-        userPhone: user.phone || '',
-        userEmail: user.email || '',
-        status: 'active',
-        updatedAt: new Date().toISOString(),
-        createdAt: (await get(ref(database, `liveChats/${user.id}/createdAt`))).exists() ? undefined : new Date().toISOString(),
-      });
-
-      // Send push notification to admin about new chat message
-      try {
-        const adminNotifId = `chat_notif_${Date.now()}`;
-        await set(ref(database, `adminNotifications/${adminNotifId}`), {
-          id: adminNotifId,
-          title: 'رسالة دعم جديدة',
-          body: `${user.name || 'مستخدم'}: ${messageText.substring(0, 50)}`,
-          type: 'transaction',
-          category: 'support',
-          isRead: false,
-          createdAt: new Date().toISOString(),
-          data: { action: 'support_chat', userId: user.id },
-        });
-      } catch (notifErr) {
-        console.warn('Failed to notify admin about chat:', notifErr);
+        if (chatError) throw chatError;
+        chatId = newChat.id;
+        setActiveChatId(chatId);
       }
+
+      // Insert message into livechat_messages
+      const { error: msgError } = await supabase
+        .from('livechat_messages')
+        .insert({
+          chat_id: chatId,
+          sender_type: 'user',
+          message_type: 'text',
+          content: messageText,
+        });
+
+      if (msgError) throw msgError;
+
+      // Update chat's updated_at
+      await supabase
+        .from('support_livechat')
+        .update({ updated_at: new Date().toISOString() })
+        .eq('id', chatId);
 
       setChatInput('');
     } catch (e) {

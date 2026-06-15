@@ -39,6 +39,7 @@ const GiftVoucherScreen = lazy(() => import('@/components/fahed/gift-voucher-scr
 const PinSetupScreen = lazy(() => import('@/components/fahed/pin-setup-screen'));
 const WalletTransferScreen = lazy(() => import('@/components/fahed/wallet-transfer-screen'));
 const EscrowScreen = lazy(() => import('@/components/fahed/escrow-screen'));
+const DirectChatScreen = lazy(() => import('@/components/fahed/direct-chat-screen'));
 
 // Eagerly loaded components (critical for initial render or frequently used)
 import BottomNav from '@/components/fahed/bottom-nav';
@@ -671,6 +672,7 @@ function AppContent() {
     'pin-setup': PinSetupScreen,
     'wallet-transfer': WalletTransferScreen,
     escrow: EscrowScreen,
+    'direct-chat': DirectChatScreen,
   };
 
   if (activeScreen in overlayScreens) {

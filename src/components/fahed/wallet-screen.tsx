@@ -24,6 +24,7 @@ import {
   Minus,
   Download,
   Upload,
+  MessageCircle,
 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import type { CardColor } from '@/lib/store';
@@ -1052,6 +1053,23 @@ export default function WalletScreen() {
                     <span className="text-xs font-medium" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
                       {selectedTransaction.description}
                     </span>
+                  </div>
+                )}
+                {/* Direct Chat button for transfers */}
+                {selectedTransaction.type === 'transfer' && (
+                  <div className="pt-4">
+                    <motion.button
+                      whileTap={{ scale: 0.97 }}
+                      onClick={() => {
+                        setSelectedTransaction(null);
+                        setActiveScreen('direct-chat');
+                      }}
+                      className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl text-white text-sm font-semibold"
+                      style={{ background: 'linear-gradient(135deg, #5C1A1B 0%, #3D0F10 100%)' }}
+                    >
+                      <MessageCircle size={16} />
+                      محادثة مع {selectedTransaction.toUserId === user?.id ? 'المرسل' : 'المستلم'}
+                    </motion.button>
                   </div>
                 )}
               </div>

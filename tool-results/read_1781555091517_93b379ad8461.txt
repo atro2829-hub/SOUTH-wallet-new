@@ -1,0 +1,502 @@
+     1→   600→   600→  const handleBannerClick = (banner: Banner) => {
+     2→   601→   601→    if (banner.url) {
+     3→   602→   602→      window.open(banner.url, '_blank', 'noopener,noreferrer');
+     4→   603→   603→    } else if (banner.link) {
+     5→   604→   604→      window.open(banner.link, '_blank', 'noopener,noreferrer');
+     6→   605→   605→    }
+     7→   606→   606→  };
+     8→   607→   607→
+     9→   608→   608→  const dividerColor = isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.06)';
+    10→   609→   609→
+    11→   610→   610→  // ─── Build dynamic services from Firebase sections ─────────────────
+    12→   611→   611→  interface DynamicService {
+    13→   612→   612→    id: string;
+    14→   613→   613→    label: string;
+    15→   614→   614→    iconKey: string;
+    16→   615→   615→    firebaseIcon?: string; // base64 icon from Firebase
+    17→   616→   616→    color?: string;
+    18→   617→   617→  }
+    19→   618→   618→
+    20→   619→   619→  const dynamicServices = useMemo(() => {
+    21→   620→   620→    const sections = fbSections as Record<string, any> | null;
+    22→   621→   621→    const apiProviders = fbApiProviders as Record<string, any> | null;
+    23→   622→   622→    if (!sections || Object.keys(sections).length === 0) return homeServices as DynamicService[];
+    24→   623→   623→
+    25→   624→   624→    // Start with the hardcoded services (non-section ones like transfer, recharge, etc.)
+    26→   625→   625→    const staticOnly: DynamicService[] = homeServices.filter(s =>
+    27→   626→   626→      ['transfer', 'recharge', 'digital-wallet', 'currency-exchange'].includes(s.id)
+    28→   627→   627→    );
+    29→   628→   628→
+    30→   629→   629→    // Build services from Firebase sections
+    31→   630→   630→    const fbServices: DynamicService[] = [];
+    32→   631→   631→    const sortedSections = Object.values(sections)
+    33→   632→   632→      .filter((s: any) => s.isActive !== false && (fbVisibility.sections || {})[s.id] !== false)
+    34→   633→   633→      .sort((a: any, b: any) => (a.sortOrder ?? 999) - (b.sortOrder ?? 999));
+    35→   634→   634→
+    36→   635→   635→    for (const section of sortedSections) {
+    37→   636→   636→      const s = section as any;
+    38→   637→   637→      // Determine icon key as fallback
+    39→   638→   638→      let iconKey = s.id;
+    40→   639→   639→      if (s.apiProviderId && apiProviders) {
+    41→   640→   640→        iconKey = 'providers-category';
+    42→   641→   641→      }
+    43→   642→   642→      if (s.type === 'wallet-services' || s.id === 'wallet-services') {
+    44→   643→   643→        iconKey = 'wallet-services-category';
+    45→   644→   644→      }
+    46→   645→   645→
+    47→   646→   646→      fbServices.push({
+    48→   647→   647→        id: s.id,
+    49→   648→   648→        label: s.name || s.id,
+    50→   649→   649→        iconKey,
+    51→   650→   650→        firebaseIcon: s.icon || undefined, // base64 icon from Firebase
+    52→   651→   651→        color: s.color || undefined,
+    53→   652→   652→      });
+    54→   653→   653→    }
+    55→   654→   654→
+    56→   655→   655→    // Merge: Firebase sections first, then static services not already covered
+    57→   656→   656→    const sectionIds = new Set(fbServices.map(s => s.id));
+    58→   657→   657→    const remaining: DynamicService[] = homeServices.filter(s => !sectionIds.has(s.id) && !['transfer', 'recharge', 'digital-wallet', 'currency-exchange'].includes(s.id));
+    59→   658→   658→
+    60→   659→   659→    return [...fbServices, ...remaining, ...staticOnly];
+    61→   660→   660→  }, [fbSections, fbApiProviders, fbVisibility]);
+    62→   661→   661→
+    63→   662→   662→  return (
+    64→   663→   663→    <div className="pb-4">
+    65→   664→   664→      {/* ========================================
+    66→   665→   665→          HEADER - Jaib Style
+    67→   666→   666→          Right: Greeting + Name
+    68→   667→   667→          Left: Notifications bell + Support
+    69→   668→   668→          ======================================== */}
+    70→   669→   669→      <motion.div
+    71→   670→   670→        initial={{ opacity: 0, y: -10 }}
+    72→   671→   671→        animate={{ opacity: 1, y: 0 }}
+    73→   672→   672→        transition={{ duration: 0.4 }}
+    74→   673→   673→        className="px-4 pt-4 pb-2"
+    75→   674→   674→      >
+    76→   675→   675→        <div className="flex items-center justify-between" style={{ height: 56 }}>
+    77→   676→   676→          {/* Right side - Logo + Greeting */}
+    78→   677→   677→          <div className="flex items-center gap-3">
+    79→   678→   678→            <div
+    80→   679→   679→              className="w-10 h-10 rounded-xl overflow-hidden flex items-center justify-center"
+    81→   680→   680→              style={{ background: isDark ? 'rgba(92,26,27,0.08)' : 'rgba(92,26,27,0.06)', boxShadow: '0 2px 8px rgba(92,26,27,0.15)' }}
+    82→   681→   681→            >
+    83→   682→   682→              <img src={LOGO_BASE64} alt="الجنوب" className="w-full h-full object-cover" style={{ filter: RED_LOGO_FILTER }} />
+    84→   683→   683→            </div>
+    85→   684→   684→            <button onClick={handleGreetingTap} className="active:scale-95 transition-transform">
+    86→   685→   685→              <h1 className="text-base font-bold" style={{ color: isDark ? '#FFFFFF' : '#1a1a1a' }}>
+    87→   686→   686→                {getGreeting()}، {user?.name || 'مستخدم'}
+    88→   687→   687→              </h1>
+    89→   688→   688→              <p className="text-[11px]" style={{ color: isDark ? '#666' : '#999' }}>محفظة الجنوب</p>
+    90→   689→   689→            </button>
+    91→   690→   690→          </div>
+    92→   691→   691→
+    93→   692→   692→          {/* Left side - Gift Code + Notifications + Support */}
+    94→   693→   693→          <div className="flex items-center gap-2">
+    95→   694→   694→            <button
+    96→   695→   695→              onClick={() => setActiveScreen('promo')}
+    97→   696→   696→              className="w-10 h-10 rounded-xl flex items-center justify-center active:scale-95 transition-transform"
+    98→   697→   697→              style={{ background: 'rgba(92,26,27,0.08)' }}
+    99→   698→   698→              title="كود هدية"
+   100→   699→   699→            >
+   101→   700→   700→              <Gift size={20} strokeWidth={1.5} color="#5C1A1B" />
+   102→   701→   701→            </button>
+   103→   702→   702→            <button
+   104→   703→   703→              onClick={() => setActiveScreen('notifications')}
+   105→   704→   704→              className="relative w-10 h-10 rounded-xl flex items-center justify-center active:scale-95 transition-transform"
+   106→   705→   705→              style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}
+   107→   706→   706→            >
+   108→   707→   707→              <Bell size={20} strokeWidth={1.5} color={isDark ? '#CCC' : '#666'} />
+   109→   708→   708→              {unreadNotifCount > 0 && (
+   110→   709→   709→                <span
+   111→   710→   710→                  className="absolute -top-0.5 -right-0.5 min-w-[16px] h-[16px] rounded-full flex items-center justify-center text-[9px] font-bold text-white px-1"
+   112→   711→   711→                  style={{ background: '#5C1A1B' }}
+   113→   712→   712→                >
+   114→   713→   713→                  {unreadNotifCount}
+   115→   714→   714→                </span>
+   116→   715→   715→              )}
+   117→   716→   716→            </button>
+   118→   717→   717→            <button
+   119→   718→   718→              onClick={handleRefresh}
+   120→   719→   719→              disabled={isRefreshing}
+   121→   720→   720→              className="w-10 h-10 rounded-xl flex items-center justify-center active:scale-95 transition-transform"
+   122→   721→   721→              style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}
+   123→   722→   722→              title="تحديث"
+   124→   723→   723→            >
+   125→   724→   724→              <RefreshCw size={20} strokeWidth={1.5} color={isDark ? '#CCC' : '#666'} className={isRefreshing ? 'animate-spin' : ''} />
+   126→   725→   725→            </button>
+   127→   726→   726→            <button
+   128→   727→   727→              onClick={() => setActiveScreen('support')}
+   129→   728→   728→              className="w-10 h-10 rounded-xl flex items-center justify-center active:scale-95 transition-transform"
+   130→   729→   729→              style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}
+   131→   730→   730→            >
+   132→   731→   731→              <Headphones size={20} strokeWidth={1.5} color={isDark ? '#CCC' : '#666'} />
+   133→   732→   732→            </button>
+   134→   733→   733→          </div>
+   135→   734→   734→        </div>
+   136→   735→   735→      </motion.div>
+   137→   736→   736→
+   138→   737→   737→      {/* ── Foreground Notification Deep-Link Banner ── */}
+   139→   738→   738→      <AnimatePresence>
+   140→   739→   739→        {notifBanner && (
+   141→   740→   740→          <motion.div
+   142→   741→   741→            key="notif-deeplink-banner"
+   143→   742→   742→            initial={{ opacity: 0, y: -30, height: 0 }}
+   144→   743→   743→            animate={{ opacity: 1, y: 0, height: 'auto' }}
+   145→   744→   744→            exit={{ opacity: 0, y: -30, height: 0 }}
+   146→   745→   745→            transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+   147→   746→   746→            className="px-4 overflow-hidden"
+   148→   747→   747→          >
+   149→   748→   748→            <div
+   150→   749→   749→              onClick={handleNotifBannerTap}
+   151→   750→   750→              className="flex items-center gap-3 p-3 rounded-2xl cursor-pointer active:scale-[0.98] transition-transform"
+   152→   751→   751→              style={{
+   153→   752→   752→                background: isDark
+   154→   753→   753→                  ? 'linear-gradient(135deg, #1A1A1A, #222)'
+   155→   754→   754→                  : 'linear-gradient(135deg, #FFFFFF, #F9F9F9)',
+   156→   755→   755→                border: `1px solid ${isDark ? 'rgba(92,26,27,0.3)' : 'rgba(92,26,27,0.15)'}`,
+   157→   756→   756→                boxShadow: isDark
+   158→   757→   757→                  ? '0 4px 16px rgba(92,26,27,0.2)'
+   159→   758→   758→                  : '0 4px 16px rgba(92,26,27,0.08)',
+   160→   759→   759→              }}
+   161→   760→   760→            >
+   162→   761→   761→              {/* Icon */}
+   163→   762→   762→              <div
+   164→   763→   763→                className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+   165→   764→   764→                style={{ background: 'rgba(92,26,27,0.12)' }}
+   166→   765→   765→              >
+   167→   766→   766→                <Bell size={18} strokeWidth={1.5} color="#5C1A1B" />
+   168→   767→   767→              </div>
+   169→   768→   768→
+   170→   769→   769→              {/* Content */}
+   171→   770→   770→              <div className="flex-1 min-w-0">
+   172→   771→   771→                <p
+   173→   772→   772→                  className="text-[12px] font-bold truncate"
+   174→   773→   773→                  style={{ color: isDark ? '#FFF' : '#1a1a1a' }}
+   175→   774→   774→                >
+   176→   775→   775→                  {notifBanner.notification.title}
+   177→   776→   776→                </p>
+   178→   777→   777→                <p
+   179→   778→   778→                  className="text-[10px] truncate mt-0.5"
+   180→   779→   779→                  style={{ color: isDark ? '#999' : '#666' }}
+   181→   780→   780→                >
+   182→   781→   781→                  {notifBanner.notification.body}
+   183→   782→   782→                </p>
+   184→   783→   783→                {/* Deep-link target label */}
+   185→   784→   784→                {notifBanner.parsed.type !== 'unknown' && (
+   186→   785→   785→                  <div
+   187→   786→   786→                    className="flex items-center gap-1 mt-1 w-fit"
+   188→   787→   787→                    style={{ background: 'rgba(92,26,27,0.08)', borderRadius: 6, padding: '2px 6px' }}
+   189→   788→   788→                  >
+   190→   789→   789→                    <ArrowUpRight size={8} strokeWidth={2} color="#5C1A1B" />
+   191→   790→   790→                    <span className="text-[8px] font-medium" style={{ color: '#5C1A1B' }}>
+   192→   791→   791→                      {notifBanner.parsed.type === 'url' ? 'رابط خارجي' :
+   193→   792→   792→                        notifBanner.parsed.type === 'transaction' ? 'المعاملة' :
+   194→   793→   793→                        notifBanner.parsed.type === 'deposit' ? 'الإيداع' :
+   195→   794→   794→                        notifBanner.parsed.type === 'withdraw' ? 'السحب' :
+   196→   795→   795→                        notifBanner.parsed.type === 'order' ? 'الطلب' :
+   197→   796→   796→                        notifBanner.parsed.type === 'kyc' ? 'التوثيق' :
+   198→   797→   797→                        notifBanner.parsed.type === 'exchange' ? 'التحويل' :
+   199→   798→   798→                        notifBanner.parsed.type === 'services' ? 'الخدمات' :
+   200→   799→   799→                        notifBanner.parsed.type === 'promo' ? 'العروض' :
+   201→   800→   800→                        notifBanner.parsed.type === 'support' ? 'الدعم' :
+   202→   801→   801→                        notifBanner.parsed.type === 'profile' ? 'الحساب' :
+   203→   802→   802→                        notifBanner.parsed.type}
+   204→   803→   803→                    </span>
+   205→   804→   804→                  </div>
+   206→   805→   805→                )}
+   207→   806→   806→              </div>
+   208→   807→   807→
+   209→   808→   808→              {/* Dismiss button */}
+   210→   809→   809→              <button
+   211→   810→   810→                onClick={(e) => {
+   212→   811→   811→                  e.stopPropagation();
+   213→   812→   812→                  dismissNotifBanner();
+   214→   813→   813→                }}
+   215→   814→   814→                className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0 opacity-50 hover:opacity-100 transition-opacity"
+   216→   815→   815→                style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}
+   217→   816→   816→              >
+   218→   817→   817→                <X size={14} strokeWidth={1.5} color={isDark ? '#888' : '#AAA'} />
+   219→   818→   818→              </button>
+   220→   819→   819→            </div>
+   221→   820→   820→          </motion.div>
+   222→   821→   821→        )}
+   223→   822→   822→      </AnimatePresence>
+   224→   823→   823→
+   225→   824→   824→      {/* ========================================
+   226→   825→   825→          BALANCE CARD CAROUSEL - Jaib Style
+   227→   826→   826→          Red card with "رصيدك" text + eye toggle
+   228→   827→   827→          ======================================== */}
+   229→   828→   828→      <div className="relative z-20">
+   230→   829→   829→        <div
+   231→   830→   830→          ref={containerRef}
+   232→   831→   831→          className="relative overflow-hidden"
+   233→   832→   832→          style={{ touchAction: 'pan-y', paddingLeft: CARD_SIDE_PADDING, paddingRight: CARD_SIDE_PADDING }}
+   234→   833→   833→          dir="ltr"
+   235→   834→   834→        >
+   236→   835→   835→          <div
+   237→   836→   836→            data-carousel-track=""
+   238→   837→   837→            className="flex cursor-grab active:cursor-grabbing select-none"
+   239→   838→   838→            style={{ gap: CARD_GAP }}
+   240→   839→   839→            onTouchStart={handleTouchStart}
+   241→   840→   840→            onTouchMove={handleTouchMove}
+   242→   841→   841→            onTouchEnd={handleTouchEnd}
+   243→   842→   842→            onMouseDown={handleTouchStart}
+   244→   843→   843→            onMouseMove={handleTouchMove}
+   245→   844→   844→            onMouseUp={handleTouchEnd}
+   246→   845→   845→            onMouseLeave={() => { if (isDragging.current) handleTouchEnd(); }}
+   247→   846→   846→          >
+   248→   847→   847→            {balanceCards.map((card, index) => (
+   249→   848→   848→              <div
+   250→   849→   849→                key={card.currency}
+   251→   850→   850→                className="shrink-0 relative overflow-hidden select-none"
+   252→   851→   851→                style={{
+   253→   852→   852→                  width: getCardWidth(),
+   254→   853→   853→                  height: index === activeCardIndex ? 195 : 190,
+   255→   854→   854→                  borderRadius: 20,
+   256→   855→   855→                  background: index === activeCardIndex
+   257→   856→   856→                    ? `linear-gradient(145deg, ${card.accentColor}DD, ${card.accentColorEnd}CC)`
+   258→   857→   857→                    : 'rgba(255, 255, 255, 0.03)',
+   259→   858→   858→                  backdropFilter: index === activeCardIndex ? 'blur(30px)' : 'blur(20px)',
+   260→   859→   859→                  WebkitBackdropFilter: index === activeCardIndex ? 'blur(30px)' : 'blur(20px)',
+   261→   860→   860→                  border: index === activeCardIndex
+   262→   861→   861→                    ? `1px solid rgba(${hexToRgb(card.accentColor)}, 0.5)`
+   263→   862→   862→                    : '1px solid rgba(255, 255, 255, 0.06)',
+   264→   863→   863→                  boxShadow: index === activeCardIndex
+   265→   864→   864→                    ? `0 12px 40px ${card.glowColor}, inset 0 1px 0 rgba(255,255,255,0.2)`
+   266→   865→   865→                    : '0 4px 16px rgba(0, 0, 0, 0.1)',
+   267→   866→   866→                  transform: index === activeCardIndex ? 'scale(1)' : 'scale(0.92)',
+   268→   867→   867→                  opacity: index === activeCardIndex ? 1 : 0.5,
+   269→   868→   868→                  transition: 'transform 0.4s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.4s ease, box-shadow 0.4s ease, background 0.4s ease, border 0.4s ease, height 0.3s ease',
+   270→   869→   869→                }}
+   271→   870→   870→                onClick={() => snapToCard(index)}
+   272→   871→   871→                dir="rtl"
+   273→   872→   872→              >
+   274→   873→   873→                {/* Logo Watermark */}
+   275→   874→   874→                <img src={LOGO_BASE64} alt="" className="absolute bottom-1 left-1 w-24 h-24 object-contain opacity-[0.03] pointer-events-none select-none" aria-hidden="true" />
+   276→   875→   875→                <div className="absolute inset-0 shimmer pointer-events-none" />
+   277→   876→   876→                <svg className="absolute inset-0 w-full h-full" xmlns="http://www.w3.org/2000/svg">
+   278→   877→   877→                  <defs>
+   279→   878→   878→                    <pattern id={`grid-${card.currency}`} width="40" height="40" patternUnits="userSpaceOnUse">
+   280→   879→   879→                      <circle cx="20" cy="20" r="1" fill={card.patternColor} />
+   281→   880→   880→                    </pattern>
+   282→   881→   881→                  </defs>
+   283→   882→   882→                  <rect width="100%" height="100%" fill={`url(#grid-${card.currency})`} />
+   284→   883→   883→                </svg>
+   285→   884→   884→                <div className="absolute -top-16 -right-16 w-40 h-40 rounded-full" style={{ background: index === activeCardIndex ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.03)' }} />
+   286→   885→   885→                <div className="absolute -bottom-10 -left-10 w-32 h-32 rounded-full" style={{ background: index === activeCardIndex ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.02)' }} />
+   287→   886→   886→                <svg className="absolute bottom-0 left-0 w-full" viewBox="0 0 300 40" preserveAspectRatio="none" style={{ height: '35px' }}>
+   288→   887→   887→                  <path d="M0,30 C50,10 100,40 150,25 C200,10 250,35 300,20 L300,40 L0,40 Z" fill={index === activeCardIndex ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.02)'} />
+   289→   888→   888→                </svg>
+   290→   889→   889→                {/* Animated gradient border glow for active card */}
+   291→   890→   890→                {index === activeCardIndex && (
+   292→   891→   891→                  <div
+   293→   892→   892→                    className="absolute inset-0 pointer-events-none"
+   294→   893→   893→                    style={{
+   295→   894→   894→                      borderRadius: 20,
+   296→   895→   895→                      border: `1px solid rgba(${hexToRgb(card.accentColor)}, 0.15)`,
+   297→   896→   896→                      boxShadow: `inset 0 0 20px rgba(${hexToRgb(card.accentColor)}, 0.1), 0 0 30px rgba(${hexToRgb(card.accentColor)}, 0.08)`,
+   298→   897→   897→                      animation: 'pulse 3s ease-in-out infinite',
+   299→   898→   898→                    }}
+   300→   899→   899→                  />
+   301→   900→   900→                )}
+   302→   901→   901→
+   303→   902→   902→                {/* Card Content - Jaib Style: Logo + Branding + Balance */}
+   304→   903→   903→                <div className="relative z-10 h-full flex flex-col justify-between p-6">
+   305→   904→   904→                  {/* Top Row - Logo + Brand Name (right) | Eye toggle (left) */}
+   306→   905→   905→                  <div className="flex items-center justify-between">
+   307→   906→   906→                    {/* Logo + Brand Name - Jaib style */}
+   308→   907→   907→                    <div className="flex items-center gap-2.5">
+   309→   908→   908→                      <div
+   310→   909→   909→                        className="w-9 h-9 rounded-lg overflow-hidden flex items-center justify-center shrink-0"
+   311→   910→   910→                        style={{
+   312→   911→   911→                          background: 'rgba(255,255,255,0.12)',
+   313→   912→   912→                          boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+   314→   913→   913→                        }}
+   315→   914→   914→                      >
+   316→   915→   915→                        {/* White logo on colored card background */}
+   317→   916→   916→                        <img src={LOGO_BASE64} alt="الجنوب" className="w-full h-full object-cover" />
+   318→   917→   917→                      </div>
+   319→   918→   918→                      <div className="flex flex-col leading-none">
+   320→   919→   919→                        <span className="text-white text-sm font-bold tracking-wide">الجنوب</span>
+   321→   920→   920→                        <span className="text-white/40 text-[9px] font-medium mt-0.5" dir="ltr">South Wallet</span>
+   322→   921→   921→                      </div>
+   323→   922→   922→                    </div>
+   324→   923→   923→                    {/* Eye toggle + Wifi */}
+   325→   924→   924→                    <div className="flex items-center gap-2">
+   326→   925→   925→                      <Wifi size={12} strokeWidth={1.5} color="rgba(255,255,255,0.25)" />
+   327→   926→   926→                      <button onClick={(e) => { e.stopPropagation(); toggleBalance(); }}>
+   328→   927→   927→                        {balanceVisible ? (
+   329→   928→   928→                          <Eye size={14} strokeWidth={1.5} color="rgba(255,255,255,0.4)" />
+   330→   929→   929→                        ) : (
+   331→   930→   930→                          <EyeOff size={14} strokeWidth={1.5} color="rgba(255,255,255,0.4)" />
+   332→   931→   931→                        )}
+   333→   932→   932→                      </button>
+   334→   933→   933→                    </div>
+   335→   934→   934→                  </div>
+   336→   935→   935→
+   337→   936→   936→                  {/* Balance Section - Jaib style: "رصيدك الآن" label */}
+   338→   937→   937→                  <div className="flex flex-col items-start">
+   339→   938→   938→                    <p className="text-white/50 text-[12px] mb-1">رصيدك الآن</p>
+   340→   939→   939→                    <AnimatedBalance amount={getBalance(card.currency)} currency={card.currency} visible={balanceVisible} />
+   341→   940→   940→                  </div>
+   342→   941→   941→
+   343→   942→   942→                  {/* Bottom Row - Currency badge + User ID */}
+   344→   943→   943→                  <div className="flex items-center justify-between">
+   345→   944→   944→                    <div className="flex items-center gap-2">
+   346→   945→   945→                      <div className="w-9 h-6 rounded-md" style={{ background: 'linear-gradient(135deg, rgba(255,215,0,0.35) 0%, rgba(255,215,0,0.15) 100%)', border: '1px solid rgba(255,215,0,0.15)' }} />
+   347→   946→   946→                      <span className="text-[10px] px-2 py-0.5 rounded font-bold text-white" style={{ background: currencyBadgeColors[card.currency] }}>
+   348→   947→   947→                        {card.currency}
+   349→   948→   948→                      </span>
+   350→   949→   949→                    </div>
+   351→   950→   950→                    {/* Card number dots - Jaib style */}
+   352→   951→   951→                    <div className="flex items-center gap-1.5" dir="ltr">
+   353→   952→   952→                      {[0,1,2,3].map((i) => (
+   354→   953→   953→                        <div key={i} className="w-[6px] h-[6px] rounded-full" style={{ background: 'rgba(255,255,255,0.35)' }} />
+   355→   954→   954→                      ))}
+   356→   955→   955→                      <span className="text-white/35 text-[10px] font-mono mr-1">
+   357→   956→   956→                        {user?.userId || '------'}
+   358→   957→   957→                      </span>
+   359→   958→   958→                    </div>
+   360→   959→   959→                  </div>
+   361→   960→   960→                </div>
+   362→   961→   961→              </div>
+   363→   962→   962→            ))}
+   364→   963→   963→          </div>
+   365→   964→   964→
+   366→   965→   965→          {/* Pagination Dots - Tiny Circles */}
+   367→   966→   966→          <div className="flex items-center justify-center gap-1.5 mt-4" dir="rtl">
+   368→   967→   967→            {balanceCards.map((_, index) => (
+   369→   968→   968→              <div
+   370→   969→   969→                key={index}
+   371→   970→   970→                className="rounded-full transition-all duration-300 cursor-pointer"
+   372→   971→   971→                onClick={() => snapToCard(index)}
+   373→   972→   972→                style={{
+   374→   973→   973→                  width: activeCardIndex === index ? '6px' : '4px',
+   375→   974→   974→                  height: activeCardIndex === index ? '6px' : '4px',
+   376→   975→   975→                  borderRadius: '50%',
+   377→   976→   976→                  background: activeCardIndex === index ? balanceCards[index].accentColor : (isDark ? '#333' : '#D4D4D4'),
+   378→   977→   977→                }}
+   379→   978→   978→              />
+   380→   979→   979→            ))}
+   381→   980→   980→          </div>
+   382→   981→   981→        </div>
+   383→   982→   982→      </div>
+   384→   983→   983→
+   385→   984→   984→      {/* ========================================
+   386→   985→   985→          QUICK ACTIONS - Circular Buttons
+   387→   986→   986→          Send, Receive, QR Scan, Deposit
+   388→   987→   987→          ======================================== */}
+   389→   988→   988→      <motion.div
+   390→   989→   989→        initial={{ opacity: 0, y: 10 }}
+   391→   990→   990→        animate={{ opacity: 1, y: 0 }}
+   392→   991→   991→        transition={{ delay: 0.1, duration: 0.4 }}
+   393→   992→   992→        className="px-4 mt-4"
+   394→   993→   993→      >
+   395→   994→   994→        <div className="flex items-center justify-around">
+   396→   995→   995→          {quickActions.map((action, index) => (
+   397→   996→   996→            <motion.button
+   398→   997→   997→              key={action.id}
+   399→   998→   998→              initial={{ opacity: 0, y: 12 }}
+   400→   999→   999→              animate={{ opacity: 1, y: 0 }}
+   401→  1000→  1000→              transition={{ delay: 0.05 * index }}
+   402→  1001→  1001→              whileTap={{ scale: 0.92 }}
+   403→  1002→  1002→              onClick={() => handleQuickAction(action.id)}
+   404→  1003→  1003→              className="flex flex-col items-center gap-2"
+   405→  1004→  1004→            >
+   406→  1005→  1005→              <div
+   407→  1006→  1006→                className="w-14 h-14 rounded-full flex items-center justify-center"
+   408→  1007→  1007→                style={{
+   409→  1008→  1008→                  background: action.gradient,
+   410→  1009→  1009→                  boxShadow: `0 4px 16px ${action.color}40`,
+   411→  1010→  1010→                }}
+   412→  1011→  1011→              >
+   413→  1012→  1012→                <action.icon size={22} color="#FFF" strokeWidth={1.8} />
+   414→  1013→  1013→              </div>
+   415→  1014→  1014→              <span
+   416→  1015→  1015→                className="text-[11px] font-medium"
+   417→  1016→  1016→                style={{ color: isDark ? '#CCC' : '#444' }}
+   418→  1017→  1017→              >
+   419→  1018→  1018→                {action.label}
+   420→  1019→  1019→              </span>
+   421→  1020→  1020→            </motion.button>
+   422→  1021→  1021→          ))}
+   423→  1022→  1022→        </div>
+   424→  1023→  1023→      </motion.div>
+   425→  1024→  1024→
+   426→  1025→  1025→      {/* ========================================
+   427→  1026→  1026→          BANNER CAROUSEL / PROMO BANNER
+   428→  1027→  1027→          Dynamic banners from Firebase, fallback to static promo
+   429→  1028→  1028→          ======================================== */}
+   430→  1029→  1029→      <motion.div
+   431→  1030→  1030→        initial={{ opacity: 0, y: 15 }}
+   432→  1031→  1031→        animate={{ opacity: 1, y: 0 }}
+   433→  1032→  1032→        transition={{ delay: 0.15, duration: 0.4 }}
+   434→  1033→  1033→        className="px-4 mt-4"
+   435→  1034→  1034→      >
+   436→  1035→  1035→        {banners.length > 0 ? (
+   437→  1036→  1036→          /* Dynamic Banner Carousel from Firebase */
+   438→  1037→  1037→          <div
+   439→  1038→  1038→            className="rounded-2xl relative overflow-hidden cursor-pointer"
+   440→  1039→  1039→            style={{
+   441→  1040→  1040→              height: 110,
+   442→  1041→  1041→              borderRadius: 16,
+   443→  1042→  1042→              boxShadow: '0 4px 16px rgba(92,26,27,0.2)',
+   444→  1043→  1043→            }}
+   445→  1044→  1044→            onClick={() => handleBannerClick(banners[bannerIndex])}
+   446→  1045→  1045→          >
+   447→  1046→  1046→            {/* Banner Image Background */}
+   448→  1047→  1047→            {banners[bannerIndex]?.imageUrl && (
+   449→  1048→  1048→              <img
+   450→  1049→  1049→                src={banners[bannerIndex].imageUrl}
+   451→  1050→  1050→                alt={banners[bannerIndex].title}
+   452→  1051→  1051→                className="absolute inset-0 w-full h-full object-cover"
+   453→  1052→  1052→              />
+   454→  1053→  1053→            )}
+   455→  1054→  1054→            {/* Overlay gradient */}
+   456→  1055→  1055→            <div
+   457→  1056→  1056→              className="absolute inset-0"
+   458→  1057→  1057→              style={{
+   459→  1058→  1058→                background: banners[bannerIndex]?.imageUrl
+   460→  1059→  1059→                  ? 'linear-gradient(145deg, rgba(92,26,27,0.85) 0%, rgba(61,15,16,0.75) 60%, rgba(49,27,146,0.65) 100%)'
+   461→  1060→  1060→                  : 'linear-gradient(145deg, #5C1A1B 0%, #3D0F10 60%, #2D0A0A 100%)',
+   462→  1061→  1061→              }}
+   463→  1062→  1062→            />
+   464→  1063→  1063→            <div className="absolute -top-8 -right-8 w-28 h-28 rounded-full" style={{ background: 'rgba(255,255,255,0.06)' }} />
+   465→  1064→  1064→            <div className="absolute -bottom-6 -left-6 w-24 h-24 rounded-full" style={{ background: 'rgba(255,255,255,0.04)' }} />
+   466→  1065→  1065→            <img src={LOGO_BASE64} alt="" className="absolute left-2 bottom-1 w-20 h-20 object-contain opacity-[0.06] pointer-events-none" aria-hidden="true" />
+   467→  1066→  1066→
+   468→  1067→  1067→            <div className="relative z-10 h-full flex items-center px-4">
+   469→  1068→  1068→              <div className="flex-1">
+   470→  1069→  1069→                <div className="flex items-center gap-2 mb-1.5">
+   471→  1070→  1070→                  <span className="text-[9px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1" style={{ background: 'rgba(255,255,255,0.2)', color: '#FFF' }}>
+   472→  1071→  1071→                    <Sparkles size={8} />
+   473→  1072→  1072→                    عرض خاص
+   474→  1073→  1073→                  </span>
+   475→  1074→  1074→                </div>
+   476→  1075→  1075→                <AnimatePresence mode="wait">
+   477→  1076→  1076→                  <motion.div
+   478→  1077→  1077→                    key={bannerIndex}
+   479→  1078→  1078→                    initial={{ opacity: 0, x: 20 }}
+   480→  1079→  1079→                    animate={{ opacity: 1, x: 0 }}
+   481→  1080→  1080→                    exit={{ opacity: 0, x: -20 }}
+   482→  1081→  1081→                    transition={{ duration: 0.3 }}
+   483→  1082→  1082→                  >
+   484→  1083→  1083→                    <h3 className="font-bold text-[13px] text-white leading-tight">{banners[bannerIndex]?.title}</h3>
+   485→  1084→  1084→                    <p className="text-[11px] mt-0.5 text-white/50">{banners[bannerIndex]?.description}</p>
+   486→  1085→  1085→                  </motion.div>
+   487→  1086→  1086→                </AnimatePresence>
+   488→  1087→  1087→              </div>
+   489→  1088→  1088→            </div>
+   490→  1089→  1089→
+   491→  1090→  1090→            {/* Banner Dot Indicators */}
+   492→  1091→  1091→            {banners.length > 1 && (
+   493→  1092→  1092→              <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center gap-1">
+   494→  1093→  1093→                {banners.map((_, i) => (
+   495→  1094→  1094→                  <button
+   496→  1095→  1095→                    key={i}
+   497→  1096→  1096→                    onClick={(e) => { e.stopPropagation(); setBannerIndex(i); }}
+   498→  1097→  1097→                    className="rounded-full transition-all duration-300"
+   499→  1098→  1098→                    style={{ width: i === bannerIndex ? '6px' : '4px', height: i === bannerIndex ? '6px' : '4px', borderRadius: '50%', background: i === bannerIndex ? 'rgba(255,255,255,0.9)' : 'rgba(255,255,255,0.3)' }}
+   500→  1099→  1099→                  />
+   501→
+   502→[showing lines 600-1099 of 1474; use offset=1100 with limit to continue reading]

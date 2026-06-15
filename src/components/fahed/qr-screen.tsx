@@ -1,9 +1,10 @@
 'use client';
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useTheme } from 'next-themes';
 import { motion, AnimatePresence } from 'framer-motion';
 import { QRCodeSVG } from 'qrcode.react';
+import { Html5Qrcode } from 'html5-qrcode';
 import {
   ArrowRight,
   QrCode,
@@ -20,13 +21,13 @@ import {
   AlertTriangle,
   ArrowUpRight,
   ArrowDownLeft,
+  XCircle,
 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { currencySymbols, currencyBadgeColors, generateReference } from '@/lib/utils';
 import { LOGO_BASE64 } from '@/lib/logo';
 import { useToast } from '@/components/fahed/toast-provider';
-import { database } from '@/lib/firebase';
-import { ref, get, set, update } from 'firebase/database';
+import { supabase } from '@/lib/supabase';
 
 type QRTab = 'scan' | 'generate';
 type GenerateType = 'receive' | 'request';
@@ -75,7 +76,99 @@ export default function QRScreen() {
   const [transferAmount, setTransferAmount] = useState('');
   const [transferCurrency, setTransferCurrency] = useState<'YER' | 'SAR' | 'USD'>('YER');
 
+  // Camera scanner state
+  const [isScanning, setIsScanning] = useState(false);
+  const [cameraError, setCameraError] = useState('');
+  const scannerRef = useRef<Html5Qrcode | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Stop scanning helper
+  const stopScanning = useCallback(async () => {
+    if (scannerRef.current) {
+      try {
+        const state = scannerRef.current.getState();
+        // State 2 = SCANNING, only stop if currently scanning
+        if (state === 2) {
+          await scannerRef.current.stop();
+        }
+      } catch (e) {
+        // Ignore errors on stop
+        console.warn('Error stopping scanner:', e);
+      }
+      try {
+        scannerRef.current.clear();
+      } catch (e) {
+        // Ignore clear errors
+      }
+      scannerRef.current = null;
+    }
+    setIsScanning(false);
+  }, []);
+
+  // Start camera scanning
+  const startScanning = useCallback(async () => {
+    setCameraError('');
+    try {
+      // Clean up any existing scanner first
+      if (scannerRef.current) {
+        await stopScanning();
+      }
+
+      const html5QrCode = new Html5Qrcode('qr-reader');
+      scannerRef.current = html5QrCode;
+
+      await html5QrCode.start(
+        { facingMode: 'environment' },
+        { fps: 10, qrbox: { width: 250, height: 250 } },
+        (decodedText) => {
+          // Success - stop scanning and handle result
+          stopScanning();
+          handleScanData(decodedText);
+          showToast('success', 'تم المسح', 'تم قراءة رمز QR بنجاح');
+        },
+        () => {
+          // Scan failure - ignore, it tries again automatically
+        }
+      );
+      setIsScanning(true);
+    } catch (err) {
+      console.error('Camera error:', err);
+      scannerRef.current = null;
+      setIsScanning(false);
+      setCameraError('لم يتم العثور على كاميرا أو لا يمكن الوصول إليها. يرجى السماح بالوصول للكاميرا');
+      showToast('error', 'خطأ', 'لم يتم العثور على كاميرا أو لا يمكن الوصول إليها');
+    }
+  }, [stopScanning, showToast]);
+
+  // Clean up scanner on unmount
+  useEffect(() => {
+    return () => {
+      if (scannerRef.current) {
+        try {
+          const state = scannerRef.current.getState();
+          if (state === 2) {
+            scannerRef.current.stop().then(() => {
+              scannerRef.current?.clear();
+              scannerRef.current = null;
+            }).catch(() => {});
+          } else {
+            scannerRef.current.clear();
+            scannerRef.current = null;
+          }
+        } catch {
+          // Ignore
+        }
+      }
+    };
+  }, []);
+
+  // Stop scanning when switching away from scan tab
+  useEffect(() => {
+    if (activeTab !== 'scan' && isScanning) {
+      stopScanning();
+    }
+  }, [activeTab, isScanning, stopScanning]);
 
   // Parse QR data string
   const parseQRData = (data: string): ParsedQRData | null => {
@@ -93,9 +186,6 @@ export default function QRScreen() {
     let amount: number | undefined;
     let currency: 'YER' | 'SAR' | 'USD' | undefined;
 
-    // Format: FAHED:RECEIVE:userId:NAME:encodedName:PHONE:phone:AMT:amount:currency
-    // or: FAHED:REQUEST:userId:NAME:encodedName:PHONE:phone:AMT:amount:currency
-    // Also supports legacy format: FAHED:RECEIVE:userId:AMT:amount:currency
     for (let i = 3; i < parts.length; i++) {
       if (parts[i] === 'NAME' && parts[i + 1]) {
         name = decodeURIComponent(parts[i + 1]);
@@ -116,37 +206,29 @@ export default function QRScreen() {
     return { type, userId, name, phone, amount, currency };
   };
 
-  // Look up user from Firebase
+  // Look up user from Supabase
   const lookupUser = async (userId: string): Promise<ScannedUserInfo | null> => {
     try {
-      // First, look up the Firebase UID from the userId mapping
-      const userIdRef = ref(database, `userIds/${userId}`);
-      const userIdSnapshot = await get(userIdRef);
+      // Look up user by card_number (which serves as userId in the app)
+      const { data: userData, error } = await supabase
+        .from('users')
+        .select('*')
+        .eq('card_number', userId)
+        .single();
 
-      if (!userIdSnapshot.exists()) {
+      if (error || !userData) {
         return null;
       }
 
-      const uid = userIdSnapshot.val();
-
-      // Then, get the user data
-      const userRef = ref(database, `users/${uid}`);
-      const userSnapshot = await get(userRef);
-
-      if (!userSnapshot.exists()) {
-        return null;
-      }
-
-      const userData = userSnapshot.val();
       return {
-        uid,
-        name: userData.name || 'مستخدم',
-        userId: userData.userId || userId,
+        uid: userData.id,
+        name: userData.display_name || `${userData.first_name} ${userData.family_name}` || 'مستخدم',
+        userId: userData.card_number || userId,
         phone: userData.phone || '',
-        balanceYER: userData.balanceYER || 0,
-        balanceSAR: userData.balanceSAR || 0,
-        balanceUSD: userData.balanceUSD || 0,
-        kycStatus: userData.kycStatus || 'pending',
+        balanceYER: userData.balance_yer || 0,
+        balanceSAR: userData.balance_sar || 0,
+        balanceUSD: userData.balance_usd || 0,
+        kycStatus: userData.kyc_status || 'pending',
       };
     } catch (error) {
       console.error('Error looking up user:', error);
@@ -226,20 +308,39 @@ export default function QRScreen() {
     try {
       const newSenderBalance = currentBalance - amountNum;
 
-      // Update sender balance in Firebase
-      const senderRef = ref(database, `users/${user.id}`);
-      await update(senderRef, { [balanceField]: newSenderBalance });
+      // Update sender balance in Supabase
+      const supabaseBalanceField = `balance_${transferCur.toLowerCase()}`;
+      const { error: senderUpdateError } = await supabase
+        .from('users')
+        .update({ [supabaseBalanceField]: newSenderBalance })
+        .eq('id', user.id);
 
-      // Get receiver's current balance
-      const receiverRef = ref(database, `users/${scannedUser.uid}`);
-      const receiverSnapshot = await get(receiverRef);
-      let newReceiverBalance = amountNum;
-      if (receiverSnapshot.exists()) {
-        const receiverData = receiverSnapshot.val();
-        const receiverCurrentBalance = (receiverData[balanceField] as number) || 0;
-        newReceiverBalance = receiverCurrentBalance + amountNum;
+      if (senderUpdateError) {
+        throw senderUpdateError;
       }
-      await update(receiverRef, { [balanceField]: newReceiverBalance });
+
+      // Get receiver's current balance and update
+      const { data: receiverData, error: receiverFetchError } = await supabase
+        .from('users')
+        .select(`balance_yer, balance_sar, balance_usd`)
+        .eq('id', scannedUser.uid)
+        .single();
+
+      if (receiverFetchError) {
+        throw receiverFetchError;
+      }
+
+      const receiverCurrentBalance = (receiverData as Record<string, unknown>)[supabaseBalanceField] as number || 0;
+      const newReceiverBalance = receiverCurrentBalance + amountNum;
+
+      const { error: receiverUpdateError } = await supabase
+        .from('users')
+        .update({ [supabaseBalanceField]: newReceiverBalance })
+        .eq('id', scannedUser.uid);
+
+      if (receiverUpdateError) {
+        throw receiverUpdateError;
+      }
 
       // Create transaction record for sender
       const txId = generateReference();
@@ -255,8 +356,32 @@ export default function QRScreen() {
         createdAt: new Date().toISOString(),
       };
 
-      const senderTxRef = ref(database, `transactions/${txId}`);
-      await set(senderTxRef, senderTx);
+      const { error: senderTxError } = await supabase
+        .from('transactions')
+        .insert({
+          id: txId,
+          user_id: user.id,
+          from_user_id: user.id,
+          to_user_id: scannedUser.uid,
+          amount: amountNum,
+          currency: transferCur,
+          fee: 0,
+          fee_currency: transferCur,
+          type: 'transfer',
+          status: 'completed',
+          description: `تحويل إلى ${scannedUser.name}`,
+          reference_number: txId,
+          sender_name: user.name,
+          sender_phone: user.phone || '',
+          receiver_name: scannedUser.name,
+          receiver_phone: scannedUser.phone || '',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+
+      if (senderTxError) {
+        console.warn('Failed to create sender transaction record:', senderTxError);
+      }
 
       // Create transaction record for receiver
       const rxTxId = generateReference();
@@ -272,8 +397,32 @@ export default function QRScreen() {
         createdAt: new Date().toISOString(),
       };
 
-      const receiverTxRef = ref(database, `transactions/${rxTxId}`);
-      await set(receiverTxRef, receiverTx);
+      const { error: receiverTxError } = await supabase
+        .from('transactions')
+        .insert({
+          id: rxTxId,
+          user_id: scannedUser.uid,
+          from_user_id: user.id,
+          to_user_id: scannedUser.uid,
+          amount: amountNum,
+          currency: transferCur,
+          fee: 0,
+          fee_currency: transferCur,
+          type: 'transfer',
+          status: 'completed',
+          description: `تحويل من ${user.name}`,
+          reference_number: rxTxId,
+          sender_name: user.name,
+          sender_phone: user.phone || '',
+          receiver_name: scannedUser.name,
+          receiver_phone: scannedUser.phone || '',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+
+      if (receiverTxError) {
+        console.warn('Failed to create receiver transaction record:', receiverTxError);
+      }
 
       // Update local state
       const updatedUser = {
@@ -313,6 +462,7 @@ export default function QRScreen() {
     setTransferAmount('');
     setTransferCurrency('YER');
     setManualInput('');
+    setCameraError('');
   };
 
   const qrData = (() => {
@@ -432,9 +582,9 @@ export default function QRScreen() {
               exit={{ opacity: 0, x: 20 }}
               className="space-y-4"
             >
-              {/* Camera Placeholder */}
+              {/* Camera Scanner Area */}
               <div
-                className="w-full aspect-square rounded-3xl flex flex-col items-center justify-center gap-4"
+                className="w-full aspect-square rounded-3xl overflow-hidden relative"
                 style={{
                   background: isDark
                     ? 'rgba(255,255,255,0.04)'
@@ -444,86 +594,169 @@ export default function QRScreen() {
                   border: `2px dashed ${isDark ? '#333' : '#DDD'}`,
                 }}
               >
+                {/* QR Reader container - hidden when not scanning */}
                 <div
-                  className="w-20 h-20 rounded-full flex items-center justify-center"
-                  style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}
-                >
-                  <Camera size={40} strokeWidth={1.5} color={isDark ? '#555' : '#CCC'} />
-                </div>
-                <p className="text-sm" style={{ color: isDark ? '#666' : '#AAA' }}>
-                  وجه الكاميرا نحو رمز QR
-                </p>
-                <button
-                  onClick={() => fileInputRef.current?.click()}
-                  className="px-6 py-2.5 rounded-xl text-sm font-medium text-white"
+                  id="qr-reader"
+                  className="absolute inset-0 w-full h-full"
                   style={{
-                    background: 'linear-gradient(135deg, #5C1A1B 0%, #CC0000 100%)',
-                    boxShadow: '0 4px 12px rgba(92,26,27,0.3)',
+                    display: isScanning ? 'block' : 'none',
+                  }}
+                />
+
+                {/* Placeholder when not scanning */}
+                {!isScanning && (
+                  <div className="w-full h-full flex flex-col items-center justify-center gap-4">
+                    <div
+                      className="w-20 h-20 rounded-full flex items-center justify-center"
+                      style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}
+                    >
+                      <Camera size={40} strokeWidth={1.5} color={isDark ? '#555' : '#CCC'} />
+                    </div>
+                    <p className="text-sm" style={{ color: isDark ? '#666' : '#AAA' }}>
+                      وجه الكاميرا نحو رمز QR
+                    </p>
+                    <button
+                      onClick={startScanning}
+                      className="px-6 py-2.5 rounded-xl text-sm font-medium text-white"
+                      style={{
+                        background: 'linear-gradient(135deg, #5C1A1B 0%, #CC0000 100%)',
+                        boxShadow: '0 4px 12px rgba(92,26,27,0.3)',
+                      }}
+                    >
+                      اضغط للمسح
+                    </button>
+                    <p className="text-[10px] mt-1" style={{ color: isDark ? '#555' : '#BBB' }}>
+                      أو مسح من صورة
+                    </p>
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      className="px-4 py-2 rounded-xl text-xs font-medium"
+                      style={{
+                        background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+                        color: isDark ? '#AAA' : '#888',
+                        border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}`,
+                      }}
+                    >
+                      رفع صورة QR
+                    </button>
+                  </div>
+                )}
+
+                {/* Stop scanning button - overlaid on camera */}
+                {isScanning && (
+                  <div className="absolute bottom-4 left-0 right-0 flex justify-center z-10">
+                    <button
+                      onClick={stopScanning}
+                      className="px-5 py-2.5 rounded-xl text-sm font-medium flex items-center gap-2"
+                      style={{
+                        background: 'rgba(0,0,0,0.7)',
+                        color: '#FFF',
+                        backdropFilter: 'blur(10px)',
+                      }}
+                    >
+                      <XCircle size={16} strokeWidth={1.5} />
+                      إيقاف المسح
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              {/* Camera Error */}
+              {cameraError && (
+                <div
+                  className="rounded-2xl p-4"
+                  style={{
+                    background: isDark ? 'rgba(92,26,27,0.08)' : 'rgba(92,26,27,0.05)',
+                    border: '1px solid rgba(92,26,27,0.2)',
                   }}
                 >
-                  اضغط للمسح
-                </button>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  capture="environment"
-                  className="hidden"
-                  onChange={async (e) => {
-                    const file = e.target.files?.[0];
-                    if (!file) return;
+                  <div className="flex items-center gap-2 mb-2">
+                    <AlertTriangle size={16} color="#5C1A1B" strokeWidth={1.5} />
+                    <span className="text-xs font-bold" style={{ color: '#5C1A1B' }}>
+                      خطأ الكاميرا
+                    </span>
+                  </div>
+                  <p className="text-sm" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
+                    {cameraError}
+                  </p>
+                  <div className="flex gap-2 mt-3">
+                    <button
+                      onClick={() => { setCameraError(''); startScanning(); }}
+                      className="px-4 py-2 rounded-xl text-xs font-medium text-white"
+                      style={{ background: '#5C1A1B' }}
+                    >
+                      إعادة المحاولة
+                    </button>
+                    <button
+                      onClick={() => fileInputRef.current?.click()}
+                      className="px-4 py-2 rounded-xl text-xs font-medium"
+                      style={{
+                        background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+                        color: isDark ? '#AAA' : '#888',
+                        border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}`,
+                      }}
+                    >
+                      رفع صورة بدلاً
+                    </button>
+                  </div>
+                </div>
+              )}
 
-                    // Try BarcodeDetector API (available in Chrome/Edge)
-                    if ('BarcodeDetector' in window) {
-                      try {
-                        // @ts-expect-error BarcodeDetector is not yet in standard types
-                        const detector = new BarcodeDetector({ formats: ['qr_code'] });
-                        const img = new Image();
-                        img.src = URL.createObjectURL(file);
-                        await new Promise(resolve => { img.onload = resolve; });
-                        const codes = await detector.detect(img);
-                        URL.revokeObjectURL(img.src);
-                        if (codes.length > 0) {
-                          const decoded = codes[0].rawValue;
-                          handleScanData(decoded);
-                          showToast('success', 'تم المسح', 'تم قراءة رمز QR بنجاح');
-                          return;
-                        }
-                      } catch {
-                        // Fall through to canvas-based approach
-                      }
-                    }
+              {/* File input (hidden) - kept as fallback */}
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                capture="environment"
+                className="hidden"
+                onChange={async (e) => {
+                  const file = e.target.files?.[0];
+                  if (!file) return;
 
-                    // Fallback: try to decode using canvas-based approach
+                  // Try BarcodeDetector API (available in Chrome/Edge)
+                  if ('BarcodeDetector' in window) {
                     try {
+                      // @ts-expect-error BarcodeDetector is not yet in standard types
+                      const detector = new BarcodeDetector({ formats: ['qr_code'] });
                       const img = new Image();
                       img.src = URL.createObjectURL(file);
                       await new Promise(resolve => { img.onload = resolve; });
-                      const canvas = document.createElement('canvas');
-                      canvas.width = img.width;
-                      canvas.height = img.height;
-                      const ctx = canvas.getContext('2d');
-                      if (ctx) {
-                        ctx.drawImage(img, 0, 0);
-                        // Try to read text from image (basic approach - look for FAHED: prefix patterns)
-                        // Since we can't decode QR without a library, prompt user to use manual input
-                        URL.revokeObjectURL(img.src);
+                      const codes = await detector.detect(img);
+                      URL.revokeObjectURL(img.src);
+                      if (codes.length > 0) {
+                        const decoded = codes[0].rawValue;
+                        handleScanData(decoded);
+                        showToast('success', 'تم المسح', 'تم قراءة رمز QR بنجاح');
+                        return;
                       }
                     } catch {
-                      // Silent fail
+                      // Fall through to html5-qrcode scanFile
                     }
+                  }
 
-                    // Simulation fallback: generate a random user ID for demo/testing
-                    const randomUserId = String(Math.floor(100000 + Math.random() * 900000));
-                    const simulatedData = `FAHED:RECEIVE:${randomUserId}`;
-                    handleScanData(simulatedData);
-                    showToast('info', 'مسح QR', `تم محاكاة مسح رمز QR لحساب ${randomUserId}`);
-                  }}
-                />
-                <p className="text-[10px] mt-1" style={{ color: isDark ? '#555' : '#BBB' }}>
-                  مسح الكاميرا يتطلب تطبيق الموبايل
-                </p>
-              </div>
+                  // Fallback: try to decode using html5-qrcode scanFile
+                  try {
+                    const html5QrCode = new Html5Qrcode('qr-reader-file-temp');
+                    const decoded = await html5QrCode.scanFile(file, true);
+                    handleScanData(decoded);
+                    showToast('success', 'تم المسح', 'تم قراءة رمز QR من الصورة بنجاح');
+                    return;
+                  } catch {
+                    // Fall through to simulation
+                  }
+
+                  // Simulation fallback: generate a random user ID for demo/testing
+                  const randomUserId = String(Math.floor(100000 + Math.random() * 900000));
+                  const simulatedData = `FAHED:RECEIVE:${randomUserId}`;
+                  handleScanData(simulatedData);
+                  showToast('info', 'مسح QR', `تم محاكاة مسح رمز QR لحساب ${randomUserId}`);
+
+                  // Reset file input so same file can be re-selected
+                  if (fileInputRef.current) {
+                    fileInputRef.current.value = '';
+                  }
+                }}
+              />
 
               {/* Manual Input */}
               <div>
@@ -566,6 +799,9 @@ export default function QRScreen() {
                   </button>
                 </div>
               </div>
+
+              {/* Hidden temp element for file scanning */}
+              <div id="qr-reader-file-temp" style={{ display: 'none' }} />
 
               {/* Scan Result / Transfer Confirmation */}
               <AnimatePresence>

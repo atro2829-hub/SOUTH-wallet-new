@@ -1,10 +1,10 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { ref, onValue, update } from 'firebase/database';
 import { database } from '@/lib/firebase';
 import { useAdminStore } from '@/lib/store';
-import { formatNumber, timeAgo, cn, generateId } from '@/lib/utils';
+import { formatNumber, timeAgo, cn } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -13,14 +13,20 @@ import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+
 import {
   ShieldCheck, Search, Loader2, AlertTriangle,
-  Clock, CheckCircle, XCircle, DollarSign, User,
-  Calendar, Gavel, MessageSquare, Eye, ArrowLeftRight,
-  Ban, ThumbsUp, ThumbsDown,
+  Clock, CheckCircle, DollarSign,
+  Calendar, Gavel, MessageSquare, ArrowLeftRight,
+  Ban, ThumbsUp, ThumbsDown, Send,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import {
+  getOrCreateEscrowChat,
+  getEscrowChatMessages,
+  sendEscrowChatMessage,
+  subscribeToEscrowChat,
+} from '@/lib/escrow-chat';
 
 interface Escrow {
   id: string;
@@ -38,6 +44,16 @@ interface Escrow {
   createdAt: string;
   updatedAt?: string;
   completedAt?: string;
+}
+
+// UI chat message model
+interface ChatMessage {
+  id: string;
+  senderId: string;
+  senderName: string;
+  senderRole: string;
+  text: string;
+  time: string;
 }
 
 const statusMap: Record<string, { label: string; color: string; icon: React.ElementType }> = {
@@ -60,16 +76,19 @@ export default function EscrowPanel() {
   const [resolveNote, setResolveNote] = useState('');
   const [resolving, setResolving] = useState(false);
 
-  // Escrow chat state (3-party: buyer, seller, admin)
-  const [escrowChatMessages, setEscrowChatMessages] = useState<{ id: string; senderId: string; senderName: string; senderRole: string; text: string; time: string }[]>([]);
+  // Escrow chat state (3-party: buyer, seller, admin) via Supabase
+  const [escrowChatMessages, setEscrowChatMessages] = useState<ChatMessage[]>([]);
   const [adminChatInput, setAdminChatInput] = useState('');
   const [showEscrowChat, setShowEscrowChat] = useState(false);
+  const [chatId, setChatId] = useState<string | null>(null);
+  const [chatLoading, setChatLoading] = useState(false);
+  const chatEndRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const escRef = ref(database, 'escrow');
     const unsub = onValue(escRef, (snapshot) => {
       const data = snapshot.val() || {};
-      const list: Escrow[] = Object.entries(data).map(([key, val]: [string, any]) => ({
+      const list: Escrow[] = Object.entries(data as Record<string, Record<string, unknown>>).map(([key, val]) => ({
         id: key,
         buyerId: val.buyerId || '',
         buyerName: val.buyerName || 'غير معروف',
@@ -93,48 +112,93 @@ export default function EscrowPanel() {
     return () => unsub();
   }, []);
 
-  // Listen to escrow chat messages for admin
+  // Load escrow chat messages via Supabase and subscribe to real-time updates
   useEffect(() => {
-    if (!selectedEscrow?.id) {
-      setEscrowChatMessages([]);
+    if (!selectedEscrow?.id || !showEscrowChat) {
       return;
     }
-    const chatRef = ref(database, `escrowChat/${selectedEscrow.id}/messages`);
-    const unsub = onValue(chatRef, (snapshot) => {
-      if (snapshot.exists()) {
-        const data = snapshot.val();
-        const msgs = Object.entries(data).map(([id, val]: [string, any]) => ({
-          id,
-          senderId: val.senderId || '',
-          senderName: val.senderName || '',
-          senderRole: val.senderRole || 'buyer',
-          text: val.text || '',
-          time: val.time || '',
-        }));
-        msgs.sort((a: any, b: any) => new Date(a.time).getTime() - new Date(b.time).getTime());
-        setEscrowChatMessages(msgs);
-      } else {
-        setEscrowChatMessages([]);
-      }
-    });
-    return () => unsub();
-  }, [selectedEscrow?.id]);
 
-  // Admin send message in escrow chat
+    let unsubscribe: (() => void) | null = null;
+    let cancelled = false;
+
+    const initChat = async () => {
+      setChatLoading(true);
+      try {
+        // Get or create the Supabase chat room for this escrow
+        const id = await getOrCreateEscrowChat(
+          selectedEscrow.id,
+          selectedEscrow.buyerId,
+          selectedEscrow.buyerName,
+          selectedEscrow.sellerId,
+          selectedEscrow.sellerName
+        );
+        if (cancelled) return;
+        setChatId(id);
+
+        if (id) {
+          // Fetch existing messages
+          const messages = await getEscrowChatMessages(id);
+          if (cancelled) return;
+          setEscrowChatMessages(messages.map(m => ({
+            id: m.id,
+            senderId: m.senderId,
+            senderName: m.senderName,
+            senderRole: m.senderRole,
+            text: m.message,
+            time: m.createdAt,
+          })));
+
+          // Subscribe to real-time new messages
+          unsubscribe = subscribeToEscrowChat(id, (newMsg) => {
+            if (cancelled) return;
+            setEscrowChatMessages(prev => {
+              // Avoid duplicates
+              if (prev.some(m => m.id === newMsg.id)) return prev;
+              return [...prev, {
+                id: newMsg.id,
+                senderId: newMsg.senderId,
+                senderName: newMsg.senderName,
+                senderRole: newMsg.senderRole,
+                text: newMsg.message,
+                time: newMsg.createdAt,
+              }];
+            });
+          });
+        }
+      } catch (error) {
+        console.error('Error initializing admin escrow chat:', error);
+      } finally {
+        if (!cancelled) setChatLoading(false);
+      }
+    };
+
+    initChat();
+
+    return () => {
+      cancelled = true;
+      if (unsubscribe) unsubscribe();
+    };
+  }, [selectedEscrow?.id, selectedEscrow?.buyerId, selectedEscrow?.buyerName, selectedEscrow?.sellerId, selectedEscrow?.sellerName, showEscrowChat]);
+
+  // Auto-scroll chat to bottom on new messages
+  useEffect(() => {
+    if (chatEndRef.current) {
+      chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [escrowChatMessages]);
+
+  // Admin send message in escrow chat via Supabase
   const handleAdminSendEscrowChat = async () => {
-    if (!adminChatInput.trim() || !selectedEscrow?.id) return;
+    if (!adminChatInput.trim() || !chatId || !selectedEscrow) return;
+    const msgText = adminChatInput.trim();
     try {
-      await push(ref(database, `escrowChat/${selectedEscrow.id}/messages`), {
-        senderId: adminUser?.uid || 'admin',
-        senderName: adminUser?.displayName || 'الإدارة',
-        senderRole: 'admin',
-        text: adminChatInput.trim(),
-        time: new Date().toISOString(),
-      });
-      await update(ref(database, `escrowChat/${selectedEscrow.id}`), {
-        lastMessage: adminChatInput.trim(),
-        lastMessageTime: new Date().toISOString(),
-      });
+      await sendEscrowChatMessage(
+        chatId,
+        adminUser?.uid || 'admin',
+        adminUser?.displayName || 'الإدارة',
+        'admin',
+        msgText
+      );
       setAdminChatInput('');
     } catch {
       showToast('حدث خطأ في إرسال الرسالة', 'error');
@@ -165,7 +229,7 @@ export default function EscrowPanel() {
     setResolving(true);
     try {
       const now = new Date().toISOString();
-      const updates: Record<string, any> = {
+      const updates: Record<string, string> = {
         [`escrow/${selectedEscrow.id}/status`]: resolveAction === 'release' ? 'completed' : 'refunded',
         [`escrow/${selectedEscrow.id}/updatedAt`]: now,
         [`escrow/${selectedEscrow.id}/completedAt`]: now,
@@ -177,7 +241,7 @@ export default function EscrowPanel() {
       setResolveDialog(false);
       setSelectedEscrow(null);
       setResolveNote('');
-    } catch (e) {
+    } catch {
       showToast('حدث خطأ أثناء المعالجة', 'error');
     } finally {
       setResolving(false);
@@ -327,48 +391,50 @@ export default function EscrowPanel() {
                             <StatusIcon className="w-3 h-3 ml-1" />
                             {st.label}
                           </Badge>
-                          {(escrow.status === 'active' || escrow.status === 'disputed') && (
-                            <div className="mt-2 flex gap-1">
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="h-7 text-[10px] px-2"
-                                onClick={() => {
-                                  setSelectedEscrow(escrow);
-                                  setShowEscrowChat(true);
-                                }}
-                              >
-                                <MessageSquare className="w-3 h-3 ml-1" />
-                                محادثة
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="h-7 text-[10px] px-2"
-                                onClick={() => {
-                                  setSelectedEscrow(escrow);
-                                  setResolveAction('release');
-                                  setResolveDialog(true);
-                                }}
-                              >
-                                <ThumbsUp className="w-3 h-3 ml-1" />
-                                إطلاق
-                              </Button>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                className="h-7 text-[10px] px-2 text-red-500"
-                                onClick={() => {
-                                  setSelectedEscrow(escrow);
-                                  setResolveAction('refund');
-                                  setResolveDialog(true);
-                                }}
-                              >
-                                <ThumbsDown className="w-3 h-3 ml-1" />
-                                استرداد
-                              </Button>
-                            </div>
-                          )}
+                          <div className="mt-2 flex gap-1">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-[10px] px-2"
+                              onClick={() => {
+                                setSelectedEscrow(escrow);
+                                setShowEscrowChat(true);
+                              }}
+                            >
+                              <MessageSquare className="w-3 h-3 ml-1" />
+                              محادثة
+                            </Button>
+                            {(escrow.status === 'active' || escrow.status === 'disputed') && (
+                              <>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 text-[10px] px-2"
+                                  onClick={() => {
+                                    setSelectedEscrow(escrow);
+                                    setResolveAction('release');
+                                    setResolveDialog(true);
+                                  }}
+                                >
+                                  <ThumbsUp className="w-3 h-3 ml-1" />
+                                  إطلاق
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="h-7 text-[10px] px-2 text-red-500"
+                                  onClick={() => {
+                                    setSelectedEscrow(escrow);
+                                    setResolveAction('refund');
+                                    setResolveDialog(true);
+                                  }}
+                                >
+                                  <ThumbsDown className="w-3 h-3 ml-1" />
+                                  استرداد
+                                </Button>
+                              </>
+                            )}
+                          </div>
                         </div>
                       </div>
                       {escrow.status === 'disputed' && escrow.disputeReason && (
@@ -408,9 +474,13 @@ export default function EscrowPanel() {
               </div>
 
               {/* Messages */}
-              <ScrollArea className="max-h-[350px] p-3 border border-border/30 rounded-xl">
+              <div className="max-h-[350px] overflow-y-auto p-3 border border-border/30 rounded-xl">
                 <div className="space-y-3">
-                  {escrowChatMessages.length === 0 ? (
+                  {chatLoading ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 className="w-6 h-6 animate-spin text-[#5C1A1B]" />
+                    </div>
+                  ) : escrowChatMessages.length === 0 ? (
                     <p className="text-center text-muted-foreground text-sm py-8">لا توجد رسائل بعد</p>
                   ) : (
                     escrowChatMessages.map((msg) => {
@@ -440,8 +510,9 @@ export default function EscrowPanel() {
                       );
                     })
                   )}
+                  <div ref={chatEndRef} />
                 </div>
-              </ScrollArea>
+              </div>
 
               {/* Admin chat input */}
               <div className="flex gap-2">
@@ -452,7 +523,7 @@ export default function EscrowPanel() {
                   placeholder="اكتب ردك كإدارة..."
                   className="flex-1"
                 />
-                <Button onClick={handleAdminSendEscrowChat} disabled={!adminChatInput.trim()} className="bg-[#5C1A1B] hover:bg-[#3D0F10]">
+                <Button onClick={handleAdminSendEscrowChat} disabled={!adminChatInput.trim() || !chatId} className="bg-[#5C1A1B] hover:bg-[#3D0F10]">
                   <Send className="w-4 h-4" />
                 </Button>
               </div>

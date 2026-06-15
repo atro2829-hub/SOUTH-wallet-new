@@ -1,0 +1,737 @@
+     1→'use client';
+     2→
+     3→import { useState, useEffect, useRef } from 'react';
+     4→import { useTheme } from 'next-themes';
+     5→import { motion, AnimatePresence } from 'framer-motion';
+     6→import {
+     7→  ArrowLeft, MessageSquare, Search, ChevronDown, ChevronUp, Plus,
+     8→  Send, ImagePlus, X, Clock, CheckCircle2, AlertCircle, HelpCircle,
+     9→  Headphones, Paperclip, Tag, Phone, Globe, ExternalLink,
+    10→  Sparkles, MessageCircle, FileText, Ticket
+    11→} from 'lucide-react';
+    12→import { useAppStore, type SupportTicket } from '@/lib/store';
+    13→import { timeAgo, generateReference, compressBase64Image, faqItems } from '@/lib/utils';
+    14→import { ref, set, get, update, push, onValue, remove } from 'firebase/database';
+    15→import { database } from '@/lib/firebase';
+    16→
+    17→type SupportView = 'main' | 'ticket-detail' | 'create-ticket';
+    18→type MainTab = 'faq' | 'tickets' | 'chat';
+    19→
+    20→interface TicketMessage {
+    21→  sender: 'user' | 'support';
+    22→  text: string;
+    23→  time: string;
+    24→  image?: string;
+    25→}
+    26→
+    27→interface FirebaseTicket {
+    28→  id: string;
+    29→  userId: string;
+    30→  userName: string;
+    31→  subject: string;
+    32→  message: string;
+    33→  category: 'technical' | 'financial' | 'general';
+    34→  status: 'open' | 'in_progress' | 'resolved' | 'closed';
+    35→  messages: TicketMessage[];
+    36→  createdAt: string;
+    37→  image?: string;
+    38→}
+    39→
+    40→// FAQ quick links
+    41→const faqQuickLinks = [
+    42→  { icon: '🔄', label: 'كيف أقوم بتحويل أموال؟' },
+    43→  { icon: '🔐', label: 'كيف أوثق حسابي؟' },
+    44→  { icon: '💳', label: 'كيف أشحن رصيدي؟' },
+    45→  { icon: '📊', label: 'كيف أتحقق من رصيدي؟' },
+    46→  { icon: '🛡️', label: 'هل تطبيقي آمن؟' },
+    47→  { icon: '📞', label: 'كيف أتواصل مع الدعم؟' },
+    48→];
+    49→
+    50→export default function SupportScreen() {
+    51→  const { theme } = useTheme();
+    52→  const isDark = theme === 'dark';
+    53→  const { setActiveScreen, user, addTicket, updateTicket } = useAppStore();
+    54→
+    55→  const [activeTab, setActiveTab] = useState<MainTab>('faq');
+    56→  const [view, setView] = useState<SupportView>('main');
+    57→  const [faqSearch, setFaqSearch] = useState('');
+    58→  const [expandedFaq, setExpandedFaq] = useState<number | null>(null);
+    59→
+    60→  // Social links from Firebase
+    61→  const [socialLinks, setSocialLinks] = useState<{
+    62→    whatsapp: string; contactAdmin: string; contactAdminMessage: string;
+    63→  }>({ whatsapp: '', contactAdmin: '', contactAdminMessage: '' });
+    64→
+    65→  useEffect(() => {
+    66→    const linksRef = ref(database, 'adminSettings/socialLinks');
+    67→    const unsubscribe = onValue(linksRef, (snapshot) => {
+    68→      if (snapshot.exists()) {
+    69→        const data = snapshot.val();
+    70→        setSocialLinks({
+    71→          whatsapp: data.whatsapp || '',
+    72→          contactAdmin: data.contactAdmin || '',
+    73→          contactAdminMessage: data.contactAdminMessage || '',
+    74→        });
+    75→      }
+    76→    });
+    77→    return () => unsubscribe();
+    78→  }, []);
+    79→
+    80→  // Tickets
+    81→  const [tickets, setTickets] = useState<FirebaseTicket[]>([]);
+    82→  const [selectedTicket, setSelectedTicket] = useState<FirebaseTicket | null>(null);
+    83→  const [messageInput, setMessageInput] = useState('');
+    84→
+    85→  // Create ticket
+    86→  const [newSubject, setNewSubject] = useState('');
+    87→  const [newCategory, setNewCategory] = useState<'technical' | 'financial' | 'general'>('general');
+    88→  const [newMessage, setNewMessage] = useState('');
+    89→  const [newImage, setNewImage] = useState('');
+    90→
+    91→  // Live chat - real Firebase chat
+    92→  const [chatMessages, setChatMessages] = useState<{ id: string; sender: 'user' | 'admin'; text: string; time: string; adminName?: string }[]>([]);
+    93→  const [chatInput, setChatInput] = useState('');
+    94→
+    95→  const messagesEndRef = useRef<HTMLDivElement>(null);
+    96→  const chatEndRef = useRef<HTMLDivElement>(null);
+    97→  const fileInputRef = useRef<HTMLInputElement>(null);
+    98→
+    99→  // Listen to tickets from Firebase
+   100→  useEffect(() => {
+   101→    if (!user?.id) return;
+   102→    const ticketsRef = ref(database, 'supportTickets');
+   103→    const unsubscribe = onValue(ticketsRef, (snapshot) => {
+   104→      if (snapshot.exists()) {
+   105→        const data = snapshot.val();
+   106→        const allTickets = Object.entries(data).map(([key, val]: [string, any]) => ({
+   107→          id: key,
+   108→          userId: val.userId || '',
+   109→          userName: val.userName || '',
+   110→          subject: val.subject || '',
+   111→          message: val.message || '',
+   112→          category: val.category || 'general',
+   113→          status: val.status || 'open',
+   114→          messages: val.messages || [],
+   115→          createdAt: val.createdAt || new Date().toISOString(),
+   116→          image: val.image || undefined,
+   117→        })) as FirebaseTicket[];
+   118→        const userTickets = allTickets
+   119→          .filter(t => t.userId === user.id)
+   120→          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+   121→        setTickets(userTickets);
+   122→      } else {
+   123→        setTickets([]);
+   124→      }
+   125→    });
+   126→    return () => unsubscribe();
+   127→  }, [user?.id]);
+   128→
+   129→  // Auto-scroll to bottom of messages
+   130→  useEffect(() => {
+   131→    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+   132→  }, [selectedTicket?.messages?.length]);
+   133→
+   134→  // Listen to live chat messages from Firebase
+   135→  useEffect(() => {
+   136→    if (!user?.id) return;
+   137→    const chatRef = ref(database, `liveChats/${user.id}`);
+   138→    const unsubscribe = onValue(chatRef, (snapshot) => {
+   139→      if (snapshot.exists()) {
+   140→        const data = snapshot.val();
+   141→        const msgsData = data.messages || {};
+   142→        const msgs = Object.entries(msgsData).map(([id, val]: [string, any]) => ({
+   143→          id,
+   144→          sender: val.sender as 'user' | 'admin',
+   145→          text: val.text || '',
+   146→          time: val.time || '',
+   147→          adminName: val.senderName || '',
+   148→        }));
+   149→        msgs.sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
+   150→        setChatMessages(msgs);
+   151→      } else {
+   152→        setChatMessages([]);
+   153→      }
+   154→    });
+   155→    return () => unsubscribe();
+   156→  }, [user?.id]);
+   157→
+   158→  // Auto-scroll chat
+   159→  useEffect(() => {
+   160→    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+   161→  }, [chatMessages.length]);
+   162→
+   163→  const filteredFaq = faqItems.filter(item => {
+   164→    if (!faqSearch) return true;
+   165→    return item.q.includes(faqSearch) || item.a.includes(faqSearch);
+   166→  });
+   167→
+   168→  const handleCreateTicket = async () => {
+   169→    if (!newSubject || !newMessage || !user) return;
+   170→    const id = generateReference();
+   171→    const ticket: FirebaseTicket = {
+   172→      id, userId: user.id, userName: user.name, subject: newSubject,
+   173→      message: newMessage, category: newCategory, status: 'open',
+   174→      messages: [{ sender: 'user', text: newMessage, time: new Date().toISOString(), image: newImage || undefined }],
+   175→      createdAt: new Date().toISOString(), image: newImage || undefined,
+   176→    };
+   177→    try {
+   178→      await set(ref(database, `supportTickets/${id}`), ticket);
+   179→    } catch {}
+   180→    addTicket({ id, userId: user.id, userName: user.name, subject: newSubject, message: newMessage, category: newCategory, status: 'open', messages: [{ sender: 'user', text: newMessage, time: new Date().toISOString() }], createdAt: new Date().toISOString() });
+   181→    setNewSubject(''); setNewMessage(''); setNewImage(''); setView('main'); setActiveTab('tickets');
+   182→  };
+   183→
+   184→  const handleSendMessage = async () => {
+   185→    if (!messageInput.trim() || !selectedTicket || !user) return;
+   186→    const newMsg: TicketMessage = { sender: 'user', text: messageInput, time: new Date().toISOString() };
+   187→    const updatedMessages = [...(selectedTicket.messages || []), newMsg];
+   188→    const updatedTicket = { ...selectedTicket, messages: updatedMessages };
+   189→    try {
+   190→      await update(ref(database, `supportTickets/${selectedTicket.id}`), { messages: updatedMessages });
+   191→    } catch {}
+   192→    setSelectedTicket(updatedTicket);
+   193→    setMessageInput('');
+   194→  };
+   195→
+   196→  // Send live chat message to Firebase (using liveChats path to match admin panel)
+   197→  const handleSendChat = async () => {
+   198→    if (!chatInput.trim() || !user?.id) return;
+   199→    const messageText = chatInput.trim();
+   200→    try {
+   201→      const newMsg = {
+   202→        sender: 'user',
+   203→        text: messageText,
+   204→        time: new Date().toISOString(),
+   205→        senderName: user.name || 'مستخدم',
+   206→      };
+   207→
+   208→      // Push message to liveChats/{userId}/messages (same path admin reads from)
+   209→      await push(ref(database, `liveChats/${user.id}/messages`), newMsg);
+   210→
+   211→      // Update conversation metadata for admin panel
+   212→      await update(ref(database, `liveChats/${user.id}`), {
+   213→        userId: user.id,
+   214→        userName: user.name || 'مستخدم',
+   215→        userPhone: user.phone || '',
+   216→        userEmail: user.email || '',
+   217→        status: 'active',
+   218→        updatedAt: new Date().toISOString(),
+   219→        createdAt: (await get(ref(database, `liveChats/${user.id}/createdAt`))).exists() ? undefined : new Date().toISOString(),
+   220→      });
+   221→
+   222→      // Send push notification to admin about new chat message
+   223→      try {
+   224→        const adminNotifId = `chat_notif_${Date.now()}`;
+   225→        await set(ref(database, `adminNotifications/${adminNotifId}`), {
+   226→          id: adminNotifId,
+   227→          title: 'رسالة دعم جديدة',
+   228→          body: `${user.name || 'مستخدم'}: ${messageText.substring(0, 50)}`,
+   229→          type: 'transaction',
+   230→          category: 'support',
+   231→          isRead: false,
+   232→          createdAt: new Date().toISOString(),
+   233→          data: { action: 'support_chat', userId: user.id },
+   234→        });
+   235→      } catch (notifErr) {
+   236→        console.warn('Failed to notify admin about chat:', notifErr);
+   237→      }
+   238→
+   239→      setChatInput('');
+   240→    } catch (e) {
+   241→      console.error('Failed to send chat message', e);
+   242→    }
+   243→  };
+   244→
+   245→  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+   246→    const file = e.target.files?.[0];
+   247→    if (!file) return;
+   248→    const reader = new FileReader();
+   249→    reader.onloadend = async () => {
+   250→      const base64 = reader.result as string;
+   251→      const compressed = await compressBase64Image(base64, 400, 0.6);
+   252→      setNewImage(compressed);
+   253→    };
+   254→    reader.readAsDataURL(file);
+   255→  };
+   256→
+   257→  const categoryLabels: Record<string, { label: string; color: string; bg: string }> = {
+   258→    technical: { label: 'تقني', color: '#3B82F6', bg: 'rgba(59,130,246,0.12)' },
+   259→    financial: { label: 'مالي', color: '#10B981', bg: 'rgba(16,185,129,0.12)' },
+   260→    general: { label: 'عام', color: '#F59E0B', bg: 'rgba(245,158,11,0.12)' },
+   261→  };
+   262→
+   263→  const statusLabels: Record<string, { label: string; color: string; bg: string }> = {
+   264→    open: { label: 'مفتوح', color: '#3B82F6', bg: 'rgba(59,130,246,0.12)' },
+   265→    in_progress: { label: 'قيد المتابعة', color: '#F59E0B', bg: 'rgba(245,158,11,0.12)' },
+   266→    resolved: { label: 'تم الحل', color: '#10B981', bg: 'rgba(16,185,129,0.12)' },
+   267→    closed: { label: 'مغلق', color: '#666', bg: 'rgba(102,102,102,0.12)' },
+   268→  };
+   269→
+   270→  // ─── Full-screen Live Chat View ───
+   271→  if (activeTab === 'chat') {
+   272→    return (
+   273→      <div dir="rtl" className="flex flex-col h-screen" style={{ background: isDark ? '#0F0F0F' : '#F5F5F5' }}>
+   274→        {/* Header */}
+   275→        <div className="shrink-0 animated-gradient relative overflow-hidden" style={{ background: 'linear-gradient(145deg, #1A1A1A 0%, #2A0A0A 50%, #0F0F0F 100%)' }}>
+   276→          <div className="absolute inset-0 glass-dark opacity-30" />
+   277→          <div className="relative px-5 pt-4 pb-5">
+   278→            <div className="flex items-center gap-3">
+   279→              <motion.button whileTap={{ scale: 0.9 }} onClick={() => setActiveTab('faq')} className="w-10 h-10 rounded-xl glass flex items-center justify-center">
+   280→                <ArrowLeft size={18} strokeWidth={1.5} color="#FFF" />
+   281→              </motion.button>
+   282→              <div className="flex-1">
+   283→                <h1 className="text-white text-xl font-bold">الدردشة المباشرة</h1>
+   284→                <div className="flex items-center gap-1.5 mt-0.5">
+   285→                  <div className="w-2 h-2 rounded-full pulse-dot" style={{ background: '#10B981' }} />
+   286→                  <span className="text-white/40 text-xs">متصل الآن</span>
+   287→                </div>
+   288→              </div>
+   289→              <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'rgba(59,130,246,0.2)' }}>
+   290→                <Headphones size={20} strokeWidth={1.5} color="#3B82F6" />
+   291→              </div>
+   292→            </div>
+   293→          </div>
+   294→        </div>
+   295→
+   296→        {/* Messages Area */}
+   297→        <div className="flex-1 overflow-y-auto overflow-x-hidden px-5 py-4 space-y-3">
+   298→          {chatMessages.length === 0 && (
+   299→            <div className="flex flex-col items-center justify-center py-16">
+   300→              <div className="w-20 h-20 rounded-3xl flex items-center justify-center mb-4" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
+   301→                <Headphones size={40} strokeWidth={1.5} color={isDark ? '#555' : '#CCC'} />
+   302→              </div>
+   303→              <p className="text-sm font-medium" style={{ color: isDark ? '#888' : '#999' }}>ابدأ محادثة مع فريق الدعم</p>
+   304→              <p className="text-xs mt-1" style={{ color: isDark ? '#666' : '#BBB' }}>سنرد عليك في أقرب وقت</p>
+   305→            </div>
+   306→          )}
+   307→          {chatMessages.map((msg, i) => (
+   308→            <motion.div
+   309→              key={msg.id || i}
+   310→              initial={{ opacity: 0, y: 10 }}
+   311→              animate={{ opacity: 1, y: 0 }}
+   312→              transition={{ delay: i * 0.02 }}
+   313→              className={`flex ${msg.sender === 'user' ? 'justify-start' : 'justify-end'}`}
+   314→            >
+   315→              <div className="max-w-[85%]">
+   316→                {msg.sender === 'admin' && (
+   317→                  <div className="flex items-center gap-1.5 mb-1 justify-end">
+   318→                    <span className="text-[10px] font-bold" style={{ color: '#3B82F6' }}>{msg.adminName || 'فريق الدعم'}</span>
+   319→                    <div className="w-6 h-6 rounded-full flex items-center justify-center" style={{ background: 'rgba(59,130,246,0.15)' }}>
+   320→                      <Headphones size={12} color="#3B82F6" />
+   321→                    </div>
+   322→                  </div>
+   323→                )}
+   324→                <div
+   325→                  className="rounded-2xl p-3"
+   326→                  style={{
+   327→                    background: msg.sender === 'user' ? '#5C1A1B' : isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)',
+   328→                    borderBottomLeftRadius: msg.sender === 'user' ? '4px' : '16px',
+   329→                    borderBottomRightRadius: msg.sender === 'admin' ? '4px' : '16px',
+   330→                  }}
+   331→                >
+   332→                  <p className="text-xs leading-relaxed" style={{ color: msg.sender === 'user' ? '#FFF' : isDark ? '#CCC' : '#333' }}>
+   333→                    {msg.text}
+   334→                  </p>
+   335→                </div>
+   336→                <div className="flex items-center gap-1 mt-1" dir="ltr">
+   337→                  {msg.sender === 'user' && (
+   338→                    <span className="text-[9px]" style={{ color: isDark ? '#555' : '#BBB' }}>أنت</span>
+   339→                  )}
+   340→                  <p className="text-[9px]" style={{ color: isDark ? '#555' : '#BBB' }}>
+   341→                    {timeAgo(msg.time)}
+   342→                  </p>
+   343→                </div>
+   344→              </div>
+   345→            </motion.div>
+   346→          ))}
+   347→          <div ref={chatEndRef} />
+   348→        </div>
+   349→
+   350→        {/* Chat quick actions */}
+   351→        <div className="shrink-0 px-5 pb-1">
+   352→          <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth: 'none' }}>
+   353→            {['تحويل أموال', 'مشكلة تقنية', 'توثيق حساب', 'استفسار عام'].map((quick, i) => (
+   354→              <button
+   355→                key={i}
+   356→                onClick={() => { setChatInput(quick); }}
+   357→                className="shrink-0 px-3 py-1.5 rounded-full text-[10px] font-medium"
+   358→                style={{
+   359→                  background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+   360→                  color: isDark ? '#CCC' : '#666',
+   361→                  border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}`,
+   362→                }}
+   363→              >
+   364→                {quick}
+   365→              </button>
+   366→            ))}
+   367→          </div>
+   368→        </div>
+   369→
+   370→        {/* Input area - fixed at bottom */}
+   371→        <div className="shrink-0 px-5 py-3" style={{ background: isDark ? 'rgba(15,15,15,0.95)' : 'rgba(245,245,245,0.95)', backdropFilter: 'blur(20px)', borderTop: isDark ? '1px solid rgba(255,255,255,0.06)' : '1px solid rgba(0,0,0,0.06)', paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
+   372→          <div className="flex items-center gap-2">
+   373→            <div className="flex-1 flex items-center gap-2 px-4 py-3 rounded-2xl" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
+   374→              <input type="text" placeholder="اكتب رسالتك..." value={chatInput} onChange={e => setChatInput(e.target.value)}
+   375→                onKeyDown={e => e.key === 'Enter' && handleSendChat()}
+   376→                className="flex-1 bg-transparent outline-none text-sm" style={{ color: isDark ? '#FFF' : '#1a1a1a' }} />
+   377→            </div>
+   378→            <motion.button whileTap={{ scale: 0.85 }} onClick={handleSendChat}
+   379→              className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0"
+   380→              style={{ background: '#5C1A1B' }}>
+   381→              <Send size={16} color="#FFF" />
+   382→            </motion.button>
+   383→          </div>
+   384→        </div>
+   385→      </div>
+   386→    );
+   387→  }
+   388→
+   389→  // ─── Main Support Screen (FAQ + Tickets + Ticket Detail + Create Ticket) ───
+   390→  return (
+   391→    <div dir="rtl" className="flex flex-col h-screen" style={{ background: isDark ? '#0F0F0F' : '#F5F5F5' }}>
+   392→      {/* Header */}
+   393→      <div className="shrink-0 animated-gradient relative overflow-hidden" style={{ background: 'linear-gradient(145deg, #1A1A1A 0%, #2A0A0A 50%, #0F0F0F 100%)' }}>
+   394→        <div className="absolute inset-0 glass-dark opacity-30" />
+   395→        <div className="relative px-5 pt-4 pb-5">
+   396→          <div className="flex items-center gap-3">
+   397→            <motion.button whileTap={{ scale: 0.9 }} onClick={() => { if (view !== 'main') { setView('main'); setSelectedTicket(null); } else { setActiveScreen('main'); } }} className="w-10 h-10 rounded-xl glass flex items-center justify-center">
+   398→              <ArrowLeft size={18} strokeWidth={1.5} color="#FFF" />
+   399→            </motion.button>
+   400→            <div className="flex-1">
+   401→              <h1 className="text-white text-xl font-bold">
+   402→                {view === 'ticket-detail' ? selectedTicket?.subject || 'تفاصيل التذكرة' : view === 'create-ticket' ? 'تذكرة جديدة' : 'الدعم والمساعدة'}
+   403→              </h1>
+   404→              {view === 'main' && (
+   405→                <div className="flex items-center gap-1.5 mt-0.5">
+   406→                  <div className="w-2 h-2 rounded-full pulse-dot" style={{ background: '#10B981' }} />
+   407→                  <span className="text-white/40 text-xs">متصل الآن</span>
+   408→                </div>
+   409→              )}
+   410→            </div>
+   411→            <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'rgba(59,130,246,0.2)' }}>
+   412→              <Headphones size={20} strokeWidth={1.5} color="#3B82F6" />
+   413→            </div>
+   414→          </div>
+   415→        </div>
+   416→      </div>
+   417→
+   418→      {/* Content Area - scrollable */}
+   419→      <div className="flex-1 overflow-y-auto overflow-x-hidden">
+   420→        {/* Main View */}
+   421→        {view === 'main' && (
+   422→          <div className="px-5 mt-4 pb-8">
+   423→            {/* Tab Toggle - Now 3 tabs */}
+   424→            <div className="flex gap-2 mb-4">
+   425→              {([
+   426→                { id: 'faq' as MainTab, label: 'مركز المساعدة', icon: HelpCircle },
+   427→                { id: 'chat' as MainTab, label: 'دردشة مباشرة', icon: MessageCircle },
+   428→                { id: 'tickets' as MainTab, label: 'تذاكر الدعم', icon: MessageSquare },
+   429→              ]).map(tab => {
+   430→                const Icon = tab.icon;
+   431→                return (
+   432→                  <motion.button key={tab.id} whileTap={{ scale: 0.95 }} onClick={() => setActiveTab(tab.id)}
+   433→                    className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-[11px] font-medium"
+   434→                    style={{
+   435→                      background: activeTab === tab.id ? 'rgba(92,26,27,0.15)' : isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.8)',
+   436→                      border: activeTab === tab.id ? '1px solid rgba(92,26,27,0.3)' : isDark ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(0,0,0,0.06)',
+   437→                      color: activeTab === tab.id ? '#FFF' : isDark ? '#BBB' : '#666',
+   438→                      backdropFilter: 'blur(20px)',
+   439→                    }}>
+   440→                    <Icon size={14} />
+   441→                    <span>{tab.label}</span>
+   442→                  </motion.button>
+   443→                );
+   444→              })}
+   445→            </div>
+   446→
+   447→            {/* WhatsApp Direct Contact */}
+   448→            {socialLinks.whatsapp && (
+   449→              <motion.div
+   450→                initial={{ opacity: 0, y: 10 }}
+   451→                animate={{ opacity: 1, y: 0 }}
+   452→                className="mb-4"
+   453→              >
+   454→                <a
+   455→                  href={`https://wa.me/${socialLinks.whatsapp.replace(/[^0-9]/g, '')}`}
+   456→                  target="_blank"
+   457→                  rel="noopener noreferrer"
+   458→                  className="flex items-center gap-3 p-3 rounded-2xl"
+   459→                  style={{
+   460→                    background: 'rgba(37,211,102,0.1)',
+   461→                    border: '1px solid rgba(37,211,102,0.2)',
+   462→                  }}
+   463→                >
+   464→                  <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: '#25D366' }}>
+   465→                    <Phone size={20} color="#FFF" />
+   466→                  </div>
+   467→                  <div className="flex-1 text-right">
+   468→                    <p className="text-sm font-bold" style={{ color: '#25D366' }}>تواصل عبر واتساب</p>
+   469→                    <p className="text-[10px]" style={{ color: isDark ? '#888' : '#999' }}>رد سريع من فريق الدعم</p>
+   470→                  </div>
+   471→                  <ExternalLink size={16} color="#25D366" />
+   472→                </a>
+   473→              </motion.div>
+   474→            )}
+   475→
+   476→            <AnimatePresence mode="wait">
+   477→              {/* FAQ Tab */}
+   478→              {activeTab === 'faq' && (
+   479→                <motion.div key="faq" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-3">
+   480→                  {/* Search */}
+   481→                  <div className="flex items-center gap-2 px-4 py-3 rounded-2xl" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.85)', backdropFilter: 'blur(20px)', border: isDark ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(0,0,0,0.06)' }}>
+   482→                    <Search size={16} color={isDark ? '#555' : '#AAA'} />
+   483→                    <input type="text" placeholder="ابحث في الأسئلة الشائعة..." value={faqSearch} onChange={e => setFaqSearch(e.target.value)} className="flex-1 bg-transparent outline-none text-sm" style={{ color: isDark ? '#FFF' : '#1a1a1a' }} />
+   484→                  </div>
+   485→
+   486→                  {/* FAQ Quick Links */}
+   487→                  <div className="rounded-2xl p-4" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.85)', backdropFilter: 'blur(20px)', border: isDark ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(0,0,0,0.06)' }}>
+   488→                    <h3 className="text-xs font-bold mb-3" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>الأسئلة الأكثر شيوعاً</h3>
+   489→                    <div className="grid grid-cols-2 gap-2">
+   490→                      {faqQuickLinks.map((link, i) => (
+   491→                        <button
+   492→                          key={i}
+   493→                          onClick={() => setFaqSearch(link.label.replace(/[؟?]/g, '').replace('كيف ', ''))}
+   494→                          className="flex items-center gap-2 px-3 py-2.5 rounded-xl text-[11px] text-right"
+   495→                          style={{ background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)' }}
+   496→                        >
+   497→                          <span>{link.icon}</span>
+   498→                          <span style={{ color: isDark ? '#CCC' : '#444' }}>{link.label}</span>
+   499→                        </button>
+   500→                      ))}
+   501→                    </div>
+   502→                  </div>
+   503→
+   504→                  {/* FAQ Items */}
+   505→                  {filteredFaq.map((item, index) => (
+   506→                    <motion.div key={index} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.03 }}
+   507→                      className="rounded-2xl overflow-hidden" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.85)', backdropFilter: 'blur(20px)', border: isDark ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(0,0,0,0.06)' }}>
+   508→                      <button onClick={() => setExpandedFaq(expandedFaq === index ? null : index)} className="w-full flex items-center justify-between p-4">
+   509→                        <span className="text-sm font-medium text-right flex-1" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>{item.q}</span>
+   510→                        <motion.div animate={{ rotate: expandedFaq === index ? 180 : 0 }} transition={{ duration: 0.2 }}>
+   511→                          <ChevronDown size={16} color={isDark ? '#888' : '#AAA'} />
+   512→                        </motion.div>
+   513→                      </button>
+   514→                      <AnimatePresence>
+   515→                        {expandedFaq === index && (
+   516→                          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+   517→                            <div className="px-4 pb-4" style={{ borderTop: isDark ? '1px solid rgba(255,255,255,0.06)' : '1px solid rgba(0,0,0,0.06)' }}>
+   518→                              <p className="text-xs leading-relaxed pt-3" style={{ color: isDark ? '#AAA' : '#666' }}>{item.a}</p>
+   519→                            </div>
+   520→                          </motion.div>
+   521→                        )}
+   522→                      </AnimatePresence>
+   523→                    </motion.div>
+   524→                  ))}
+   525→
+   526→                  {/* Create ticket CTA */}
+   527→                  <motion.button whileTap={{ scale: 0.95 }} onClick={() => setView('create-ticket')}
+   528→                    className="w-full py-4 rounded-2xl flex items-center justify-center gap-2 text-sm font-medium mt-4"
+   529→                    style={{ background: 'rgba(92,26,27,0.1)', color: '#5C1A1B', border: '1px solid rgba(92,26,27,0.2)', backdropFilter: 'blur(20px)' }}>
+   530→                    <MessageSquare size={16} />
+   531→                    <span>لم تجد إجابة؟ أنشئ تذكرة دعم</span>
+   532→                  </motion.button>
+   533→
+   534→                  {/* Contact Admin Section */}
+   535→                  {(socialLinks.contactAdmin || socialLinks.contactAdminMessage) && (
+   536→                    <div className="rounded-2xl p-4 mt-3" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.85)', backdropFilter: 'blur(20px)', border: isDark ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(0,0,0,0.06)' }}>
+   537→                      <div className="flex items-center gap-2 mb-3">
+   538→                        <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'rgba(139,92,246,0.12)' }}>
+   539→                          <Headphones size={16} color="#8B5CF6" />
+   540→                        </div>
+   541→                        <h3 className="text-sm font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>تواصل مع الأدمن</h3>
+   542→                      </div>
+   543→                      {socialLinks.contactAdminMessage && (
+   544→                        <p className="text-xs leading-relaxed mb-3" style={{ color: isDark ? '#AAA' : '#666' }}>
+   545→                          {socialLinks.contactAdminMessage}
+   546→                        </p>
+   547→                      )}
+   548→                      {socialLinks.contactAdmin && (
+   549→                        <a
+   550→                          href={socialLinks.contactAdmin}
+   551→                          target="_blank"
+   552→                          rel="noopener noreferrer"
+   553→                          className="flex items-center justify-center gap-2 py-3 rounded-xl text-xs font-bold w-full"
+   554→                          style={{ background: 'rgba(139,92,246,0.1)', color: '#8B5CF6' }}
+   555→                        >
+   556→                          <ExternalLink size={16} />
+   557→                          <span>تواصل مباشر</span>
+   558→                        </a>
+   559→                      )}
+   560→                    </div>
+   561→                  )}
+   562→                </motion.div>
+   563→              )}
+   564→
+   565→              {/* Tickets Tab */}
+   566→              {activeTab === 'tickets' && (
+   567→                <motion.div key="tickets" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-3">
+   568→                  <motion.button whileTap={{ scale: 0.95 }} onClick={() => setView('create-ticket')}
+   569→                    className="w-full py-3.5 rounded-2xl flex items-center justify-center gap-2 text-sm font-medium"
+   570→                    style={{ background: 'rgba(92,26,27,0.1)', color: '#5C1A1B', border: '1px solid rgba(92,26,27,0.2)', backdropFilter: 'blur(20px)' }}>
+   571→                    <Plus size={18} strokeWidth={1.5} /><span>تذكرة جديدة</span>
+   572→                  </motion.button>
+   573→
+   574→                  {tickets.map((ticket) => {
+   575→                    const cat = categoryLabels[ticket.category] || categoryLabels.general;
+   576→                    const stat = statusLabels[ticket.status] || statusLabels.open;
+   577→                    const lastMsg = ticket.messages?.[ticket.messages.length - 1];
+   578→                    return (
+   579→                      <motion.div key={ticket.id} whileTap={{ scale: 0.98 }} onClick={() => { setSelectedTicket(ticket); setView('ticket-detail'); }}
+   580→                        className="rounded-2xl p-4 cursor-pointer" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.85)', backdropFilter: 'blur(20px)', border: isDark ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(0,0,0,0.06)' }}>
+   581→                        <div className="flex items-start justify-between mb-2">
+   582→                          <div className="flex-1 min-w-0">
+   583→                            <p className="text-sm font-bold truncate" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>{ticket.subject}</p>
+   584→                          </div>
+   585→                          <div className="flex items-center gap-1.5 mr-2 flex-shrink-0">
+   586→                            <span className="text-[10px] px-2 py-0.5 rounded-full font-medium" style={{ background: cat.bg, color: cat.color }}>{cat.label}</span>
+   587→                            <span className="text-[10px] px-2 py-0.5 rounded-full font-medium" style={{ background: stat.bg, color: stat.color }}>{stat.label}</span>
+   588→                          </div>
+   589→                        </div>
+   590→                        {lastMsg && (
+   591→                          <p className="text-xs truncate mb-2" style={{ color: isDark ? '#888' : '#AAA' }}>
+   592→                            {lastMsg.sender === 'support' ? 'الدعم: ' : ''}{lastMsg.text}
+   593→                          </p>
+   594→                        )}
+   595→                        <p className="text-[10px]" style={{ color: isDark ? '#555' : '#BBB' }}>{timeAgo(ticket.createdAt)}</p>
+   596→                      </motion.div>
+   597→                    );
+   598→                  })}
+   599→
+   600→                  {tickets.length === 0 && (
+   601→                    <div className="flex flex-col items-center py-12">
+   602→                      <MessageSquare size={48} strokeWidth={1.5} color={isDark ? '#333' : '#DDD'} />
+   603→                      <p className="text-sm mt-3" style={{ color: isDark ? '#666' : '#AAA' }}>لا توجد تذاكر دعم</p>
+   604→                      <p className="text-xs mt-1" style={{ color: isDark ? '#555' : '#BBB' }}>أنشئ تذكرة جديدة وسنساعدك</p>
+   605→                    </div>
+   606→                  )}
+   607→                </motion.div>
+   608→              )}
+   609→            </AnimatePresence>
+   610→          </div>
+   611→        )}
+   612→
+   613→        {/* Ticket Detail View */}
+   614→        {view === 'ticket-detail' && selectedTicket && (
+   615→          <div className="flex flex-col" style={{ minHeight: 'calc(100vh - 80px)' }}>
+   616→            {/* Ticket info bar */}
+   617→            <div className="px-5 py-3" style={{ background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.7)', backdropFilter: 'blur(20px)', borderBottom: isDark ? '1px solid rgba(255,255,255,0.06)' : '1px solid rgba(0,0,0,0.06)' }}>
+   618→              <div className="flex items-center gap-2">
+   619→                <span className="text-[10px] px-2 py-0.5 rounded-full font-medium" style={{ background: categoryLabels[selectedTicket.category]?.bg, color: categoryLabels[selectedTicket.category]?.color }}>
+   620→                  {categoryLabels[selectedTicket.category]?.label}
+   621→                </span>
+   622→                <span className="text-[10px] px-2 py-0.5 rounded-full font-medium" style={{ background: statusLabels[selectedTicket.status]?.bg, color: statusLabels[selectedTicket.status]?.color }}>
+   623→                  {statusLabels[selectedTicket.status]?.label}
+   624→                </span>
+   625→              </div>
+   626→            </div>
+   627→
+   628→            {/* Messages */}
+   629→            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
+   630→              {(selectedTicket.messages || []).map((msg, i) => (
+   631→                <motion.div key={i} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.02 }}
+   632→                  className={`flex ${msg.sender === 'user' ? 'justify-start' : 'justify-end'}`}>
+   633→                  <div className="max-w-[80%]">
+   634→                    {msg.sender === 'support' && (
+   635→                      <div className="flex items-center gap-1.5 mb-1 justify-end">
+   636→                        <span className="text-[10px] font-medium" style={{ color: '#3B82F6' }}>فريق الدعم</span>
+   637→                        <div className="w-5 h-5 rounded-full flex items-center justify-center" style={{ background: 'rgba(59,130,246,0.15)' }}>
+   638→                          <Headphones size={10} color="#3B82F6" />
+   639→                        </div>
+   640→                      </div>
+   641→                    )}
+   642→                    <div className="rounded-2xl p-3" style={{
+   643→                      background: msg.sender === 'user' ? '#5C1A1B' : isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)',
+   644→                      borderBottomLeftRadius: msg.sender === 'user' ? '4px' : '16px',
+   645→                      borderBottomRightRadius: msg.sender === 'support' ? '4px' : '16px',
+   646→                    }}>
+   647→                      {msg.image && <img src={msg.image} alt="attachment" className="w-full rounded-xl mb-2 max-h-48 object-cover" />}
+   648→                      <p className="text-xs leading-relaxed" style={{ color: msg.sender === 'user' ? '#FFF' : isDark ? '#CCC' : '#333' }}>{msg.text}</p>
+   649→                    </div>
+   650→                    <div className="flex items-center gap-1 mt-1" dir="ltr">
+   651→                      {msg.sender === 'user' && (
+   652→                        <span className="text-[9px]" style={{ color: isDark ? '#555' : '#BBB' }}>أنت</span>
+   653→                      )}
+   654→                      <p className="text-[9px]" style={{ color: isDark ? '#555' : '#BBB' }}>{timeAgo(msg.time)}</p>
+   655→                    </div>
+   656→                  </div>
+   657→                </motion.div>
+   658→              ))}
+   659→              <div ref={messagesEndRef} />
+   660→            </div>
+   661→
+   662→            {/* Input bar */}
+   663→            {selectedTicket.status !== 'closed' && selectedTicket.status !== 'resolved' && (
+   664→              <div className="px-5 py-3" style={{ background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.85)', backdropFilter: 'blur(20px)', borderTop: isDark ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(0,0,0,0.06)', paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
+   665→                <div className="flex items-center gap-2">
+   666→                  <div className="flex-1 flex items-center gap-2 px-4 py-3 rounded-2xl" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
+   667→                    <input type="text" placeholder="اكتب رسالتك..." value={messageInput} onChange={e => setMessageInput(e.target.value)}
+   668→                      onKeyDown={e => e.key === 'Enter' && handleSendMessage()}
+   669→                      className="flex-1 bg-transparent outline-none text-sm" style={{ color: isDark ? '#FFF' : '#1a1a1a' }} />
+   670→                  </div>
+   671→                  <motion.button whileTap={{ scale: 0.85 }} onClick={handleSendMessage}
+   672→                    className="w-11 h-11 rounded-xl flex items-center justify-center"
+   673→                    style={{ background: '#5C1A1B' }}>
+   674→                    <Send size={16} color="#FFF" />
+   675→                  </motion.button>
+   676→                </div>
+   677→              </div>
+   678→            )}
+   679→          </div>
+   680→        )}
+   681→
+   682→        {/* Create Ticket View */}
+   683→        {view === 'create-ticket' && (
+   684→          <div className="px-5 mt-4 pb-8">
+   685→            <div className="space-y-3">
+   686→              <div className="rounded-2xl p-4 space-y-3" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.85)', backdropFilter: 'blur(20px)', border: isDark ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(0,0,0,0.06)' }}>
+   687→                <h3 className="text-sm font-bold mb-1" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>إنشاء تذكرة دعم</h3>
+   688→                <input type="text" placeholder="موضوع التذكرة" value={newSubject} onChange={e => setNewSubject(e.target.value)}
+   689→                  className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={{ background: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)', color: isDark ? '#FFF' : '#1a1a1a' }} />
+   690→                
+   691→                <div className="flex gap-2">
+   692→                  {(['technical', 'financial', 'general'] as const).map(cat => {
+   693→                    const info = categoryLabels[cat];
+   694→                    return (
+   695→                      <button key={cat} onClick={() => setNewCategory(cat)}
+   696→                        className="flex-1 py-2.5 rounded-xl text-xs font-medium"
+   697→                        style={{ background: newCategory === cat ? info.bg : isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)', color: newCategory === cat ? info.color : isDark ? '#888' : '#AAA', border: newCategory === cat ? `1px solid ${info.color}30` : 'none' }}>
+   698→                        {info.label}
+   699→                      </button>
+   700→                    );
+   701→                  })}
+   702→                </div>
+   703→
+   704→                <textarea placeholder="اكتب رسالتك بالتفصيل..." value={newMessage} onChange={e => setNewMessage(e.target.value)} rows={4}
+   705→                  className="w-full px-3 py-2.5 rounded-xl text-sm outline-none resize-none" style={{ background: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)', color: isDark ? '#FFF' : '#1a1a1a' }} />
+   706→
+   707→                {/* Image upload */}
+   708→                <div>
+   709→                  <input type="file" ref={fileInputRef} accept="image/*" onChange={handleImageUpload} className="hidden" />
+   710→                  <div className="flex items-center gap-2">
+   711→                    <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 px-3 py-2 rounded-xl text-xs" style={{ background: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)', color: isDark ? '#AAA' : '#888' }}>
+   712→                      <ImagePlus size={14} /><span>إرفاق صورة</span>
+   713→                    </button>
+   714→                    {newImage && (
+   715→                      <div className="relative">
+   716→                        <img src={newImage} alt="attachment" className="w-10 h-10 rounded-lg object-cover" />
+   717→                        <button onClick={() => setNewImage('')} className="absolute -top-1 -left-1 w-4 h-4 rounded-full flex items-center justify-center" style={{ background: '#5C1A1B' }}>
+   718→                          <X size={8} color="#FFF" />
+   719→                        </button>
+   720→                      </div>
+   721→                    )}
+   722→                  </div>
+   723→                </div>
+   724→
+   725→                <motion.button whileTap={{ scale: 0.95 }} onClick={handleCreateTicket} disabled={!newSubject || !newMessage}
+   726→                  className="w-full py-3 rounded-xl text-sm font-bold text-white disabled:opacity-50" style={{ background: '#5C1A1B' }}>
+   727→                  إرسال التذكرة
+   728→                </motion.button>
+   729→              </div>
+   730→            </div>
+   731→          </div>
+   732→        )}
+   733→      </div>
+   734→    </div>
+   735→  );
+   736→}
+   737→

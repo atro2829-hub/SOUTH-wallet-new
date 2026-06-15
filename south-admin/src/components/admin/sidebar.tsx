@@ -165,6 +165,7 @@ const navSections: NavSection[] = [
     items: [
       { id: 'support-tickets', label: 'تذاكر الدعم', icon: Ticket, roles: ['admin', 'owner'] },
       { id: 'support-livechat', label: 'الدردشة المباشرة', icon: MessageCircle, roles: ['admin', 'owner'] },
+      { id: 'direct-chat', label: 'محادثات العملاء', icon: MessageCircle, roles: ['admin', 'owner'] },
       { id: 'social-links', label: 'الروابط الاجتماعية', icon: Link2, roles: ['admin', 'owner'] },
       { id: 'user-reviews', label: 'تقييمات المستخدمين', icon: Star, roles: ['admin', 'owner'] },
     ],

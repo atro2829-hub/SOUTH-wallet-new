@@ -1,8 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { ref, onValue, update, push } from 'firebase/database';
-import { database } from '@/lib/firebase';
+import { supabase } from '@/lib/supabase';
 import { useAdminStore } from '@/lib/store';
 import { timeAgo, cn, generateId } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
@@ -66,35 +65,111 @@ export default function SupportTicketsPanel() {
   const [sending, setSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    const ticketsRef = ref(database, 'supportTickets');
-    const unsub = onValue(ticketsRef, (snapshot) => {
-      const data = snapshot.val() || {};
-      const list: SupportTicket[] = Object.entries(data).map(([key, val]: [string, any]) => ({
-        id: key,
-        userId: val.userId || '',
-        userName: val.userName || 'مستخدم',
-        subject: val.subject || '',
-        message: val.message || '',
-        category: val.category || 'general',
-        status: val.status || 'open',
-        priority: val.priority || 'medium',
-        assignedTo: val.assignedTo || '',
-        messages: val.messages || [],
-        createdAt: val.createdAt || new Date().toISOString(),
-        updatedAt: val.updatedAt || '',
-      }));
-      list.sort((a, b) => {
+  // Load tickets from Supabase
+  const loadTickets = async () => {
+    try {
+      const { data: ticketData, error: ticketError } = await supabase
+        .from('support_tickets')
+        .select('*, users!support_tickets_user_id_fkey(display_name, phone)')
+        .order('created_at', { ascending: false });
+
+      if (ticketError) throw ticketError;
+
+      if (!ticketData || ticketData.length === 0) {
+        setTickets([]);
+        setLoading(false);
+        return;
+      }
+
+      // Load messages for all tickets
+      const ticketIds = ticketData.map(t => t.id);
+      const { data: messagesData, error: messagesError } = await supabase
+        .from('support_messages')
+        .select('*')
+        .in('ticket_id', ticketIds)
+        .order('created_at', { ascending: true });
+
+      if (messagesError) throw messagesError;
+
+      const formattedTickets: SupportTicket[] = ticketData.map(ticket => {
+        const ticketMessages = (messagesData || [])
+          .filter(m => m.ticket_id === ticket.id)
+          .map(m => ({
+            sender: m.sender_type === 'admin' ? 'support' as const : m.sender_type as 'user',
+            text: m.message || '',
+            time: m.created_at || new Date().toISOString(),
+            image: m.attachment_url || undefined,
+          }));
+
+        const userName = (ticket as any).users?.display_name || ticket.user_id?.substring(0, 8) || 'مستخدم';
+
+        return {
+          id: ticket.id,
+          userId: ticket.user_id || '',
+          userName,
+          subject: ticket.subject || '',
+          message: ticket.message || '',
+          category: ticket.category || 'general',
+          status: ticket.status || 'open',
+          priority: ticket.priority || 'medium',
+          assignedTo: ticket.assigned_to || '',
+          messages: ticketMessages,
+          createdAt: ticket.created_at || new Date().toISOString(),
+          updatedAt: ticket.updated_at || '',
+        };
+      });
+
+      formattedTickets.sort((a, b) => {
         const pOrder = { urgent: 0, high: 1, medium: 2, low: 3 };
         const sOrder = { open: 0, in_progress: 1, resolved: 2, closed: 3 };
         if (sOrder[a.status] !== sOrder[b.status]) return sOrder[a.status] - sOrder[b.status];
         if (pOrder[a.priority] !== pOrder[b.priority]) return pOrder[a.priority] - pOrder[b.priority];
         return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
       });
-      setTickets(list);
+
+      setTickets(formattedTickets);
       setLoading(false);
-    });
-    return () => unsub();
+    } catch (e) {
+      console.error('Failed to load tickets:', e);
+      setTickets([]);
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadTickets();
+
+    // Subscribe to ticket changes
+    const ticketsChannel = supabase
+      .channel('admin-support-tickets')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'support_tickets' }, () => {
+        loadTickets();
+      })
+      .subscribe();
+
+    // Subscribe to new messages
+    const messagesChannel = supabase
+      .channel('admin-support-messages')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'support_messages' }, (payload) => {
+        // Reload tickets to get updated messages
+        loadTickets();
+        // Update selected ticket if viewing
+        if (selectedTicket && payload.new.ticket_id === selectedTicket.id) {
+          const newMsg: TicketMessage = {
+            sender: payload.new.sender_type === 'admin' ? 'support' : 'user',
+            text: payload.new.message || '',
+            time: payload.new.created_at || new Date().toISOString(),
+            image: payload.new.attachment_url || undefined,
+          };
+          setSelectedTicket(prev => prev ? { ...prev, messages: [...prev.messages, newMsg] } : prev);
+        }
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(ticketsChannel);
+      supabase.removeChannel(messagesChannel);
+    };
   }, []);
 
   const filtered = useMemo(() => {
@@ -125,16 +200,32 @@ export default function SupportTicketsPanel() {
     if (!selectedTicket || !replyText.trim()) return;
     setSending(true);
     try {
+      const { error } = await supabase
+        .from('support_messages')
+        .insert({
+          ticket_id: selectedTicket.id,
+          sender_type: 'admin',
+          message: replyText.trim(),
+        });
+
+      if (error) throw error;
+
+      // Update ticket status and assigned_to
+      await supabase
+        .from('support_tickets')
+        .update({
+          status: 'in_progress',
+          updated_at: new Date().toISOString(),
+          assigned_to: adminUser?.uid || null,
+        })
+        .eq('id', selectedTicket.id);
+
+      // Update local state
       const newMessage: TicketMessage = {
         sender: 'support', text: replyText.trim(), time: new Date().toISOString(),
       };
-      const messages = [...(selectedTicket.messages || []), newMessage];
-      await update(ref(database, `supportTickets/${selectedTicket.id}`), {
-        messages,
-        status: 'in_progress',
-        updatedAt: new Date().toISOString(),
-        assignedTo: adminUser?.uid,
-      });
+      setSelectedTicket(prev => prev ? { ...prev, messages: [...prev.messages, newMessage], status: 'in_progress' } : prev);
+
       setReplyText('');
       showToast('تم إرسال الرد', 'success');
     } catch { showToast('حدث خطأ', 'error'); }
@@ -144,9 +235,14 @@ export default function SupportTicketsPanel() {
   const handleStatusChange = async (newStatus: string) => {
     if (!selectedTicket) return;
     try {
-      await update(ref(database, `supportTickets/${selectedTicket.id}`), {
-        status: newStatus, updatedAt: new Date().toISOString(),
-      });
+      const { error } = await supabase
+        .from('support_tickets')
+        .update({ status: newStatus, updated_at: new Date().toISOString() })
+        .eq('id', selectedTicket.id);
+
+      if (error) throw error;
+
+      setSelectedTicket(prev => prev ? { ...prev, status: newStatus as SupportTicket['status'] } : prev);
       showToast('تم تحديث الحالة', 'success');
     } catch { showToast('حدث خطأ', 'error'); }
   };
@@ -154,9 +250,14 @@ export default function SupportTicketsPanel() {
   const handlePriorityChange = async (newPriority: string) => {
     if (!selectedTicket) return;
     try {
-      await update(ref(database, `supportTickets/${selectedTicket.id}`), {
-        priority: newPriority, updatedAt: new Date().toISOString(),
-      });
+      const { error } = await supabase
+        .from('support_tickets')
+        .update({ priority: newPriority, updated_at: new Date().toISOString() })
+        .eq('id', selectedTicket.id);
+
+      if (error) throw error;
+
+      setSelectedTicket(prev => prev ? { ...prev, priority: newPriority as SupportTicket['priority'] } : prev);
       showToast('تم تحديث الأولوية', 'success');
     } catch { showToast('حدث خطأ', 'error'); }
   };

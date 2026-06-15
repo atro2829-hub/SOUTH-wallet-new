@@ -77,6 +77,7 @@ const accountSections: Section[] = [
       { id: 'my-data', label: 'بياناتي', icon: User, color: '#2563EB', screen: 'kyc' },
       { id: 'gift-vouchers', label: 'قسائم الهدية', icon: Gift, color: '#10B981', screen: 'gift-vouchers' },
       { id: 'my-investments', label: 'استثماراتي', icon: TrendingUp, color: '#8B5CF6', screen: 'investment' },
+      { id: 'direct-chat', label: 'المحادثات', icon: MessageCircle, color: '#5C1A1B', screen: 'direct-chat' },
     ],
   },
   {

@@ -1,8 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { ref, onValue, update, push } from 'firebase/database';
-import { database } from '@/lib/firebase';
+import { supabase } from '@/lib/supabase';
 import { useAdminStore } from '@/lib/store';
 import { timeAgo, cn, generateId } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
@@ -55,31 +54,113 @@ export default function SupportLiveChatPanel() {
   const [sending, setSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    const chatRef = ref(database, 'liveChats');
-    const unsub = onValue(chatRef, (snapshot) => {
-      const data = snapshot.val() || {};
-      const list: Chat[] = Object.entries(data).map(([key, val]: [string, any]) => ({
-        id: key,
-        userId: val.userId || '',
-        userName: val.userName || 'مستخدم',
-        userPhone: val.userPhone || '',
-        userEmail: val.userEmail || '',
-        status: val.status || 'active',
-        messages: val.messages || [],
-        createdAt: val.createdAt || new Date().toISOString(),
-        updatedAt: val.updatedAt || '',
-        assignedTo: val.assignedTo || '',
-      }));
-      list.sort((a, b) => {
+  // Load chats from Supabase
+  const loadChats = async () => {
+    try {
+      const { data: chatData, error: chatError } = await supabase
+        .from('support_livechat')
+        .select('*, users!support_livechat_user_id_fkey(display_name, phone, email)')
+        .order('updated_at', { ascending: false });
+
+      if (chatError) throw chatError;
+
+      if (!chatData || chatData.length === 0) {
+        setChats([]);
+        setLoading(false);
+        return;
+      }
+
+      // Load messages for all chats
+      const chatIds = chatData.map(c => c.id);
+      const { data: messagesData, error: messagesError } = await supabase
+        .from('livechat_messages')
+        .select('*')
+        .in('chat_id', chatIds)
+        .order('created_at', { ascending: true });
+
+      if (messagesError) throw messagesError;
+
+      const formattedChats: Chat[] = chatData.map(chat => {
+        const chatMessages = (messagesData || [])
+          .filter(m => m.chat_id === chat.id)
+          .map(m => ({
+            sender: m.sender_type as 'user' | 'admin',
+            text: m.content || '',
+            time: m.created_at || new Date().toISOString(),
+            senderName: m.sender_type === 'admin' ? 'الدعم الفني' : ((chat as any).users?.display_name || 'مستخدم'),
+          }));
+
+        const userInfo = (chat as any).users;
+        const userName = userInfo?.display_name || chat.user_id?.substring(0, 8) || 'مستخدم';
+
+        // Map Supabase status to UI status
+        let uiStatus: 'active' | 'ended' = 'active';
+        if (chat.status === 'closed') uiStatus = 'ended';
+        else if (chat.status === 'active' || chat.status === 'waiting') uiStatus = 'active';
+
+        return {
+          id: chat.id,
+          userId: chat.user_id || '',
+          userName,
+          userPhone: userInfo?.phone || '',
+          userEmail: userInfo?.email || '',
+          status: uiStatus,
+          messages: chatMessages,
+          createdAt: chat.created_at || new Date().toISOString(),
+          updatedAt: chat.updated_at || '',
+          assignedTo: chat.assigned_to || '',
+        };
+      });
+
+      formattedChats.sort((a, b) => {
         if (a.status === 'active' && b.status !== 'active') return -1;
         if (a.status !== 'active' && b.status === 'active') return 1;
         return new Date(b.updatedAt || b.createdAt).getTime() - new Date(a.updatedAt || a.createdAt).getTime();
       });
-      setChats(list);
+
+      setChats(formattedChats);
       setLoading(false);
-    });
-    return () => unsub();
+    } catch (e) {
+      console.error('Failed to load chats:', e);
+      setChats([]);
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadChats();
+
+    // Subscribe to livechat changes
+    const livechatChannel = supabase
+      .channel('admin-support-livechat')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'support_livechat' }, () => {
+        loadChats();
+      })
+      .subscribe();
+
+    // Subscribe to livechat messages
+    const livechatMessagesChannel = supabase
+      .channel('admin-livechat-messages')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'livechat_messages' }, (payload) => {
+        // Reload all chats when a new message arrives
+        loadChats();
+        // Update selected chat if viewing
+        if (selectedChat && payload.new.chat_id === selectedChat.id) {
+          const newMsg: ChatMessage = {
+            sender: payload.new.sender_type as 'user' | 'admin',
+            text: payload.new.content || '',
+            time: payload.new.created_at || new Date().toISOString(),
+            senderName: payload.new.sender_type === 'admin' ? 'الدعم الفني' : selectedChat.userName,
+          };
+          setSelectedChat(prev => prev ? { ...prev, messages: [...prev.messages, newMsg] } : prev);
+        }
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(livechatChannel);
+      supabase.removeChannel(livechatMessagesChannel);
+    };
   }, []);
 
   const filteredChats = useMemo(() => {
@@ -107,13 +188,31 @@ export default function SupportLiveChatPanel() {
     if (!selectedChat || !message.trim()) return;
     setSending(true);
     try {
+      const { error } = await supabase
+        .from('livechat_messages')
+        .insert({
+          chat_id: selectedChat.id,
+          sender_type: 'admin',
+          message_type: 'text',
+          content: message.trim(),
+        });
+
+      if (error) throw error;
+
+      // Update chat's assigned_to and updated_at
+      await supabase
+        .from('support_livechat')
+        .update({
+          assigned_to: adminUser?.uid || null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', selectedChat.id);
+
+      // Update local state
       const newMsg: ChatMessage = {
         sender: 'admin', text: message.trim(), time: new Date().toISOString(), senderName: adminUser?.displayName,
       };
-      const messages = [...(selectedChat.messages || []), newMsg];
-      await update(ref(database, `liveChats/${selectedChat.id}`), {
-        messages, updatedAt: new Date().toISOString(), assignedTo: adminUser?.uid,
-      });
+      setSelectedChat(prev => prev ? { ...prev, messages: [...prev.messages, newMsg] } : prev);
       setMessage('');
     } catch { showToast('حدث خطأ', 'error'); }
     finally { setSending(false); }
@@ -122,9 +221,13 @@ export default function SupportLiveChatPanel() {
   const handleEndChat = async () => {
     if (!selectedChat) return;
     try {
-      await update(ref(database, `liveChats/${selectedChat.id}`), {
-        status: 'ended', updatedAt: new Date().toISOString(),
-      });
+      const { error } = await supabase
+        .from('support_livechat')
+        .update({ status: 'closed', updated_at: new Date().toISOString() })
+        .eq('id', selectedChat.id);
+
+      if (error) throw error;
+
       showToast('تم إنهاء المحادثة', 'success');
       setSelectedChat(null);
     } catch { showToast('حدث خطأ', 'error'); }

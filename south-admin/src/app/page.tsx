@@ -67,6 +67,7 @@ const MarketingContentPanel = lazy(() => import('@/components/admin/marketing-co
 const BranchManagementPanel = lazy(() => import('@/components/admin/branch-management-panel'));
 const CustomReportsPanel = lazy(() => import('@/components/admin/custom-reports-panel'));
 const DataExportPanel = lazy(() => import('@/components/admin/data-export-panel'));
+const DirectChatPanel = lazy(() => import('@/components/admin/direct-chat-panel'));
 
 const panelMap: Record<string, React.ComponentType> = {
   // Dashboard
@@ -113,6 +114,7 @@ const panelMap: Record<string, React.ComponentType> = {
   // Support
   'support-tickets': SupportTicketsPanel,
   'support-livechat': SupportLiveChatPanel,
+  'direct-chat': DirectChatPanel,
   'social-links': SocialLinksPanel,
   'user-reviews': UserReviewsPanel,
   // Content & Legal

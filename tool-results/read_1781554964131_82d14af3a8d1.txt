@@ -1,0 +1,895 @@
+     1→     1→'use client';
+     2→     2→
+     3→     3→import { useEffect, useRef, useCallback } from 'react';
+     4→     4→import { supabase, supabaseService } from '@/lib/supabase';
+     5→     5→import type {
+     6→     6→  DbUser,
+     7→     7→  DbTransaction,
+     8→     8→  DbNotification,
+     9→     9→  DbSection,
+    10→    10→  DbServiceProvider,
+    11→    11→  DbProductPackage,
+    12→    12→  DbExchangeRate,
+    13→    13→  DbBanner,
+    14→    14→  DbFeatureFlag,
+    15→    15→  DbKillSwitch,
+    16→    16→  DbMaintenance,
+    17→    17→} from '@/lib/supabase';
+    18→    18→import { useAppStore } from '@/lib/store';
+    19→    19→import type { ServiceProvider, ProductPackage, ServiceCategory } from '@/lib/store';
+    20→    20→
+    21→    21→// ─────────────────────────────────────────────────────────
+    22→    22→//  Type Mappers: Supabase DB → Zustand Store
+    23→    23→// ─────────────────────────────────────────────────────────
+    24→    24→
+    25→    25→/** Map a Supabase DbUser row to the store's User shape.
+    26→    26→ *  NOTE: store.user.id is the Firebase Auth UID, NOT the Supabase UUID. */
+    27→    27→function mapDbUserToStore(dbUser: DbUser, firebaseUid: string) {
+    28→    28→  const fullName =
+    29→    29→    [dbUser.first_name, dbUser.second_name, dbUser.third_name, dbUser.family_name]
+    30→    30→      .filter((n) => n && n.trim())
+    31→    31→      .join(' ') ||
+    32→    32→    dbUser.display_name ||
+    33→    33→    '';
+    34→    34→
+    35→    35→  return {
+    36→    36→    id: firebaseUid, // store keeps Firebase UID as id
+    37→    37→    email: dbUser.email || '',
+    38→    38→    phone: dbUser.phone || '',
+    39→    39→    name: fullName,
+    40→    40→    firstName: dbUser.first_name || '',
+    41→    41→    secondName: dbUser.second_name || '',
+    42→    42→    thirdName: dbUser.third_name || '',
+    43→    43→    familyName: dbUser.family_name || '',
+    44→    44→    nationalId: dbUser.national_id || '',
+    45→    45→    avatar: dbUser.avatar_url || '',
+    46→    46→    role: (dbUser.role === 'agent' ? 'user' : dbUser.role) as 'user' | 'admin' | 'owner',
+    47→    47→    userId: dbUser.id, // Supabase UUID stored here for reference
+    48→    48→    kycStatus: dbUser.kyc_status || 'pending',
+    49→    49→    isBlocked: dbUser.is_blocked || false,
+    50→    50→    balanceYER: dbUser.balance_yer || 0,
+    51→    51→    balanceSAR: dbUser.balance_sar || 0,
+    52→    52→    balanceUSD: dbUser.balance_usd || 0,
+    53→    53→    cardType: dbUser.card_type || '',
+    54→    54→    cardNumber: dbUser.card_number || '',
+    55→    55→    cardIssuedAt: '', // not in Supabase schema
+    56→    56→    governorate: dbUser.governorate || '',
+    57→    57→    theme: (dbUser.theme === 'system' ? 'light' : dbUser.theme) as 'light' | 'dark',
+    58→    58→  };
+    59→    59→}
+    60→    60→
+    61→    61→/** Map a Supabase DbTransaction row to the store's Transaction shape. */
+    62→    62→function mapDbTransactionToStore(dbTx: DbTransaction) {
+    63→    63→  return {
+    64→    64→    id: dbTx.id,
+    65→    65→    fromUserId: dbTx.from_user_id || '',
+    66→    66→    toUserId: dbTx.to_user_id || '',
+    67→    67→    amount: dbTx.amount || 0,
+    68→    68→    currency: dbTx.currency || 'YER',
+    69→    69→    type: dbTx.type || 'order',
+    70→    70→    status: dbTx.status || 'completed',
+    71→    71→    description: dbTx.description || '',
+    72→    72→    createdAt: dbTx.created_at || new Date().toISOString(),
+    73→    73→  };
+    74→    74→}
+    75→    75→
+    76→    76→/** Map a Supabase DbNotification row to the store's Notification shape. */
+    77→    77→function mapDbNotificationToStore(dbNotif: DbNotification) {
+    78→    78→  return {
+    79→    79→    id: dbNotif.id,
+    80→    80→    title: dbNotif.title || '',
+    81→    81→    body: dbNotif.body || '',
+    82→    82→    type: (dbNotif.type || 'info') as 'info' | 'transaction' | 'security' | 'promo',
+    83→    83→    isRead: dbNotif.is_read || false,
+    84→    84→    createdAt: dbNotif.created_at || new Date().toISOString(),
+    85→    85→    navigationTarget: dbNotif.navigation_target || undefined,
+    86→    86→    navigationParams: dbNotif.navigation_params || undefined,
+    87→    87→    data: dbNotif.data || undefined,
+    88→    88→  };
+    89→    89→}
+    90→    90→
+    91→    91→/** Map a Supabase DbServiceProvider row to the store's ServiceProvider shape. */
+    92→    92→function mapDbProviderToStore(dbProv: DbServiceProvider): ServiceProvider {
+    93→    93→  return {
+    94→    94→    id: dbProv.id,
+    95→    95→    categoryId: dbProv.section_id || '',
+    96→    96→    name: dbProv.name || '',
+    97→    97→    color: dbProv.color || '',
+    98→    98→    icon: dbProv.icon || '',
+    99→    99→    isActive: dbProv.is_active ?? true,
+   100→   100→    inputLabel: dbProv.input_label || '',
+   101→   101→    inputType: dbProv.input_type === 'tel' ? 'phone' : 'text',
+   102→   102→    inputPrefix: dbProv.input_prefix || undefined,
+   103→   103→  };
+   104→   104→}
+   105→   105→
+   106→   106→/** Map a Supabase DbProductPackage row to the store's ProductPackage shape. */
+   107→   107→function mapDbPackageToStore(dbPkg: DbProductPackage): ProductPackage {
+   108→   108→  // Pick the first non-zero price as the display price
+   109→   109→  const price = dbPkg.price_yer || dbPkg.price_sar || dbPkg.price_usd || 0;
+   110→   110→  const currency = dbPkg.price_yer
+   111→   111→    ? 'YER' as const
+   112→   112→    : dbPkg.price_sar
+   113→   113→      ? 'SAR' as const
+   114→   114→      : 'USD' as const;
+   115→   115→
+   116→   116→  return {
+   117→   117→    id: dbPkg.id,
+   118→   118→    providerId: dbPkg.provider_id || '',
+   119→   119→    name: dbPkg.name || '',
+   120→   120→    price,
+   121→   121→    currency,
+   122→   122→    executionType: dbPkg.execution_type === 'api' ? 'auto' : dbPkg.execution_type || 'manual',
+   123→   123→    isActive: dbPkg.is_active ?? true,
+   124→   124→    apiProvider: dbPkg.api_product_id || undefined,
+   125→   125→    costPrice: dbPkg.cost_price || undefined,
+   126→   126→    commission: dbPkg.commission_amount || undefined,
+   127→   127→  };
+   128→   128→}
+   129→   129→
+   130→   130→/** Map a Supabase DbSection row to a store ServiceCategory shape. */
+   131→   131→function mapDbSectionToCategory(dbSec: DbSection): ServiceCategory {
+   132→   132→  return {
+   133→   133→    id: dbSec.id,
+   134→   134→    name: dbSec.name || '',
+   135→   135→    type: (dbSec.type || 'telecom') as ServiceCategory['type'],
+   136→   136→    icon: dbSec.icon || '',
+   137→   137→  };
+   138→   138→}
+   139→   139→
+   140→   140→/** Map a Supabase DbExchangeRate row to the store's exchangeRates shape.
+   141→   141→ *  Store expects: { YER: number, SAR: number, USD: number }
+   142→   142→ *  Where SAR = how many YER per 1 SAR, USD = how many YER per 1 USD */
+   143→   143→function mapDbExchangeRateToStore(dbRate: DbExchangeRate) {
+   144→   144→  return {
+   145→   145→    YER: 1, // base currency
+   146→   146→    SAR: dbRate.sar_to_yer || 0,
+   147→   147→    USD: dbRate.usd_to_yer || 0,
+   148→   148→  };
+   149→   149→}
+   150→   150→
+   151→   151→/** Map a Supabase DbFeatureFlag array to the store's FeatureFlags shape. */
+   152→   152→function mapDbFeatureFlagsToStore(dbFlags: DbFeatureFlag[]) {
+   153→   153→  const flags: Record<string, boolean> = {};
+   154→   154→  for (const f of dbFlags) {
+   155→   155→    // Convert flag_key like "transfers_enabled" to "transfersEnabled"
+   156→   156→    const camelKey = f.flag_key
+   157→   157→      .replace(/_([a-z])/g, (_: string, c: string) => c.toUpperCase());
+   158→   158→    flags[camelKey] = f.is_enabled;
+   159→   159→  }
+   160→   160→  return flags;
+   161→   161→}
+   162→   162→
+   163→   163→/** Map a Supabase DbKillSwitch row to the store's killSwitch shape. */
+   164→   164→function mapDbKillSwitchToStore(dbKs: DbKillSwitch) {
+   165→   165→  return {
+   166→   166→    active: dbKs.is_active,
+   167→   167→    message: dbKs.message || '',
+   168→   168→    activatedAt: dbKs.activated_at || '',
+   169→   169→    activatedBy: dbKs.activated_by || '',
+   170→   170→    deactivateAt: dbKs.deactivate_at || '',
+   171→   171→    duration: dbKs.duration_minutes || 0,
+   172→   172→  };
+   173→   173→}
+   174→   174→
+   175→   175→/** Map a Supabase DbMaintenance row to the store's MaintenanceMode shape. */
+   176→   176→function mapDbMaintenanceToStore(dbM: DbMaintenance) {
+   177→   177→  return {
+   178→   178→    active: dbM.is_active,
+   179→   179→    message: dbM.message || '',
+   180→   180→    estimatedTime: dbM.estimated_time || '',
+   181→   181→    activatedAt: dbM.activated_at || undefined,
+   182→   182→  };
+   183→   183→}
+   184→   184→
+   185→   185→// ─────────────────────────────────────────────────────────
+   186→   186→//  Hook
+   187→   187→// ─────────────────────────────────────────────────────────
+   188→   188→
+   189→   189→/**
+   190→   190→ * Syncs data from Supabase (Realtime + REST) to the Zustand store.
+   191→   191→ *
+   192→   192→ * - On mount: fetches initial data via supabaseService
+   193→   193→ * - Real-time: subscribes to postgres_changes for live updates
+   194→   194→ * - On window focus / visibility change: refreshes user data
+   195→   195→ * - Cleans up all subscriptions on unmount
+   196→   196→ */
+   197→   197→export function useSupabaseSync() {
+   198→   198→  const user = useAppStore((s) => s.user);
+   199→   199→  const isAuthenticated = useAppStore((s) => s.isAuthenticated);
+   200→   200→  const setUser = useAppStore((s) => s.setUser);
+   201→   201→  const setTransactions = useAppStore((s) => s.setTransactions);
+   202→   202→  const setNotifications = useAppStore((s) => s.setNotifications);
+   203→   203→  const setProviders = useAppStore((s) => s.setProviders);
+   204→   204→  const setPackages = useAppStore((s) => s.setPackages);
+   205→   205→  const setCategories = useAppStore((s) => s.setCategories);
+   206→   206→  const setExchangeRates = useAppStore((s) => s.setExchangeRates);
+   207→   207→  const setFbSections = useAppStore((s) => s.setFbSections);
+   208→   208→  const setKillSwitch = useAppStore((s) => s.setKillSwitch);
+   209→   209→  const setFeatureFlags = useAppStore((s) => s.setFeatureFlags);
+   210→   210→  const setMaintenance = useAppStore((s) => s.setMaintenance);
+   211→   211→
+   212→   212→  // ── Refs for stable callback references ──
+   213→   213→  const firebaseUidRef = useRef(user?.id);
+   214→   214→  const supabaseUuidRef = useRef<string | null>(null);
+   215→   215→  const isAuthenticatedRef = useRef(isAuthenticated);
+   216→   216→  const isRefreshing = useRef(false);
+   217→   217→
+   218→   218→  const setUserRef = useRef(setUser);
+   219→   219→  const setTransactionsRef = useRef(setTransactions);
+   220→   220→  const setNotificationsRef = useRef(setNotifications);
+   221→   221→  const setProvidersRef = useRef(setProviders);
+   222→   222→  const setPackagesRef = useRef(setPackages);
+   223→   223→  const setCategoriesRef = useRef(setCategories);
+   224→   224→  const setExchangeRatesRef = useRef(setExchangeRates);
+   225→   225→  const setFbSectionsRef = useRef(setFbSections);
+   226→   226→  const setKillSwitchRef = useRef(setKillSwitch);
+   227→   227→  const setFeatureFlagsRef = useRef(setFeatureFlags);
+   228→   228→  const setMaintenanceRef = useRef(setMaintenance);
+   229→   229→
+   230→   230→  // Keep refs in sync
+   231→   231→  useEffect(() => {
+   232→   232→    firebaseUidRef.current = user?.id;
+   233→   233→    isAuthenticatedRef.current = isAuthenticated;
+   234→   234→    setUserRef.current = setUser;
+   235→   235→    setTransactionsRef.current = setTransactions;
+   236→   236→    setNotificationsRef.current = setNotifications;
+   237→   237→    setProvidersRef.current = setProviders;
+   238→   238→    setPackagesRef.current = setPackages;
+   239→   239→    setCategoriesRef.current = setCategories;
+   240→   240→    setExchangeRatesRef.current = setExchangeRates;
+   241→   241→    setFbSectionsRef.current = setFbSections;
+   242→   242→    setKillSwitchRef.current = setKillSwitch;
+   243→   243→    setFeatureFlagsRef.current = setFeatureFlags;
+   244→   244→    setMaintenanceRef.current = setMaintenance;
+   245→   245→  });
+   246→   246→
+   247→   247→  // Track active Supabase Realtime channels for cleanup
+   248→   248→  const channelsRef = useRef<ReturnType<typeof supabase.channel>[]>([]);
+   249→   249→
+   250→   250→  // ─────────────────────────────────────────────────────────
+   251→   251→  //  Refresh helpers
+   252→   252→  // ─────────────────────────────────────────────────────────
+   253→   253→
+   254→   254→  /** Resolve the Supabase UUID from the Firebase UID and cache it. */
+   255→   255→  const resolveSupabaseUuid = useCallback(async (firebaseUid: string): Promise<string | null> => {
+   256→   256→    try {
+   257→   257→      const dbUser = await supabaseService.getUserByFirebaseUid(firebaseUid);
+   258→   258→      if (dbUser) {
+   259→   259→        supabaseUuidRef.current = dbUser.id;
+   260→   260→        return dbUser.id;
+   261→   261→      }
+   262→   262→    } catch (error) {
+   263→   263→      console.error('[SupabaseSync] Failed to resolve Supabase UUID:', error);
+   264→   264→    }
+   265→   265→    return null;
+   266→   266→  }, []);
+   267→   267→
+   268→   268→  /** Fetch fresh user data from Supabase and update store. */
+   269→   269→  const refreshUser = useCallback(async () => {
+   270→   270→    const firebaseUid = firebaseUidRef.current;
+   271→   271→    const isAuth = isAuthenticatedRef.current;
+   272→   272→    if (!firebaseUid || !isAuth) return;
+   273→   273→    if (isRefreshing.current) return;
+   274→   274→
+   275→   275→    isRefreshing.current = true;
+   276→   276→    try {
+   277→   277→      const dbUser = await supabaseService.getUserByFirebaseUid(firebaseUid);
+   278→   278→      if (dbUser) {
+   279→   279→        supabaseUuidRef.current = dbUser.id;
+   280→   280→        const storeUser = useAppStore.getState().user;
+   281→   281→        const mapped = mapDbUserToStore(dbUser, firebaseUid);
+   282→   282→
+   283→   283→        // Only update if data actually changed (avoid unnecessary re-renders)
+   284→   284→        if (storeUser) {
+   285→   285→          const hasChanges =
+   286→   286→            storeUser.balanceYER !== mapped.balanceYER ||
+   287→   287→            storeUser.balanceSAR !== mapped.balanceSAR ||
+   288→   288→            storeUser.balanceUSD !== mapped.balanceUSD ||
+   289→   289→            storeUser.name !== mapped.name ||
+   290→   290→            storeUser.firstName !== mapped.firstName ||
+   291→   291→            storeUser.secondName !== mapped.secondName ||
+   292→   292→            storeUser.thirdName !== mapped.thirdName ||
+   293→   293→            storeUser.familyName !== mapped.familyName ||
+   294→   294→            storeUser.nationalId !== mapped.nationalId ||
+   295→   295→            storeUser.kycStatus !== mapped.kycStatus ||
+   296→   296→            storeUser.isBlocked !== mapped.isBlocked ||
+   297→   297→            storeUser.phone !== mapped.phone ||
+   298→   298→            storeUser.avatar !== mapped.avatar ||
+   299→   299→            storeUser.cardType !== mapped.cardType ||
+   300→   300→            storeUser.cardNumber !== mapped.cardNumber ||
+   301→   301→            storeUser.governorate !== mapped.governorate ||
+   302→   302→            storeUser.role !== mapped.role ||
+   303→   303→            storeUser.theme !== mapped.theme;
+   304→   304→
+   305→   305→          if (hasChanges) {
+   306→   306→            setUserRef.current(mapped);
+   307→   307→          }
+   308→   308→        } else {
+   309→   309→          setUserRef.current(mapped);
+   310→   310→        }
+   311→   311→      }
+   312→   312→
+   313→   313→      // Also refresh transactions
+   314→   314→      await refreshTransactions();
+   315→   315→    } catch (error) {
+   316→   316→      console.error('[SupabaseSync] refreshUser error:', error);
+   317→   317→    } finally {
+   318→   318→      isRefreshing.current = false;
+   319→   319→    }
+   320→   320→  }, []);
+   321→   321→
+   322→   322→  /** Fetch transactions for the current user from Supabase. */
+   323→   323→  const refreshTransactions = useCallback(async () => {
+   324→   324→    const firebaseUid = firebaseUidRef.current;
+   325→   325→    const isAuth = isAuthenticatedRef.current;
+   326→   326→    if (!firebaseUid || !isAuth) return;
+   327→   327→
+   328→   328→    try {
+   329→   329→      // Ensure we have the Supabase UUID
+   330→   330→      let supabaseUuid = supabaseUuidRef.current;
+   331→   331→      if (!supabaseUuid) {
+   332→   332→        supabaseUuid = await resolveSupabaseUuid(firebaseUid);
+   333→   333→        if (!supabaseUuid) return;
+   334→   334→      }
+   335→   335→
+   336→   336→      const dbTransactions = await supabaseService.getTransactions(supabaseUuid, 100);
+   337→   337→      const transactions = dbTransactions.map(mapDbTransactionToStore);
+   338→   338→      setTransactionsRef.current(transactions);
+   339→   339→    } catch (error) {
+   340→   340→      console.error('[SupabaseSync] refreshTransactions error:', error);
+   341→   341→    }
+   342→   342→  }, [resolveSupabaseUuid]);
+   343→   343→
+   344→   344→  /** Fetch notifications for the current user from Supabase. */
+   345→   345→  const refreshNotifications = useCallback(async () => {
+   346→   346→    const firebaseUid = firebaseUidRef.current;
+   347→   347→    const isAuth = isAuthenticatedRef.current;
+   348→   348→    if (!firebaseUid || !isAuth) return;
+   349→   349→
+   350→   350→    try {
+   351→   351→      let supabaseUuid = supabaseUuidRef.current;
+   352→   352→      if (!supabaseUuid) {
+   353→   353→        supabaseUuid = await resolveSupabaseUuid(firebaseUid);
+   354→   354→        if (!supabaseUuid) return;
+   355→   355→      }
+   356→   356→
+   357→   357→      const dbNotifs = await supabaseService.getNotifications(supabaseUuid);
+   358→   358→      const notifications = dbNotifs.map(mapDbNotificationToStore);
+   359→   359→      setNotificationsRef.current(notifications);
+   360→   360→    } catch (error) {
+   361→   361→      console.error('[SupabaseSync] refreshNotifications error:', error);
+   362→   362→    }
+   363→   363→  }, [resolveSupabaseUuid]);
+   364→   364→
+   365→   365→  // ─────────────────────────────────────────────────────────
+   366→   366→  //  Global data fetch (not user-specific)
+   367→   367→  // ─────────────────────────────────────────────────────────
+   368→   368→
+   369→   369→  const fetchGlobalData = useCallback(async () => {
+   370→   370→    try {
+   371→   371→      // Fetch all global data in parallel for speed
+   372→   372→      const [
+   373→   373→        sectionsResult,
+   374→   374→        providersResult,
+   375→   375→        exchangeRatesResult,
+   376→   376→        featureFlagsResult,
+   377→   377→        killSwitchResult,
+   378→   378→        maintenanceResult,
+   379→   379→      ] = await Promise.allSettled([
+   380→   380→        supabaseService.getSections(),
+   381→   381→        supabaseService.getServiceProviders(),
+   382→   382→        supabaseService.getExchangeRates(),
+   383→   383→        supabaseService.getFeatureFlags(),
+   384→   384→        supabaseService.getKillSwitch(),
+   385→   385→        supabaseService.getMaintenance(),
+   386→   386→      ]);
+   387→   387→
+   388→   388→      // Sections → categories + fbSections
+   389→   389→      if (sectionsResult.status === 'fulfilled' && sectionsResult.value) {
+   390→   390→        const sections = sectionsResult.value;
+   391→   391→        const categories = sections.filter((s) => s.is_visible).map(mapDbSectionToCategory);
+   392→   392→        setCategoriesRef.current(categories);
+   393→   393→
+   394→   394→        // Also set raw fbSections for components that still use the old shape
+   395→   395→        const sectionsMap: Record<string, DbSection> = {};
+   396→   396→        for (const s of sections) {
+   397→   397→          sectionsMap[s.id] = s;
+   398→   398→        }
+   399→   399→        setFbSectionsRef.current(sectionsMap as Record<string, any>);
+   400→   400→      }
+   401→   401→
+   402→   402→      // Providers
+   403→   403→      if (providersResult.status === 'fulfilled' && providersResult.value) {
+   404→   404→        const providers = providersResult.value.map(mapDbProviderToStore);
+   405→   405→        setProvidersRef.current(providers);
+   406→   406→
+   407→   407→        // Fetch packages for all providers in parallel
+   408→   408→        const packagePromises = providersResult.value.map((p: DbServiceProvider) =>
+   409→   409→          supabaseService.getProductPackages(p.id).catch(() => [] as DbProductPackage[])
+   410→   410→        );
+   411→   411→        const packageResults = await Promise.allSettled(packagePromises);
+   412→   412→        const allPackages: ProductPackage[] = [];
+   413→   413→        for (const result of packageResults) {
+   414→   414→          if (result.status === 'fulfilled' && result.value) {
+   415→   415→            allPackages.push(...result.value.map(mapDbPackageToStore));
+   416→   416→          }
+   417→   417→        }
+   418→   418→        setPackagesRef.current(allPackages);
+   419→   419→      }
+   420→   420→
+   421→   421→      // Exchange rates
+   422→   422→      if (exchangeRatesResult.status === 'fulfilled' && exchangeRatesResult.value) {
+   423→   423→        setExchangeRatesRef.current(mapDbExchangeRateToStore(exchangeRatesResult.value));
+   424→   424→      }
+   425→   425→
+   426→   426→      // Feature flags
+   427→   427→      if (featureFlagsResult.status === 'fulfilled' && featureFlagsResult.value) {
+   428→   428→        const flags = mapDbFeatureFlagsToStore(featureFlagsResult.value);
+   429→   429→        setFeatureFlagsRef.current(flags);
+   430→   430→      }
+   431→   431→
+   432→   432→      // Kill switch
+   433→   433→      if (killSwitchResult.status === 'fulfilled' && killSwitchResult.value) {
+   434→   434→        const ks = killSwitchResult.value;
+   435→   435→        // Auto-deactivate if deactivate_at has passed
+   436→   436→        if (ks.is_active && ks.deactivate_at && new Date(ks.deactivate_at) <= new Date()) {
+   437→   437→          setKillSwitchRef.current(null);
+   438→   438→        } else {
+   439→   439→          setKillSwitchRef.current(mapDbKillSwitchToStore(ks));
+   440→   440→        }
+   441→   441→      } else {
+   442→   442→        setKillSwitchRef.current(null);
+   443→   443→      }
+   444→   444→
+   445→   445→      // Maintenance
+   446→   446→      if (maintenanceResult.status === 'fulfilled' && maintenanceResult.value) {
+   447→   447→        setMaintenanceRef.current(mapDbMaintenanceToStore(maintenanceResult.value));
+   448→   448→      }
+   449→   449→    } catch (error) {
+   450→   450→      console.error('[SupabaseSync] fetchGlobalData error:', error);
+   451→   451→    }
+   452→   452→  }, []);
+   453→   453→
+   454→   454→  // ─────────────────────────────────────────────────────────
+   455→   455→  //  Realtime subscriptions – user-specific data
+   456→   456→  // ─────────────────────────────────────────────────────────
+   457→   457→
+   458→   458→  useEffect(() => {
+   459→   459→    if (!user?.id || !isAuthenticated) {
+   460→   460→      // Clean up user-specific channels when not authenticated
+   461→   461→      channelsRef.current.forEach((ch) => supabase.removeChannel(ch));
+   462→   462→      channelsRef.current = [];
+   463→   463→      supabaseUuidRef.current = null;
+   464→   464→      return;
+   465→   465→    }
+   466→   466→
+   467→   467→    const firebaseUid = user.id;
+   468→   468→    let cancelled = false;
+   469→   469→
+   470→   470→    // First resolve the Supabase UUID, then set up subscriptions
+   471→   471→    resolveSupabaseUuid(firebaseUid).then((supabaseUuid) => {
+   472→   472→      if (!supabaseUuid || cancelled) return;
+   473→   473→
+   474→   474→      // ── User data changes ──
+   475→   475→      const userChannel = supabase
+   476→   476→        .channel(`user-${supabaseUuid}`)
+   477→   477→        .on(
+   478→   478→          'postgres_changes',
+   479→   479→          {
+   480→   480→            event: 'UPDATE',
+   481→   481→            schema: 'public',
+   482→   482→            table: 'users',
+   483→   483→            filter: `id=eq.${supabaseUuid}`,
+   484→   484→          },
+   485→   485→          (payload: { new: DbUser }) => {
+   486→   486→            const dbUser = payload.new;
+   487→   487→            if (dbUser) {
+   488→   488→              const mapped = mapDbUserToStore(dbUser, firebaseUid);
+   489→   489→              const currentUser = useAppStore.getState().user;
+   490→   490→              if (currentUser) {
+   491→   491→                const hasChanges =
+   492→   492→                  currentUser.balanceYER !== mapped.balanceYER ||
+   493→   493→                  currentUser.balanceSAR !== mapped.balanceSAR ||
+   494→   494→                  currentUser.balanceUSD !== mapped.balanceUSD ||
+   495→   495→                  currentUser.name !== mapped.name ||
+   496→   496→                  currentUser.kycStatus !== mapped.kycStatus ||
+   497→   497→                  currentUser.isBlocked !== mapped.isBlocked ||
+   498→   498→                  currentUser.role !== mapped.role ||
+   499→   499→                  currentUser.theme !== mapped.theme ||
+   500→   500→                  currentUser.phone !== mapped.phone ||
+   501→   501→                  currentUser.avatar !== mapped.avatar ||
+   502→   502→                  currentUser.cardType !== mapped.cardType ||
+   503→   503→                  currentUser.cardNumber !== mapped.cardNumber ||
+   504→   504→                  currentUser.governorate !== mapped.governorate;
+   505→   505→
+   506→   506→                if (hasChanges) {
+   507→   507→                  setUserRef.current(mapped);
+   508→   508→                }
+   509→   509→              }
+   510→   510→            }
+   511→   511→          }
+   512→   512→        )
+   513→   513→        .subscribe((status: string) => {
+   514→   514→          if (status === 'CHANNEL_ERROR') {
+   515→   515→            console.error('[SupabaseSync] User channel error');
+   516→   516→          }
+   517→   517→        });
+   518→   518→
+   519→   519→      // ── Transactions changes ──
+   520→   520→      const txChannel = supabase
+   521→   521→        .channel(`tx-${supabaseUuid}`)
+   522→   522→        .on(
+   523→   523→          'postgres_changes',
+   524→   524→          {
+   525→   525→            event: 'INSERT',
+   526→   526→            schema: 'public',
+   527→   527→            table: 'transactions',
+   528→   528→            filter: `user_id=eq.${supabaseUuid}`,
+   529→   529→          },
+   530→   530→          () => {
+   531→   531→            // Refresh all transactions when a new one is inserted
+   532→   532→            refreshTransactions();
+   533→   533→          }
+   534→   534→        )
+   535→   535→        .on(
+   536→   536→          'postgres_changes',
+   537→   537→          {
+   538→   538→            event: 'UPDATE',
+   539→   539→            schema: 'public',
+   540→   540→            table: 'transactions',
+   541→   541→            filter: `user_id=eq.${supabaseUuid}`,
+   542→   542→          },
+   543→   543→          () => {
+   544→   544→            refreshTransactions();
+   545→   545→          }
+   546→   546→        )
+   547→   547→        // Also listen for transactions where user is sender or receiver
+   548→   548→        .on(
+   549→   549→          'postgres_changes',
+   550→   550→          {
+   551→   551→            event: 'INSERT',
+   552→   552→            schema: 'public',
+   553→   553→            table: 'transactions',
+   554→   554→            filter: `from_user_id=eq.${supabaseUuid}`,
+   555→   555→          },
+   556→   556→          () => {
+   557→   557→            refreshTransactions();
+   558→   558→          }
+   559→   559→        )
+   560→   560→        .on(
+   561→   561→          'postgres_changes',
+   562→   562→          {
+   563→   563→            event: 'INSERT',
+   564→   564→            schema: 'public',
+   565→   565→            table: 'transactions',
+   566→   566→            filter: `to_user_id=eq.${supabaseUuid}`,
+   567→   567→          },
+   568→   568→          () => {
+   569→   569→            refreshTransactions();
+   570→   570→          }
+   571→   571→        )
+   572→   572→        .subscribe((status: string) => {
+   573→   573→          if (status === 'CHANNEL_ERROR') {
+   574→   574→            console.error('[SupabaseSync] Transactions channel error');
+   575→   575→          }
+   576→   576→        });
+   577→   577→
+   578→   578→      // ── Notifications changes ──
+   579→   579→      const notifChannel = supabase
+   580→   580→        .channel(`notif-${supabaseUuid}`)
+   581→   581→        .on(
+   582→   582→          'postgres_changes',
+   583→   583→          {
+   584→   584→            event: 'INSERT',
+   585→   585→            schema: 'public',
+   586→   586→            table: 'notifications',
+   587→   587→            filter: `user_id=eq.${supabaseUuid}`,
+   588→   588→          },
+   589→   589→          (payload: { new: DbNotification }) => {
+   590→   590→            const dbNotif = payload.new;
+   591→   591→            if (dbNotif) {
+   592→   592→              const mapped = mapDbNotificationToStore(dbNotif);
+   593→   593→              // Prepend the new notification instead of full refresh
+   594→   594→              const currentNotifs = useAppStore.getState().notifications;
+   595→   595→              // Avoid duplicate if it's already there
+   596→   596→              if (!currentNotifs.find((n) => n.id === mapped.id)) {
+   597→   597→                setNotificationsRef.current([mapped, ...currentNotifs]);
+   598→   598→              }
+   599→   599→            }
+   600→   600→          }
+   601→   601→        )
+   602→   602→        .on(
+   603→   603→          'postgres_changes',
+   604→   604→          {
+   605→   605→            event: 'UPDATE',
+   606→   606→            schema: 'public',
+   607→   607→            table: 'notifications',
+   608→   608→            filter: `user_id=eq.${supabaseUuid}`,
+   609→   609→          },
+   610→   610→          () => {
+   611→   611→            refreshNotifications();
+   612→   612→          }
+   613→   613→        )
+   614→   614→        .subscribe((status: string) => {
+   615→   615→          if (status === 'CHANNEL_ERROR') {
+   616→   616→            console.error('[SupabaseSync] Notifications channel error');
+   617→   617→          }
+   618→   618→        });
+   619→   619→
+   620→   620→      channelsRef.current.push(userChannel, txChannel, notifChannel);
+   621→   621→    });
+   622→   622→
+   623→   623→    return () => {
+   624→   624→      cancelled = true;
+   625→   625→      // Remove user-specific channels
+   626→   626→      channelsRef.current.forEach((ch) => supabase.removeChannel(ch));
+   627→   627→      channelsRef.current = [];
+   628→   628→    };
+   629→   629→  }, [user?.id, isAuthenticated, resolveSupabaseUuid, refreshTransactions, refreshNotifications]);
+   630→   630→
+   631→   631→  // ─────────────────────────────────────────────────────────
+   632→   632→  //  Realtime subscriptions – global (public) data
+   633→   633→  // ─────────────────────────────────────────────────────────
+   634→   634→
+   635→   635→  const globalChannelsRef = useRef<ReturnType<typeof supabase.channel>[]>([]);
+   636→   636→
+   637→   637→  useEffect(() => {
+   638→   638→    // ── Sections ──
+   639→   639→    const sectionsChannel = supabase
+   640→   640→      .channel('sections-public')
+   641→   641→      .on(
+   642→   642→        'postgres_changes',
+   643→   643→        { event: '*', schema: 'public', table: 'sections' },
+   644→   644→        async () => {
+   645→   645→          try {
+   646→   646→            const sections = await supabaseService.getSections();
+   647→   647→            const categories = sections.filter((s) => s.is_visible).map(mapDbSectionToCategory);
+   648→   648→            setCategoriesRef.current(categories);
+   649→   649→
+   650→   650→            const sectionsMap: Record<string, DbSection> = {};
+   651→   651→            for (const s of sections) {
+   652→   652→              sectionsMap[s.id] = s;
+   653→   653→            }
+   654→   654→            setFbSectionsRef.current(sectionsMap as Record<string, any>);
+   655→   655→          } catch (error) {
+   656→   656→            console.error('[SupabaseSync] Sections realtime refresh error:', error);
+   657→   657→          }
+   658→   658→        }
+   659→   659→      )
+   660→   660→      .subscribe();
+   661→   661→
+   662→   662→    // ── Service Providers ──
+   663→   663→    const providersChannel = supabase
+   664→   664→      .channel('providers-public')
+   665→   665→      .on(
+   666→   666→        'postgres_changes',
+   667→   667→        { event: '*', schema: 'public', table: 'service_providers' },
+   668→   668→        async () => {
+   669→   669→          try {
+   670→   670→            const providers = await supabaseService.getServiceProviders();
+   671→   671→            setProvidersRef.current(providers.map(mapDbProviderToStore));
+   672→   672→
+   673→   673→            // Also refresh packages since providers may have changed
+   674→   674→            const packagePromises = providers.map((p: DbServiceProvider) =>
+   675→   675→              supabaseService.getProductPackages(p.id).catch(() => [] as DbProductPackage[])
+   676→   676→            );
+   677→   677→            const packageResults = await Promise.allSettled(packagePromises);
+   678→   678→            const allPackages: ProductPackage[] = [];
+   679→   679→            for (const result of packageResults) {
+   680→   680→              if (result.status === 'fulfilled' && result.value) {
+   681→   681→                allPackages.push(...result.value.map(mapDbPackageToStore));
+   682→   682→              }
+   683→   683→            }
+   684→   684→            setPackagesRef.current(allPackages);
+   685→   685→          } catch (error) {
+   686→   686→            console.error('[SupabaseSync] Providers realtime refresh error:', error);
+   687→   687→          }
+   688→   688→        }
+   689→   689→      )
+   690→   690→      .subscribe();
+   691→   691→
+   692→   692→    // ── Product Packages ──
+   693→   693→    const packagesChannel = supabase
+   694→   694→      .channel('packages-public')
+   695→   695→      .on(
+   696→   696→        'postgres_changes',
+   697→   697→        { event: '*', schema: 'public', table: 'product_packages' },
+   698→   698→        async () => {
+   699→   699→          try {
+   700→   700→            // Refetch all providers to get their packages
+   701→   701→            const providers = await supabaseService.getServiceProviders();
+   702→   702→            const packagePromises = providers.map((p: DbServiceProvider) =>
+   703→   703→              supabaseService.getProductPackages(p.id).catch(() => [] as DbProductPackage[])
+   704→   704→            );
+   705→   705→            const packageResults = await Promise.allSettled(packagePromises);
+   706→   706→            const allPackages: ProductPackage[] = [];
+   707→   707→            for (const result of packageResults) {
+   708→   708→              if (result.status === 'fulfilled' && result.value) {
+   709→   709→                allPackages.push(...result.value.map(mapDbPackageToStore));
+   710→   710→              }
+   711→   711→            }
+   712→   712→            setPackagesRef.current(allPackages);
+   713→   713→          } catch (error) {
+   714→   714→            console.error('[SupabaseSync] Packages realtime refresh error:', error);
+   715→   715→          }
+   716→   716→        }
+   717→   717→      )
+   718→   718→      .subscribe();
+   719→   719→
+   720→   720→    // ── Exchange Rates ──
+   721→   721→    const exchangeRatesChannel = supabase
+   722→   722→      .channel('exchange-rates-public')
+   723→   723→      .on(
+   724→   724→        'postgres_changes',
+   725→   725→        { event: '*', schema: 'public', table: 'exchange_rates' },
+   726→   726→        async () => {
+   727→   727→          try {
+   728→   728→            const rate = await supabaseService.getExchangeRates();
+   729→   729→            if (rate) {
+   730→   730→              setExchangeRatesRef.current(mapDbExchangeRateToStore(rate));
+   731→   731→            }
+   732→   732→          } catch (error) {
+   733→   733→            console.error('[SupabaseSync] Exchange rates realtime refresh error:', error);
+   734→   734→          }
+   735→   735→        }
+   736→   736→      )
+   737→   737→      .subscribe();
+   738→   738→
+   739→   739→    // ── Banners ──
+   740→   740→    const bannersChannel = supabase
+   741→   741→      .channel('banners-public')
+   742→   742→      .on(
+   743→   743→        'postgres_changes',
+   744→   744→        { event: '*', schema: 'public', table: 'banners' },
+   745→   745→        async () => {
+   746→   746→          try {
+   747→   747→            // Banners are typically rendered from fbSections or a dedicated store field
+   748→   748→            // We refresh sections as banners might be linked
+   749→   749→            const banners = await supabaseService.getBanners();
+   750→   750→            // Store banners in a way the app can access them
+   751→   751→            // For now, we just log - the app can fetch banners on demand
+   752→   752→            void banners;
+   753→   753→          } catch (error) {
+   754→   754→            console.error('[SupabaseSync] Banners realtime refresh error:', error);
+   755→   755→          }
+   756→   756→        }
+   757→   757→      )
+   758→   758→      .subscribe();
+   759→   759→
+   760→   760→    // ── Feature Flags ──
+   761→   761→    const featureFlagsChannel = supabase
+   762→   762→      .channel('feature-flags-public')
+   763→   763→      .on(
+   764→   764→        'postgres_changes',
+   765→   765→        { event: '*', schema: 'public', table: 'feature_flags' },
+   766→   766→        async () => {
+   767→   767→          try {
+   768→   768→            const flags = await supabaseService.getFeatureFlags();
+   769→   769→            setFeatureFlagsRef.current(mapDbFeatureFlagsToStore(flags));
+   770→   770→          } catch (error) {
+   771→   771→            console.error('[SupabaseSync] Feature flags realtime refresh error:', error);
+   772→   772→          }
+   773→   773→        }
+   774→   774→      )
+   775→   775→      .subscribe();
+   776→   776→
+   777→   777→    // ── Kill Switch ──
+   778→   778→    const killSwitchChannel = supabase
+   779→   779→      .channel('kill-switch-public')
+   780→   780→      .on(
+   781→   781→        'postgres_changes',
+   782→   782→        { event: '*', schema: 'public', table: 'kill_switch' },
+   783→   783→        async () => {
+   784→   784→          try {
+   785→   785→            const ks = await supabaseService.getKillSwitch();
+   786→   786→            if (ks) {
+   787→   787→              // Auto-deactivate if deactivate_at has passed
+   788→   788→              if (ks.is_active && ks.deactivate_at && new Date(ks.deactivate_at) <= new Date()) {
+   789→   789→                setKillSwitchRef.current(null);
+   790→   790→              } else {
+   791→   791→                setKillSwitchRef.current(mapDbKillSwitchToStore(ks));
+   792→   792→              }
+   793→   793→            } else {
+   794→   794→              setKillSwitchRef.current(null);
+   795→   795→            }
+   796→   796→          } catch (error) {
+   797→   797→            console.error('[SupabaseSync] Kill switch realtime refresh error:', error);
+   798→   798→          }
+   799→   799→        }
+   800→   800→      )
+   801→   801→      .subscribe();
+   802→   802→
+   803→   803→    // ── Maintenance ──
+   804→   804→    const maintenanceChannel = supabase
+   805→   805→      .channel('maintenance-public')
+   806→   806→      .on(
+   807→   807→        'postgres_changes',
+   808→   808→        { event: '*', schema: 'public', table: 'maintenance' },
+   809→   809→        async () => {
+   810→   810→          try {
+   811→   811→            const maintenance = await supabaseService.getMaintenance();
+   812→   812→            if (maintenance) {
+   813→   813→              setMaintenanceRef.current(mapDbMaintenanceToStore(maintenance));
+   814→   814→            }
+   815→   815→          } catch (error) {
+   816→   816→            console.error('[SupabaseSync] Maintenance realtime refresh error:', error);
+   817→   817→          }
+   818→   818→        }
+   819→   819→      )
+   820→   820→      .subscribe();
+   821→   821→
+   822→   822→    globalChannelsRef.current = [
+   823→   823→      sectionsChannel,
+   824→   824→      providersChannel,
+   825→   825→      packagesChannel,
+   826→   826→      exchangeRatesChannel,
+   827→   827→      bannersChannel,
+   828→   828→      featureFlagsChannel,
+   829→   829→      killSwitchChannel,
+   830→   830→      maintenanceChannel,
+   831→   831→    ];
+   832→   832→
+   833→   833→    return () => {
+   834→   834→      globalChannelsRef.current.forEach((ch) => supabase.removeChannel(ch));
+   835→   835→      globalChannelsRef.current = [];
+   836→   836→    };
+   837→   837→  }, []); // Run once on mount
+   838→   838→
+   839→   839→  // ─────────────────────────────────────────────────────────
+   840→   840→  //  Initial data fetch on mount
+   841→   841→  // ─────────────────────────────────────────────────────────
+   842→   842→
+   843→   843→  useEffect(() => {
+   844→   844→    // Fetch global data regardless of auth state
+   845→   845→    fetchGlobalData();
+   846→   846→
+   847→   847→    // Fetch user-specific data if authenticated
+   848→   848→    if (isAuthenticated && user?.id) {
+   849→   849→      refreshUser();
+   850→   850→      refreshNotifications();
+   851→   851→    }
+   852→   852→  }, [isAuthenticated, user?.id, fetchGlobalData, refreshUser, refreshNotifications]);
+   853→   853→
+   854→   854→  // ─────────────────────────────────────────────────────────
+   855→   855→  //  Refresh on window focus / visibility change / online
+   856→   856→  // ─────────────────────────────────────────────────────────
+   857→   857→
+   858→   858→  useEffect(() => {
+   859→   859→    const handleRefresh = () => {
+   860→   860→      if (isAuthenticatedRef.current && firebaseUidRef.current) {
+   861→   861→        refreshUser();
+   862→   862→        refreshNotifications();
+   863→   863→      }
+   864→   864→      // Always refresh global data
+   865→   865→      fetchGlobalData();
+   866→   866→    };
+   867→   867→
+   868→   868→    const handleFocus = () => {
+   869→   869→      handleRefresh();
+   870→   870→    };
+   871→   871→
+   872→   872→    const handleVisibilityChange = () => {
+   873→   873→      if (document.visibilityState === 'visible') {
+   874→   874→        handleRefresh();
+   875→   875→      }
+   876→   876→    };
+   877→   877→
+   878→   878→    const handleOnline = () => {
+   879→   879→      handleRefresh();
+   880→   880→    };
+   881→   881→
+   882→   882→    window.addEventListener('focus', handleFocus);
+   883→   883→    document.addEventListener('visibilitychange', handleVisibilityChange);
+   884→   884→    window.addEventListener('online', handleOnline);
+   885→   885→
+   886→   886→    return () => {
+   887→   887→      window.removeEventListener('focus', handleFocus);
+   888→   888→      document.removeEventListener('visibilitychange', handleVisibilityChange);
+   889→   889→      window.removeEventListener('online', handleOnline);
+   890→   890→    };
+   891→   891→  }, [refreshUser, refreshNotifications, fetchGlobalData]);
+   892→   892→
+   893→   893→  return { refreshUser };
+   894→   894→}
+   895→   895→

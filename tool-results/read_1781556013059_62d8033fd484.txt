@@ -1,0 +1,928 @@
+     1→'use client';
+     2→
+     3→import { useState, useEffect, useRef } from 'react';
+     4→import { useTheme } from 'next-themes';
+     5→import { motion, AnimatePresence } from 'framer-motion';
+     6→import {
+     7→  ArrowLeft, MessageSquare, Search, ChevronDown, ChevronUp, Plus,
+     8→  Send, ImagePlus, X, Clock, CheckCircle2, AlertCircle, HelpCircle,
+     9→  Headphones, Paperclip, Tag, Phone, Globe, ExternalLink,
+    10→  Sparkles, MessageCircle, FileText, Ticket
+    11→} from 'lucide-react';
+    12→import { useAppStore, type SupportTicket } from '@/lib/store';
+    13→import { timeAgo, generateReference, compressBase64Image, faqItems } from '@/lib/utils';
+    14→import { supabase } from '@/lib/supabase';
+    15→
+    16→type SupportView = 'main' | 'ticket-detail' | 'create-ticket';
+    17→type MainTab = 'faq' | 'tickets' | 'chat';
+    18→
+    19→interface TicketMessage {
+    20→  sender: 'user' | 'support';
+    21→  text: string;
+    22→  time: string;
+    23→  image?: string;
+    24→}
+    25→
+    26→interface SupabaseTicket {
+    27→  id: string;
+    28→  userId: string;
+    29→  userName: string;
+    30→  subject: string;
+    31→  message: string;
+    32→  category: 'technical' | 'financial' | 'general';
+    33→  status: 'open' | 'in_progress' | 'resolved' | 'closed';
+    34→  messages: TicketMessage[];
+    35→  createdAt: string;
+    36→  image?: string;
+    37→}
+    38→
+    39→// FAQ quick links
+    40→const faqQuickLinks = [
+    41→  { icon: '🔄', label: 'كيف أقوم بتحويل أموال؟' },
+    42→  { icon: '🔐', label: 'كيف أوثق حسابي؟' },
+    43→  { icon: '💳', label: 'كيف أشحن رصيدي؟' },
+    44→  { icon: '📊', label: 'كيف أتحقق من رصيدي؟' },
+    45→  { icon: '🛡️', label: 'هل تطبيقي آمن؟' },
+    46→  { icon: '📞', label: 'كيف أتواصل مع الدعم؟' },
+    47→];
+    48→
+    49→export default function SupportScreen() {
+    50→  const { theme } = useTheme();
+    51→  const isDark = theme === 'dark';
+    52→  const { setActiveScreen, user, addTicket, updateTicket } = useAppStore();
+    53→
+    54→  const [activeTab, setActiveTab] = useState<MainTab>('faq');
+    55→  const [view, setView] = useState<SupportView>('main');
+    56→  const [faqSearch, setFaqSearch] = useState('');
+    57→  const [expandedFaq, setExpandedFaq] = useState<number | null>(null);
+    58→
+    59→  // Social links from Supabase
+    60→  const [socialLinks, setSocialLinks] = useState<{
+    61→    whatsapp: string; contactAdmin: string; contactAdminMessage: string;
+    62→  }>({ whatsapp: '', contactAdmin: '', contactAdminMessage: '' });
+    63→
+    64→  useEffect(() => {
+    65→    const fetchSocialLinks = async () => {
+    66→      try {
+    67→        const { data, error } = await supabase
+    68→          .from('app_config')
+    69→          .select('value')
+    70→          .eq('key', 'socialLinks')
+    71→          .single();
+    72→        if (data?.value) {
+    73→          const val = data.value as Record<string, string>;
+    74→          setSocialLinks({
+    75→            whatsapp: val.whatsapp || '',
+    76→            contactAdmin: val.contactAdmin || '',
+    77→            contactAdminMessage: val.contactAdminMessage || '',
+    78→          });
+    79→        }
+    80→      } catch {
+    81→        // Fallback: try admin_settings table
+    82→        try {
+    83→          const { data: data2 } = await supabase
+    84→            .from('admin_settings')
+    85→            .select('*')
+    86→            .eq('id', 'socialLinks')
+    87→            .single();
+    88→          if (data2) {
+    89→            setSocialLinks({
+    90→              whatsapp: data2.whatsapp || data2.value?.whatsapp || '',
+    91→              contactAdmin: data2.contactAdmin || data2.value?.contactAdmin || '',
+    92→              contactAdminMessage: data2.contactAdminMessage || data2.value?.contactAdminMessage || '',
+    93→            });
+    94→          }
+    95→        } catch {}
+    96→      }
+    97→    };
+    98→    fetchSocialLinks();
+    99→
+   100→    // Subscribe to changes
+   101→    const channel = supabase
+   102→      .channel('social-links-changes')
+   103→      .on('postgres_changes', { event: '*', schema: 'public', table: 'app_config', filter: 'key=eq.socialLinks' }, () => {
+   104→        fetchSocialLinks();
+   105→      })
+   106→      .subscribe();
+   107→
+   108→    return () => {
+   109→      supabase.removeChannel(channel);
+   110→    };
+   111→  }, []);
+   112→
+   113→  // Tickets
+   114→  const [tickets, setTickets] = useState<SupabaseTicket[]>([]);
+   115→  const [selectedTicket, setSelectedTicket] = useState<SupabaseTicket | null>(null);
+   116→  const [messageInput, setMessageInput] = useState('');
+   117→
+   118→  // Create ticket
+   119→  const [newSubject, setNewSubject] = useState('');
+   120→  const [newCategory, setNewCategory] = useState<'technical' | 'financial' | 'general'>('general');
+   121→  const [newMessage, setNewMessage] = useState('');
+   122→  const [newImage, setNewImage] = useState('');
+   123→
+   124→  // Live chat
+   125→  const [chatMessages, setChatMessages] = useState<{ id: string; sender: 'user' | 'admin'; text: string; time: string; adminName?: string }[]>([]);
+   126→  const [chatInput, setChatInput] = useState('');
+   127→  const [activeChatId, setActiveChatId] = useState<string | null>(null);
+   128→
+   129→  const messagesEndRef = useRef<HTMLDivElement>(null);
+   130→  const chatEndRef = useRef<HTMLDivElement>(null);
+   131→  const fileInputRef = useRef<HTMLInputElement>(null);
+   132→
+   133→  // Load tickets from Supabase
+   134→  const loadTickets = async () => {
+   135→    if (!user?.userId) return;
+   136→    try {
+   137→      const { data: ticketData, error: ticketError } = await supabase
+   138→        .from('support_tickets')
+   139→        .select('*')
+   140→        .eq('user_id', user.userId)
+   141→        .order('created_at', { ascending: false });
+   142→
+   143→      if (ticketError) throw ticketError;
+   144→
+   145→      if (!ticketData || ticketData.length === 0) {
+   146→        setTickets([]);
+   147→        return;
+   148→      }
+   149→
+   150→      // Load messages for all tickets
+   151→      const ticketIds = ticketData.map(t => t.id);
+   152→      const { data: messagesData, error: messagesError } = await supabase
+   153→        .from('support_messages')
+   154→        .select('*')
+   155→        .in('ticket_id', ticketIds)
+   156→        .order('created_at', { ascending: true });
+   157→
+   158→      if (messagesError) throw messagesError;
+   159→
+   160→      const formattedTickets: SupabaseTicket[] = ticketData.map(ticket => {
+   161→        const ticketMessages = (messagesData || [])
+   162→          .filter(m => m.ticket_id === ticket.id)
+   163→          .map(m => ({
+   164→            sender: m.sender_type === 'admin' ? 'support' as const : m.sender_type as 'user',
+   165→            text: m.message || '',
+   166→            time: m.created_at || new Date().toISOString(),
+   167→            image: m.attachment_url || undefined,
+   168→          }));
+   169→
+   170→        return {
+   171→          id: ticket.id,
+   172→          userId: ticket.user_id || '',
+   173→          userName: user.name || 'مستخدم',
+   174→          subject: ticket.subject || '',
+   175→          message: ticket.message || '',
+   176→          category: ticket.category || 'general',
+   177→          status: ticket.status || 'open',
+   178→          messages: ticketMessages,
+   179→          createdAt: ticket.created_at || new Date().toISOString(),
+   180→          image: undefined,
+   181→        };
+   182→      });
+   183→
+   184→      setTickets(formattedTickets);
+   185→    } catch (e) {
+   186→      console.error('Failed to load tickets:', e);
+   187→      setTickets([]);
+   188→    }
+   189→  };
+   190→
+   191→  // Listen to tickets from Supabase
+   192→  useEffect(() => {
+   193→    if (!user?.userId) return;
+   194→    loadTickets();
+   195→
+   196→    // Subscribe to ticket changes
+   197→    const ticketsChannel = supabase
+   198→      .channel('user-support-tickets')
+   199→      .on('postgres_changes', { event: '*', schema: 'public', table: 'support_tickets', filter: `user_id=eq.${user.userId}` }, () => {
+   200→        loadTickets();
+   201→      })
+   202→      .subscribe();
+   203→
+   204→    // Subscribe to new messages for user's tickets
+   205→    const messagesChannel = supabase
+   206→      .channel('user-support-messages')
+   207→      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'support_messages' }, (payload) => {
+   208→        // Reload tickets when a new message arrives
+   209→        loadTickets();
+   210→        // Also update selected ticket if viewing it
+   211→        if (selectedTicket && payload.new.ticket_id === selectedTicket.id) {
+   212→          const newMsg: TicketMessage = {
+   213→            sender: payload.new.sender_type === 'admin' ? 'support' : 'user',
+   214→            text: payload.new.message || '',
+   215→            time: payload.new.created_at || new Date().toISOString(),
+   216→            image: payload.new.attachment_url || undefined,
+   217→          };
+   218→          setSelectedTicket(prev => prev ? { ...prev, messages: [...prev.messages, newMsg] } : prev);
+   219→        }
+   220→      })
+   221→      .subscribe();
+   222→
+   223→    return () => {
+   224→      supabase.removeChannel(ticketsChannel);
+   225→      supabase.removeChannel(messagesChannel);
+   226→    };
+   227→  }, [user?.userId]);
+   228→
+   229→  // Auto-scroll to bottom of messages
+   230→  useEffect(() => {
+   231→    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+   232→  }, [selectedTicket?.messages?.length]);
+   233→
+   234→  // Load live chat from Supabase
+   235→  const loadLiveChat = async () => {
+   236→    if (!user?.userId) return;
+   237→    try {
+   238→      // Find or create active chat
+   239→      const { data: chatData, error: chatError } = await supabase
+   240→        .from('support_livechat')
+   241→        .select('*')
+   242→        .eq('user_id', user.userId)
+   243→        .neq('status', 'closed')
+   244→        .order('created_at', { ascending: false })
+   245→        .limit(1);
+   246→
+   247→      if (chatError) throw chatError;
+   248→
+   249→      if (chatData && chatData.length > 0) {
+   250→        const chat = chatData[0];
+   251→        setActiveChatId(chat.id);
+   252→
+   253→        // Load messages for this chat
+   254→        const { data: msgsData, error: msgsError } = await supabase
+   255→          .from('livechat_messages')
+   256→          .select('*')
+   257→          .eq('chat_id', chat.id)
+   258→          .order('created_at', { ascending: true });
+   259→
+   260→        if (msgsError) throw msgsError;
+   261→
+   262→        const formatted = (msgsData || []).map(m => ({
+   263→          id: m.id,
+   264→          sender: m.sender_type as 'user' | 'admin',
+   265→          text: m.content || m.message_type === 'text' ? (m.content || '') : '',
+   266→          time: m.created_at || new Date().toISOString(),
+   267→          adminName: m.sender_type === 'admin' ? 'فريق الدعم' : '',
+   268→        }));
+   269→        setChatMessages(formatted);
+   270→      } else {
+   271→        setActiveChatId(null);
+   272→        setChatMessages([]);
+   273→      }
+   274→    } catch (e) {
+   275→      console.error('Failed to load live chat:', e);
+   276→      setChatMessages([]);
+   277→    }
+   278→  };
+   279→
+   280→  // Listen to live chat messages from Supabase
+   281→  useEffect(() => {
+   282→    if (!user?.userId) return;
+   283→    loadLiveChat();
+   284→
+   285→    // Subscribe to livechat changes
+   286→    const livechatChannel = supabase
+   287→      .channel('user-livechat')
+   288→      .on('postgres_changes', { event: '*', schema: 'public', table: 'support_livechat', filter: `user_id=eq.${user.userId}` }, () => {
+   289→        loadLiveChat();
+   290→      })
+   291→      .subscribe();
+   292→
+   293→    // Subscribe to livechat messages
+   294→    const livechatMessagesChannel = supabase
+   295→      .channel('user-livechat-messages')
+   296→      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'livechat_messages' }, (payload) => {
+   297→        if (activeChatId && payload.new.chat_id === activeChatId) {
+   298→          const newMsg = {
+   299→            id: payload.new.id,
+   300→            sender: payload.new.sender_type as 'user' | 'admin',
+   301→            text: payload.new.content || '',
+   302→            time: payload.new.created_at || new Date().toISOString(),
+   303→            adminName: payload.new.sender_type === 'admin' ? 'فريق الدعم' : '',
+   304→          };
+   305→          setChatMessages(prev => [...prev, newMsg]);
+   306→        } else {
+   307→          // Reload if it's for our chat but we don't have activeChatId set yet
+   308→          loadLiveChat();
+   309→        }
+   310→      })
+   311→      .subscribe();
+   312→
+   313→    return () => {
+   314→      supabase.removeChannel(livechatChannel);
+   315→      supabase.removeChannel(livechatMessagesChannel);
+   316→    };
+   317→  }, [user?.userId, activeChatId]);
+   318→
+   319→  // Auto-scroll chat
+   320→  useEffect(() => {
+   321→    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+   322→  }, [chatMessages.length]);
+   323→
+   324→  const filteredFaq = faqItems.filter(item => {
+   325→    if (!faqSearch) return true;
+   326→    return item.q.includes(faqSearch) || item.a.includes(faqSearch);
+   327→  });
+   328→
+   329→  const handleCreateTicket = async () => {
+   330→    if (!newSubject || !newMessage || !user?.userId) return;
+   331→    try {
+   332→      // Create ticket in support_tickets table
+   333→      const { data: ticketData, error: ticketError } = await supabase
+   334→        .from('support_tickets')
+   335→        .insert({
+   336→          user_id: user.userId,
+   337→          subject: newSubject,
+   338→          message: newMessage,
+   339→          category: newCategory,
+   340→          status: 'open',
+   341→          priority: 'medium',
+   342→        })
+   343→        .select()
+   344→        .single();
+   345→
+   346→      if (ticketError) throw ticketError;
+   347→
+   348→      // Insert first message into support_messages
+   349→      const { error: msgError } = await supabase
+   350→        .from('support_messages')
+   351→        .insert({
+   352→          ticket_id: ticketData.id,
+   353→          sender_type: 'user',
+   354→          message: newMessage,
+   355→          attachment_url: newImage || null,
+   356→        });
+   357→
+   358→      if (msgError) throw msgError;
+   359→
+   360→      addTicket({ id: ticketData.id, userId: user.userId, userName: user.name, subject: newSubject, message: newMessage, category: newCategory, status: 'open', messages: [{ sender: 'user', text: newMessage, time: new Date().toISOString() }], createdAt: new Date().toISOString() });
+   361→      setNewSubject(''); setNewMessage(''); setNewImage(''); setView('main'); setActiveTab('tickets');
+   362→    } catch (e) {
+   363→      console.error('Failed to create ticket:', e);
+   364→    }
+   365→  };
+   366→
+   367→  const handleSendMessage = async () => {
+   368→    if (!messageInput.trim() || !selectedTicket || !user) return;
+   369→    const messageText = messageInput.trim();
+   370→    try {
+   371→      const { error } = await supabase
+   372→        .from('support_messages')
+   373→        .insert({
+   374→          ticket_id: selectedTicket.id,
+   375→          sender_type: 'user',
+   376→          message: messageText,
+   377→        });
+   378→
+   379→      if (error) throw error;
+   380→
+   381→      const newMsg: TicketMessage = { sender: 'user', text: messageText, time: new Date().toISOString() };
+   382→      setSelectedTicket(prev => prev ? { ...prev, messages: [...prev.messages, newMsg] } : prev);
+   383→      setMessageInput('');
+   384→    } catch (e) {
+   385→      console.error('Failed to send message:', e);
+   386→    }
+   387→  };
+   388→
+   389→  // Send live chat message to Supabase
+   390→  const handleSendChat = async () => {
+   391→    if (!chatInput.trim() || !user?.userId) return;
+   392→    const messageText = chatInput.trim();
+   393→    try {
+   394→      let chatId = activeChatId;
+   395→
+   396→      // Create a new chat if none exists
+   397→      if (!chatId) {
+   398→        const { data: newChat, error: chatError } = await supabase
+   399→          .from('support_livechat')
+   400→          .insert({
+   401→            user_id: user.userId,
+   402→            status: 'waiting',
+   403→          })
+   404→          .select()
+   405→          .single();
+   406→
+   407→        if (chatError) throw chatError;
+   408→        chatId = newChat.id;
+   409→        setActiveChatId(chatId);
+   410→      }
+   411→
+   412→      // Insert message into livechat_messages
+   413→      const { error: msgError } = await supabase
+   414→        .from('livechat_messages')
+   415→        .insert({
+   416→          chat_id: chatId,
+   417→          sender_type: 'user',
+   418→          message_type: 'text',
+   419→          content: messageText,
+   420→        });
+   421→
+   422→      if (msgError) throw msgError;
+   423→
+   424→      // Update chat's updated_at
+   425→      await supabase
+   426→        .from('support_livechat')
+   427→        .update({ updated_at: new Date().toISOString() })
+   428→        .eq('id', chatId);
+   429→
+   430→      setChatInput('');
+   431→    } catch (e) {
+   432→      console.error('Failed to send chat message', e);
+   433→    }
+   434→  };
+   435→
+   436→  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+   437→    const file = e.target.files?.[0];
+   438→    if (!file) return;
+   439→    const reader = new FileReader();
+   440→    reader.onloadend = async () => {
+   441→      const base64 = reader.result as string;
+   442→      const compressed = await compressBase64Image(base64, 400, 0.6);
+   443→      setNewImage(compressed);
+   444→    };
+   445→    reader.readAsDataURL(file);
+   446→  };
+   447→
+   448→  const categoryLabels: Record<string, { label: string; color: string; bg: string }> = {
+   449→    technical: { label: 'تقني', color: '#3B82F6', bg: 'rgba(59,130,246,0.12)' },
+   450→    financial: { label: 'مالي', color: '#10B981', bg: 'rgba(16,185,129,0.12)' },
+   451→    general: { label: 'عام', color: '#F59E0B', bg: 'rgba(245,158,11,0.12)' },
+   452→  };
+   453→
+   454→  const statusLabels: Record<string, { label: string; color: string; bg: string }> = {
+   455→    open: { label: 'مفتوح', color: '#3B82F6', bg: 'rgba(59,130,246,0.12)' },
+   456→    in_progress: { label: 'قيد المتابعة', color: '#F59E0B', bg: 'rgba(245,158,11,0.12)' },
+   457→    resolved: { label: 'تم الحل', color: '#10B981', bg: 'rgba(16,185,129,0.12)' },
+   458→    closed: { label: 'مغلق', color: '#666', bg: 'rgba(102,102,102,0.12)' },
+   459→  };
+   460→
+   461→  // ─── Full-screen Live Chat View ───
+   462→  if (activeTab === 'chat') {
+   463→    return (
+   464→      <div dir="rtl" className="flex flex-col h-screen" style={{ background: isDark ? '#0F0F0F' : '#F5F5F5' }}>
+   465→        {/* Header */}
+   466→        <div className="shrink-0 animated-gradient relative overflow-hidden" style={{ background: 'linear-gradient(145deg, #1A1A1A 0%, #2A0A0A 50%, #0F0F0F 100%)' }}>
+   467→          <div className="absolute inset-0 glass-dark opacity-30" />
+   468→          <div className="relative px-5 pt-4 pb-5">
+   469→            <div className="flex items-center gap-3">
+   470→              <motion.button whileTap={{ scale: 0.9 }} onClick={() => setActiveTab('faq')} className="w-10 h-10 rounded-xl glass flex items-center justify-center">
+   471→                <ArrowLeft size={18} strokeWidth={1.5} color="#FFF" />
+   472→              </motion.button>
+   473→              <div className="flex-1">
+   474→                <h1 className="text-white text-xl font-bold">الدردشة المباشرة</h1>
+   475→                <div className="flex items-center gap-1.5 mt-0.5">
+   476→                  <div className="w-2 h-2 rounded-full pulse-dot" style={{ background: '#10B981' }} />
+   477→                  <span className="text-white/40 text-xs">متصل الآن</span>
+   478→                </div>
+   479→              </div>
+   480→              <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'rgba(59,130,246,0.2)' }}>
+   481→                <Headphones size={20} strokeWidth={1.5} color="#3B82F6" />
+   482→              </div>
+   483→            </div>
+   484→          </div>
+   485→        </div>
+   486→
+   487→        {/* Messages Area */}
+   488→        <div className="flex-1 overflow-y-auto overflow-x-hidden px-5 py-4 space-y-3">
+   489→          {chatMessages.length === 0 && (
+   490→            <div className="flex flex-col items-center justify-center py-16">
+   491→              <div className="w-20 h-20 rounded-3xl flex items-center justify-center mb-4" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
+   492→                <Headphones size={40} strokeWidth={1.5} color={isDark ? '#555' : '#CCC'} />
+   493→              </div>
+   494→              <p className="text-sm font-medium" style={{ color: isDark ? '#888' : '#999' }}>ابدأ محادثة مع فريق الدعم</p>
+   495→              <p className="text-xs mt-1" style={{ color: isDark ? '#666' : '#BBB' }}>سنرد عليك في أقرب وقت</p>
+   496→            </div>
+   497→          )}
+   498→          {chatMessages.map((msg, i) => (
+   499→            <motion.div
+   500→              key={msg.id || i}
+   501→              initial={{ opacity: 0, y: 10 }}
+   502→              animate={{ opacity: 1, y: 0 }}
+   503→              transition={{ delay: i * 0.02 }}
+   504→              className={`flex ${msg.sender === 'user' ? 'justify-start' : 'justify-end'}`}
+   505→            >
+   506→              <div className="max-w-[85%]">
+   507→                {msg.sender === 'admin' && (
+   508→                  <div className="flex items-center gap-1.5 mb-1 justify-end">
+   509→                    <span className="text-[10px] font-bold" style={{ color: '#3B82F6' }}>{msg.adminName || 'فريق الدعم'}</span>
+   510→                    <div className="w-6 h-6 rounded-full flex items-center justify-center" style={{ background: 'rgba(59,130,246,0.15)' }}>
+   511→                      <Headphones size={12} color="#3B82F6" />
+   512→                    </div>
+   513→                  </div>
+   514→                )}
+   515→                <div
+   516→                  className="rounded-2xl p-3"
+   517→                  style={{
+   518→                    background: msg.sender === 'user' ? '#5C1A1B' : isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)',
+   519→                    borderBottomLeftRadius: msg.sender === 'user' ? '4px' : '16px',
+   520→                    borderBottomRightRadius: msg.sender === 'admin' ? '4px' : '16px',
+   521→                  }}
+   522→                >
+   523→                  <p className="text-xs leading-relaxed" style={{ color: msg.sender === 'user' ? '#FFF' : isDark ? '#CCC' : '#333' }}>
+   524→                    {msg.text}
+   525→                  </p>
+   526→                </div>
+   527→                <div className="flex items-center gap-1 mt-1" dir="ltr">
+   528→                  {msg.sender === 'user' && (
+   529→                    <span className="text-[9px]" style={{ color: isDark ? '#555' : '#BBB' }}>أنت</span>
+   530→                  )}
+   531→                  <p className="text-[9px]" style={{ color: isDark ? '#555' : '#BBB' }}>
+   532→                    {timeAgo(msg.time)}
+   533→                  </p>
+   534→                </div>
+   535→              </div>
+   536→            </motion.div>
+   537→          ))}
+   538→          <div ref={chatEndRef} />
+   539→        </div>
+   540→
+   541→        {/* Chat quick actions */}
+   542→        <div className="shrink-0 px-5 pb-1">
+   543→          <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth: 'none' }}>
+   544→            {['تحويل أموال', 'مشكلة تقنية', 'توثيق حساب', 'استفسار عام'].map((quick, i) => (
+   545→              <button
+   546→                key={i}
+   547→                onClick={() => { setChatInput(quick); }}
+   548→                className="shrink-0 px-3 py-1.5 rounded-full text-[10px] font-medium"
+   549→                style={{
+   550→                  background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+   551→                  color: isDark ? '#CCC' : '#666',
+   552→                  border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}`,
+   553→                }}
+   554→              >
+   555→                {quick}
+   556→              </button>
+   557→            ))}
+   558→          </div>
+   559→        </div>
+   560→
+   561→        {/* Input area - fixed at bottom */}
+   562→        <div className="shrink-0 px-5 py-3" style={{ background: isDark ? 'rgba(15,15,15,0.95)' : 'rgba(245,245,245,0.95)', backdropFilter: 'blur(20px)', borderTop: isDark ? '1px solid rgba(255,255,255,0.06)' : '1px solid rgba(0,0,0,0.06)', paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
+   563→          <div className="flex items-center gap-2">
+   564→            <div className="flex-1 flex items-center gap-2 px-4 py-3 rounded-2xl" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
+   565→              <input type="text" placeholder="اكتب رسالتك..." value={chatInput} onChange={e => setChatInput(e.target.value)}
+   566→                onKeyDown={e => e.key === 'Enter' && handleSendChat()}
+   567→                className="flex-1 bg-transparent outline-none text-sm" style={{ color: isDark ? '#FFF' : '#1a1a1a' }} />
+   568→            </div>
+   569→            <motion.button whileTap={{ scale: 0.85 }} onClick={handleSendChat}
+   570→              className="w-11 h-11 rounded-xl flex items-center justify-center shrink-0"
+   571→              style={{ background: '#5C1A1B' }}>
+   572→              <Send size={16} color="#FFF" />
+   573→            </motion.button>
+   574→          </div>
+   575→        </div>
+   576→      </div>
+   577→    );
+   578→  }
+   579→
+   580→  // ─── Main Support Screen (FAQ + Tickets + Ticket Detail + Create Ticket) ───
+   581→  return (
+   582→    <div dir="rtl" className="flex flex-col h-screen" style={{ background: isDark ? '#0F0F0F' : '#F5F5F5' }}>
+   583→      {/* Header */}
+   584→      <div className="shrink-0 animated-gradient relative overflow-hidden" style={{ background: 'linear-gradient(145deg, #1A1A1A 0%, #2A0A0A 50%, #0F0F0F 100%)' }}>
+   585→        <div className="absolute inset-0 glass-dark opacity-30" />
+   586→        <div className="relative px-5 pt-4 pb-5">
+   587→          <div className="flex items-center gap-3">
+   588→            <motion.button whileTap={{ scale: 0.9 }} onClick={() => { if (view !== 'main') { setView('main'); setSelectedTicket(null); } else { setActiveScreen('main'); } }} className="w-10 h-10 rounded-xl glass flex items-center justify-center">
+   589→              <ArrowLeft size={18} strokeWidth={1.5} color="#FFF" />
+   590→            </motion.button>
+   591→            <div className="flex-1">
+   592→              <h1 className="text-white text-xl font-bold">
+   593→                {view === 'ticket-detail' ? selectedTicket?.subject || 'تفاصيل التذكرة' : view === 'create-ticket' ? 'تذكرة جديدة' : 'الدعم والمساعدة'}
+   594→              </h1>
+   595→              {view === 'main' && (
+   596→                <div className="flex items-center gap-1.5 mt-0.5">
+   597→                  <div className="w-2 h-2 rounded-full pulse-dot" style={{ background: '#10B981' }} />
+   598→                  <span className="text-white/40 text-xs">متصل الآن</span>
+   599→                </div>
+   600→              )}
+   601→            </div>
+   602→            <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'rgba(59,130,246,0.2)' }}>
+   603→              <Headphones size={20} strokeWidth={1.5} color="#3B82F6" />
+   604→            </div>
+   605→          </div>
+   606→        </div>
+   607→      </div>
+   608→
+   609→      {/* Content Area - scrollable */}
+   610→      <div className="flex-1 overflow-y-auto overflow-x-hidden">
+   611→        {/* Main View */}
+   612→        {view === 'main' && (
+   613→          <div className="px-5 mt-4 pb-8">
+   614→            {/* Tab Toggle - Now 3 tabs */}
+   615→            <div className="flex gap-2 mb-4">
+   616→              {([
+   617→                { id: 'faq' as MainTab, label: 'مركز المساعدة', icon: HelpCircle },
+   618→                { id: 'chat' as MainTab, label: 'دردشة مباشرة', icon: MessageCircle },
+   619→                { id: 'tickets' as MainTab, label: 'تذاكر الدعم', icon: MessageSquare },
+   620→              ]).map(tab => {
+   621→                const Icon = tab.icon;
+   622→                return (
+   623→                  <motion.button key={tab.id} whileTap={{ scale: 0.95 }} onClick={() => setActiveTab(tab.id)}
+   624→                    className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-[11px] font-medium"
+   625→                    style={{
+   626→                      background: activeTab === tab.id ? 'rgba(92,26,27,0.15)' : isDark ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.8)',
+   627→                      border: activeTab === tab.id ? '1px solid rgba(92,26,27,0.3)' : isDark ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(0,0,0,0.06)',
+   628→                      color: activeTab === tab.id ? '#FFF' : isDark ? '#BBB' : '#666',
+   629→                      backdropFilter: 'blur(20px)',
+   630→                    }}>
+   631→                    <Icon size={14} />
+   632→                    <span>{tab.label}</span>
+   633→                  </motion.button>
+   634→                );
+   635→              })}
+   636→            </div>
+   637→
+   638→            {/* WhatsApp Direct Contact */}
+   639→            {socialLinks.whatsapp && (
+   640→              <motion.div
+   641→                initial={{ opacity: 0, y: 10 }}
+   642→                animate={{ opacity: 1, y: 0 }}
+   643→                className="mb-4"
+   644→              >
+   645→                <a
+   646→                  href={`https://wa.me/${socialLinks.whatsapp.replace(/[^0-9]/g, '')}`}
+   647→                  target="_blank"
+   648→                  rel="noopener noreferrer"
+   649→                  className="flex items-center gap-3 p-3 rounded-2xl"
+   650→                  style={{
+   651→                    background: 'rgba(37,211,102,0.1)',
+   652→                    border: '1px solid rgba(37,211,102,0.2)',
+   653→                  }}
+   654→                >
+   655→                  <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: '#25D366' }}>
+   656→                    <Phone size={20} color="#FFF" />
+   657→                  </div>
+   658→                  <div className="flex-1 text-right">
+   659→                    <p className="text-sm font-bold" style={{ color: '#25D366' }}>تواصل عبر واتساب</p>
+   660→                    <p className="text-[10px]" style={{ color: isDark ? '#888' : '#999' }}>رد سريع من فريق الدعم</p>
+   661→                  </div>
+   662→                  <ExternalLink size={16} color="#25D366" />
+   663→                </a>
+   664→              </motion.div>
+   665→            )}
+   666→
+   667→            <AnimatePresence mode="wait">
+   668→              {/* FAQ Tab */}
+   669→              {activeTab === 'faq' && (
+   670→                <motion.div key="faq" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-3">
+   671→                  {/* Search */}
+   672→                  <div className="flex items-center gap-2 px-4 py-3 rounded-2xl" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.85)', backdropFilter: 'blur(20px)', border: isDark ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(0,0,0,0.06)' }}>
+   673→                    <Search size={16} color={isDark ? '#555' : '#AAA'} />
+   674→                    <input type="text" placeholder="ابحث في الأسئلة الشائعة..." value={faqSearch} onChange={e => setFaqSearch(e.target.value)} className="flex-1 bg-transparent outline-none text-sm" style={{ color: isDark ? '#FFF' : '#1a1a1a' }} />
+   675→                  </div>
+   676→
+   677→                  {/* FAQ Quick Links */}
+   678→                  <div className="rounded-2xl p-4" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.85)', backdropFilter: 'blur(20px)', border: isDark ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(0,0,0,0.06)' }}>
+   679→                    <h3 className="text-xs font-bold mb-3" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>الأسئلة الأكثر شيوعاً</h3>
+   680→                    <div className="grid grid-cols-2 gap-2">
+   681→                      {faqQuickLinks.map((link, i) => (
+   682→                        <button
+   683→                          key={i}
+   684→                          onClick={() => setFaqSearch(link.label.replace(/[؟?]/g, '').replace('كيف ', ''))}
+   685→                          className="flex items-center gap-2 px-3 py-2.5 rounded-xl text-[11px] text-right"
+   686→                          style={{ background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)' }}
+   687→                        >
+   688→                          <span>{link.icon}</span>
+   689→                          <span style={{ color: isDark ? '#CCC' : '#444' }}>{link.label}</span>
+   690→                        </button>
+   691→                      ))}
+   692→                    </div>
+   693→                  </div>
+   694→
+   695→                  {/* FAQ Items */}
+   696→                  {filteredFaq.map((item, index) => (
+   697→                    <motion.div key={index} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: index * 0.03 }}
+   698→                      className="rounded-2xl overflow-hidden" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.85)', backdropFilter: 'blur(20px)', border: isDark ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(0,0,0,0.06)' }}>
+   699→                      <button onClick={() => setExpandedFaq(expandedFaq === index ? null : index)} className="w-full flex items-center justify-between p-4">
+   700→                        <span className="text-sm font-medium text-right flex-1" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>{item.q}</span>
+   701→                        <motion.div animate={{ rotate: expandedFaq === index ? 180 : 0 }} transition={{ duration: 0.2 }}>
+   702→                          <ChevronDown size={16} color={isDark ? '#888' : '#AAA'} />
+   703→                        </motion.div>
+   704→                      </button>
+   705→                      <AnimatePresence>
+   706→                        {expandedFaq === index && (
+   707→                          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+   708→                            <div className="px-4 pb-4" style={{ borderTop: isDark ? '1px solid rgba(255,255,255,0.06)' : '1px solid rgba(0,0,0,0.06)' }}>
+   709→                              <p className="text-xs leading-relaxed pt-3" style={{ color: isDark ? '#AAA' : '#666' }}>{item.a}</p>
+   710→                            </div>
+   711→                          </motion.div>
+   712→                        )}
+   713→                      </AnimatePresence>
+   714→                    </motion.div>
+   715→                  ))}
+   716→
+   717→                  {/* Create ticket CTA */}
+   718→                  <motion.button whileTap={{ scale: 0.95 }} onClick={() => setView('create-ticket')}
+   719→                    className="w-full py-4 rounded-2xl flex items-center justify-center gap-2 text-sm font-medium mt-4"
+   720→                    style={{ background: 'rgba(92,26,27,0.1)', color: '#5C1A1B', border: '1px solid rgba(92,26,27,0.2)', backdropFilter: 'blur(20px)' }}>
+   721→                    <MessageSquare size={16} />
+   722→                    <span>لم تجد إجابة؟ أنشئ تذكرة دعم</span>
+   723→                  </motion.button>
+   724→
+   725→                  {/* Contact Admin Section */}
+   726→                  {(socialLinks.contactAdmin || socialLinks.contactAdminMessage) && (
+   727→                    <div className="rounded-2xl p-4 mt-3" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.85)', backdropFilter: 'blur(20px)', border: isDark ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(0,0,0,0.06)' }}>
+   728→                      <div className="flex items-center gap-2 mb-3">
+   729→                        <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'rgba(139,92,246,0.12)' }}>
+   730→                          <Headphones size={16} color="#8B5CF6" />
+   731→                        </div>
+   732→                        <h3 className="text-sm font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>تواصل مع الأدمن</h3>
+   733→                      </div>
+   734→                      {socialLinks.contactAdminMessage && (
+   735→                        <p className="text-xs leading-relaxed mb-3" style={{ color: isDark ? '#AAA' : '#666' }}>
+   736→                          {socialLinks.contactAdminMessage}
+   737→                        </p>
+   738→                      )}
+   739→                      {socialLinks.contactAdmin && (
+   740→                        <a
+   741→                          href={socialLinks.contactAdmin}
+   742→                          target="_blank"
+   743→                          rel="noopener noreferrer"
+   744→                          className="flex items-center justify-center gap-2 py-3 rounded-xl text-xs font-bold w-full"
+   745→                          style={{ background: 'rgba(139,92,246,0.1)', color: '#8B5CF6' }}
+   746→                        >
+   747→                          <ExternalLink size={16} />
+   748→                          <span>تواصل مباشر</span>
+   749→                        </a>
+   750→                      )}
+   751→                    </div>
+   752→                  )}
+   753→                </motion.div>
+   754→              )}
+   755→
+   756→              {/* Tickets Tab */}
+   757→              {activeTab === 'tickets' && (
+   758→                <motion.div key="tickets" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-3">
+   759→                  <motion.button whileTap={{ scale: 0.95 }} onClick={() => setView('create-ticket')}
+   760→                    className="w-full py-3.5 rounded-2xl flex items-center justify-center gap-2 text-sm font-medium"
+   761→                    style={{ background: 'rgba(92,26,27,0.1)', color: '#5C1A1B', border: '1px solid rgba(92,26,27,0.2)', backdropFilter: 'blur(20px)' }}>
+   762→                    <Plus size={18} strokeWidth={1.5} /><span>تذكرة جديدة</span>
+   763→                  </motion.button>
+   764→
+   765→                  {tickets.map((ticket) => {
+   766→                    const cat = categoryLabels[ticket.category] || categoryLabels.general;
+   767→                    const stat = statusLabels[ticket.status] || statusLabels.open;
+   768→                    const lastMsg = ticket.messages?.[ticket.messages.length - 1];
+   769→                    return (
+   770→                      <motion.div key={ticket.id} whileTap={{ scale: 0.98 }} onClick={() => { setSelectedTicket(ticket); setView('ticket-detail'); }}
+   771→                        className="rounded-2xl p-4 cursor-pointer" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.85)', backdropFilter: 'blur(20px)', border: isDark ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(0,0,0,0.06)' }}>
+   772→                        <div className="flex items-start justify-between mb-2">
+   773→                          <div className="flex-1 min-w-0">
+   774→                            <p className="text-sm font-bold truncate" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>{ticket.subject}</p>
+   775→                          </div>
+   776→                          <div className="flex items-center gap-1.5 mr-2 flex-shrink-0">
+   777→                            <span className="text-[10px] px-2 py-0.5 rounded-full font-medium" style={{ background: cat.bg, color: cat.color }}>{cat.label}</span>
+   778→                            <span className="text-[10px] px-2 py-0.5 rounded-full font-medium" style={{ background: stat.bg, color: stat.color }}>{stat.label}</span>
+   779→                          </div>
+   780→                        </div>
+   781→                        {lastMsg && (
+   782→                          <p className="text-xs truncate mb-2" style={{ color: isDark ? '#888' : '#AAA' }}>
+   783→                            {lastMsg.sender === 'support' ? 'الدعم: ' : ''}{lastMsg.text}
+   784→                          </p>
+   785→                        )}
+   786→                        <p className="text-[10px]" style={{ color: isDark ? '#555' : '#BBB' }}>{timeAgo(ticket.createdAt)}</p>
+   787→                      </motion.div>
+   788→                    );
+   789→                  })}
+   790→
+   791→                  {tickets.length === 0 && (
+   792→                    <div className="flex flex-col items-center py-12">
+   793→                      <MessageSquare size={48} strokeWidth={1.5} color={isDark ? '#333' : '#DDD'} />
+   794→                      <p className="text-sm mt-3" style={{ color: isDark ? '#666' : '#AAA' }}>لا توجد تذاكر دعم</p>
+   795→                      <p className="text-xs mt-1" style={{ color: isDark ? '#555' : '#BBB' }}>أنشئ تذكرة جديدة وسنساعدك</p>
+   796→                    </div>
+   797→                  )}
+   798→                </motion.div>
+   799→              )}
+   800→            </AnimatePresence>
+   801→          </div>
+   802→        )}
+   803→
+   804→        {/* Ticket Detail View */}
+   805→        {view === 'ticket-detail' && selectedTicket && (
+   806→          <div className="flex flex-col" style={{ minHeight: 'calc(100vh - 80px)' }}>
+   807→            {/* Ticket info bar */}
+   808→            <div className="px-5 py-3" style={{ background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.7)', backdropFilter: 'blur(20px)', borderBottom: isDark ? '1px solid rgba(255,255,255,0.06)' : '1px solid rgba(0,0,0,0.06)' }}>
+   809→              <div className="flex items-center gap-2">
+   810→                <span className="text-[10px] px-2 py-0.5 rounded-full font-medium" style={{ background: categoryLabels[selectedTicket.category]?.bg, color: categoryLabels[selectedTicket.category]?.color }}>
+   811→                  {categoryLabels[selectedTicket.category]?.label}
+   812→                </span>
+   813→                <span className="text-[10px] px-2 py-0.5 rounded-full font-medium" style={{ background: statusLabels[selectedTicket.status]?.bg, color: statusLabels[selectedTicket.status]?.color }}>
+   814→                  {statusLabels[selectedTicket.status]?.label}
+   815→                </span>
+   816→              </div>
+   817→            </div>
+   818→
+   819→            {/* Messages */}
+   820→            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
+   821→              {(selectedTicket.messages || []).map((msg, i) => (
+   822→                <motion.div key={i} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.02 }}
+   823→                  className={`flex ${msg.sender === 'user' ? 'justify-start' : 'justify-end'}`}>
+   824→                  <div className="max-w-[80%]">
+   825→                    {msg.sender === 'support' && (
+   826→                      <div className="flex items-center gap-1.5 mb-1 justify-end">
+   827→                        <span className="text-[10px] font-medium" style={{ color: '#3B82F6' }}>فريق الدعم</span>
+   828→                        <div className="w-5 h-5 rounded-full flex items-center justify-center" style={{ background: 'rgba(59,130,246,0.15)' }}>
+   829→                          <Headphones size={10} color="#3B82F6" />
+   830→                        </div>
+   831→                      </div>
+   832→                    )}
+   833→                    <div className="rounded-2xl p-3" style={{
+   834→                      background: msg.sender === 'user' ? '#5C1A1B' : isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)',
+   835→                      borderBottomLeftRadius: msg.sender === 'user' ? '4px' : '16px',
+   836→                      borderBottomRightRadius: msg.sender === 'support' ? '4px' : '16px',
+   837→                    }}>
+   838→                      {msg.image && <img src={msg.image} alt="attachment" className="w-full rounded-xl mb-2 max-h-48 object-cover" />}
+   839→                      <p className="text-xs leading-relaxed" style={{ color: msg.sender === 'user' ? '#FFF' : isDark ? '#CCC' : '#333' }}>{msg.text}</p>
+   840→                    </div>
+   841→                    <div className="flex items-center gap-1 mt-1" dir="ltr">
+   842→                      {msg.sender === 'user' && (
+   843→                        <span className="text-[9px]" style={{ color: isDark ? '#555' : '#BBB' }}>أنت</span>
+   844→                      )}
+   845→                      <p className="text-[9px]" style={{ color: isDark ? '#555' : '#BBB' }}>{timeAgo(msg.time)}</p>
+   846→                    </div>
+   847→                  </div>
+   848→                </motion.div>
+   849→              ))}
+   850→              <div ref={messagesEndRef} />
+   851→            </div>
+   852→
+   853→            {/* Input bar */}
+   854→            {selectedTicket.status !== 'closed' && selectedTicket.status !== 'resolved' && (
+   855→              <div className="px-5 py-3" style={{ background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.85)', backdropFilter: 'blur(20px)', borderTop: isDark ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(0,0,0,0.06)', paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
+   856→                <div className="flex items-center gap-2">
+   857→                  <div className="flex-1 flex items-center gap-2 px-4 py-3 rounded-2xl" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
+   858→                    <input type="text" placeholder="اكتب رسالتك..." value={messageInput} onChange={e => setMessageInput(e.target.value)}
+   859→                      onKeyDown={e => e.key === 'Enter' && handleSendMessage()}
+   860→                      className="flex-1 bg-transparent outline-none text-sm" style={{ color: isDark ? '#FFF' : '#1a1a1a' }} />
+   861→                  </div>
+   862→                  <motion.button whileTap={{ scale: 0.85 }} onClick={handleSendMessage}
+   863→                    className="w-11 h-11 rounded-xl flex items-center justify-center"
+   864→                    style={{ background: '#5C1A1B' }}>
+   865→                    <Send size={16} color="#FFF" />
+   866→                  </motion.button>
+   867→                </div>
+   868→              </div>
+   869→            )}
+   870→          </div>
+   871→        )}
+   872→
+   873→        {/* Create Ticket View */}
+   874→        {view === 'create-ticket' && (
+   875→          <div className="px-5 mt-4 pb-8">
+   876→            <div className="space-y-3">
+   877→              <div className="rounded-2xl p-4 space-y-3" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.85)', backdropFilter: 'blur(20px)', border: isDark ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(0,0,0,0.06)' }}>
+   878→                <h3 className="text-sm font-bold mb-1" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>إنشاء تذكرة دعم</h3>
+   879→                <input type="text" placeholder="موضوع التذكرة" value={newSubject} onChange={e => setNewSubject(e.target.value)}
+   880→                  className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={{ background: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)', color: isDark ? '#FFF' : '#1a1a1a' }} />
+   881→                
+   882→                <div className="flex gap-2">
+   883→                  {(['technical', 'financial', 'general'] as const).map(cat => {
+   884→                    const info = categoryLabels[cat];
+   885→                    return (
+   886→                      <button key={cat} onClick={() => setNewCategory(cat)}
+   887→                        className="flex-1 py-2.5 rounded-xl text-xs font-medium"
+   888→                        style={{ background: newCategory === cat ? info.bg : isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)', color: newCategory === cat ? info.color : isDark ? '#888' : '#AAA', border: newCategory === cat ? `1px solid ${info.color}30` : 'none' }}>
+   889→                        {info.label}
+   890→                      </button>
+   891→                    );
+   892→                  })}
+   893→                </div>
+   894→
+   895→                <textarea placeholder="اكتب رسالتك بالتفصيل..." value={newMessage} onChange={e => setNewMessage(e.target.value)} rows={4}
+   896→                  className="w-full px-3 py-2.5 rounded-xl text-sm outline-none resize-none" style={{ background: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)', color: isDark ? '#FFF' : '#1a1a1a' }} />
+   897→
+   898→                {/* Image upload */}
+   899→                <div>
+   900→                  <input type="file" ref={fileInputRef} accept="image/*" onChange={handleImageUpload} className="hidden" />
+   901→                  <div className="flex items-center gap-2">
+   902→                    <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-2 px-3 py-2 rounded-xl text-xs" style={{ background: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.04)', color: isDark ? '#AAA' : '#888' }}>
+   903→                      <ImagePlus size={14} /><span>إرفاق صورة</span>
+   904→                    </button>
+   905→                    {newImage && (
+   906→                      <div className="relative">
+   907→                        <img src={newImage} alt="attachment" className="w-10 h-10 rounded-lg object-cover" />
+   908→                        <button onClick={() => setNewImage('')} className="absolute -top-1 -left-1 w-4 h-4 rounded-full flex items-center justify-center" style={{ background: '#5C1A1B' }}>
+   909→                          <X size={8} color="#FFF" />
+   910→                        </button>
+   911→                      </div>
+   912→                    )}
+   913→                  </div>
+   914→                </div>
+   915→
+   916→                <motion.button whileTap={{ scale: 0.95 }} onClick={handleCreateTicket} disabled={!newSubject || !newMessage}
+   917→                  className="w-full py-3 rounded-xl text-sm font-bold text-white disabled:opacity-50" style={{ background: '#5C1A1B' }}>
+   918→                  إرسال التذكرة
+   919→                </motion.button>
+   920→              </div>
+   921→            </div>
+   922→          </div>
+   923→        )}
+   924→      </div>
+   925→    </div>
+   926→  );
+   927→}
+   928→
