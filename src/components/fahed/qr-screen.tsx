@@ -22,6 +22,9 @@ import {
   ArrowUpRight,
   ArrowDownLeft,
   XCircle,
+  SwitchCamera,
+  ExternalLink,
+  Wallet,
 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { currencySymbols, currencyBadgeColors, generateReference } from '@/lib/utils';
@@ -32,6 +35,8 @@ import { supabase } from '@/lib/supabase';
 type QRTab = 'scan' | 'generate';
 type GenerateType = 'receive' | 'request';
 
+type GenericQRType = 'wallet_address' | 'url' | 'payment_link' | 'text' | 'fahed';
+
 interface ParsedQRData {
   type: 'RECEIVE' | 'REQUEST';
   userId: string;
@@ -39,6 +44,17 @@ interface ParsedQRData {
   phone?: string;
   amount?: number;
   currency?: 'YER' | 'SAR' | 'USD';
+}
+
+interface GenericScanResult {
+  type: GenericQRType;
+  raw: string;
+  label: string;
+  description: string;
+  action?: {
+    label: string;
+    handler: () => void;
+  };
 }
 
 interface ScannedUserInfo {
@@ -55,10 +71,10 @@ interface ScannedUserInfo {
 export default function QRScreen() {
   const { theme } = useTheme();
   const isDark = theme === 'dark';
-  const { user, setUser, addTransaction, addNotification, setActiveScreen } = useAppStore();
+  const { user, setUser, addTransaction, addNotification, setActiveScreen, qrInitialTab, setQrInitialTab } = useAppStore();
   const { showToast } = useToast();
 
-  const [activeTab, setActiveTab] = useState<QRTab>('generate');
+  const [activeTab, setActiveTab] = useState<QRTab>(qrInitialTab || 'generate');
   const [generateType, setGenerateType] = useState<GenerateType>('receive');
   const [amount, setAmount] = useState('');
   const [currency, setCurrency] = useState<'YER' | 'SAR' | 'USD'>('YER');
@@ -79,9 +95,21 @@ export default function QRScreen() {
   // Camera scanner state
   const [isScanning, setIsScanning] = useState(false);
   const [cameraError, setCameraError] = useState('');
+  const [useFrontCamera, setUseFrontCamera] = useState(false);
   const scannerRef = useRef<Html5Qrcode | null>(null);
 
+  // Generic scan result for non-FAHED QR codes
+  const [genericScanResult, setGenericScanResult] = useState<GenericScanResult | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Consume qrInitialTab on mount
+  useEffect(() => {
+    if (qrInitialTab) {
+      setActiveTab(qrInitialTab);
+      setQrInitialTab(null);
+    }
+  }, [qrInitialTab, setQrInitialTab]);
 
   // Stop scanning helper
   const stopScanning = useCallback(async () => {
@@ -118,8 +146,9 @@ export default function QRScreen() {
       const html5QrCode = new Html5Qrcode('qr-reader');
       scannerRef.current = html5QrCode;
 
+      const facingMode = useFrontCamera ? 'user' : 'environment';
       await html5QrCode.start(
-        { facingMode: 'environment' },
+        { facingMode },
         { fps: 10, qrbox: { width: 250, height: 250 } },
         (decodedText) => {
           // Success - stop scanning and handle result
@@ -139,7 +168,7 @@ export default function QRScreen() {
       setCameraError('لم يتم العثور على كاميرا أو لا يمكن الوصول إليها. يرجى السماح بالوصول للكاميرا');
       showToast('error', 'خطأ', 'لم يتم العثور على كاميرا أو لا يمكن الوصول إليها');
     }
-  }, [stopScanning, showToast]);
+  }, [stopScanning, showToast, useFrontCamera]);
 
   // Clean up scanner on unmount
   useEffect(() => {
@@ -236,6 +265,180 @@ export default function QRScreen() {
     }
   };
 
+  // Detect QR type for non-FAHED codes
+  const detectQRType = (data: string): GenericScanResult | null => {
+    const trimmed = data.trim();
+
+    // Crypto wallet addresses
+    // Bitcoin address patterns
+    if (/^(1[a-km-zA-HJ-NP-Z1-9]{25,34}|3[a-km-zA-HJ-NP-Z1-9]{25,34}|bc1[a-zA-HJ-NP-Z0-9]{25,62})$/.test(trimmed)) {
+      return {
+        type: 'wallet_address',
+        raw: trimmed,
+        label: 'عنوان Bitcoin',
+        description: 'تم مسح عنوان محفظة بيتكوين',
+        action: {
+          label: 'نسخ العنوان',
+          handler: () => {
+            navigator.clipboard.writeText(trimmed).catch(() => {});
+            showToast('success', 'تم النسخ', 'تم نسخ عنوان المحفظة');
+          },
+        },
+      };
+    }
+
+    // Ethereum/EVM address (0x followed by 40 hex chars)
+    if (/^0x[a-fA-F0-9]{40}$/.test(trimmed)) {
+      return {
+        type: 'wallet_address',
+        raw: trimmed,
+        label: 'عنوان Ethereum / EVM',
+        description: 'تم مسح عنوان محفظة إيثريوم أو متوافقة',
+        action: {
+          label: 'نسخ العنوان',
+          handler: () => {
+            navigator.clipboard.writeText(trimmed).catch(() => {});
+            showToast('success', 'تم النسخ', 'تم نسخ عنوان المحفظة');
+          },
+        },
+      };
+    }
+
+    // TRC20 / Tron address (T followed by 33 chars)
+    if (/^T[A-Za-z1-9]{33}$/.test(trimmed)) {
+      return {
+        type: 'wallet_address',
+        raw: trimmed,
+        label: 'عنوان TRC20 / Tron',
+        description: 'تم مسح عنوان محفظة ترون',
+        action: {
+          label: 'نسخ العنوان',
+          handler: () => {
+            navigator.clipboard.writeText(trimmed).catch(() => {});
+            showToast('success', 'تم النسخ', 'تم نسخ عنوان المحفظة');
+          },
+        },
+      };
+    }
+
+    // Solana address (base58, 32-44 chars typically)
+    if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(trimmed) && trimmed.length >= 32) {
+      return {
+        type: 'wallet_address',
+        raw: trimmed,
+        label: 'عنوان محفظة رقمية',
+        description: 'تم مسح عنوان محفظة رقمية محتمل',
+        action: {
+          label: 'نسخ العنوان',
+          handler: () => {
+            navigator.clipboard.writeText(trimmed).catch(() => {});
+            showToast('success', 'تم النسخ', 'تم نسخ عنوان المحفظة');
+          },
+        },
+      };
+    }
+
+    // Crypto URI schemes (bitcoin:, ethereum:, solana:)
+    if (/^bitcoin:/i.test(trimmed)) {
+      const addr = trimmed.replace(/^bitcoin:/i, '').split('?')[0];
+      return {
+        type: 'wallet_address',
+        raw: trimmed,
+        label: 'عنوان Bitcoin',
+        description: `محفظة: ${addr.substring(0, 12)}...${addr.substring(addr.length - 6)}`,
+        action: {
+          label: 'نسخ العنوان',
+          handler: () => {
+            navigator.clipboard.writeText(addr).catch(() => {});
+            showToast('success', 'تم النسخ', 'تم نسخ عنوان المحفظة');
+          },
+        },
+      };
+    }
+
+    if (/^ethereum:/i.test(trimmed)) {
+      const addr = trimmed.replace(/^ethereum:/i, '').split('?')[0];
+      return {
+        type: 'wallet_address',
+        raw: trimmed,
+        label: 'عنوان Ethereum',
+        description: `محفظة: ${addr.substring(0, 10)}...${addr.substring(addr.length - 6)}`,
+        action: {
+          label: 'نسخ العنوان',
+          handler: () => {
+            navigator.clipboard.writeText(addr).catch(() => {});
+            showToast('success', 'تم النسخ', 'تم نسخ عنوان المحفظة');
+          },
+        },
+      };
+    }
+
+    if (/^solana:/i.test(trimmed)) {
+      const addr = trimmed.replace(/^solana:/i, '').split('?')[0];
+      return {
+        type: 'wallet_address',
+        raw: trimmed,
+        label: 'عنوان Solana',
+        description: `محفظة: ${addr.substring(0, 10)}...${addr.substring(addr.length - 6)}`,
+        action: {
+          label: 'نسخ العنوان',
+          handler: () => {
+            navigator.clipboard.writeText(addr).catch(() => {});
+            showToast('success', 'تم النسخ', 'تم نسخ عنوان المحفظة');
+          },
+        },
+      };
+    }
+
+    // URL detection
+    if (/^https?:\/\//i.test(trimmed)) {
+      return {
+        type: 'url',
+        raw: trimmed,
+        label: 'رابط',
+        description: trimmed.length > 60 ? trimmed.substring(0, 60) + '...' : trimmed,
+        action: {
+          label: 'فتح الرابط',
+          handler: () => {
+            window.open(trimmed, '_blank', 'noopener,noreferrer');
+          },
+        },
+      };
+    }
+
+    // Payment link (e.g., PayPal, Stripe, etc.)
+    if (/^pay:\/\//i.test(trimmed) || /paypal\.me\//i.test(trimmed) || /pay\.link\//i.test(trimmed)) {
+      return {
+        type: 'payment_link',
+        raw: trimmed,
+        label: 'رابط دفع',
+        description: 'تم مسح رابط دفع إلكتروني',
+        action: {
+          label: 'فتح رابط الدفع',
+          handler: () => {
+            const url = trimmed.startsWith('pay://') ? trimmed.replace('pay://', 'https://') : trimmed;
+            window.open(url, '_blank', 'noopener,noreferrer');
+          },
+        },
+      };
+    }
+
+    // Generic text - allow copying
+    return {
+      type: 'text',
+      raw: trimmed,
+      label: 'نص',
+      description: trimmed.length > 80 ? trimmed.substring(0, 80) + '...' : trimmed,
+      action: {
+        label: 'نسخ النص',
+        handler: () => {
+          navigator.clipboard.writeText(trimmed).catch(() => {});
+          showToast('success', 'تم النسخ', 'تم نسخ النص إلى الحافظة');
+        },
+      },
+    };
+  };
+
   // Handle scan result - parse and look up user
   const handleScanData = async (data: string) => {
     setScanResult(data);
@@ -243,10 +446,17 @@ export default function QRScreen() {
     setScannedUser(null);
     setParsedQR(null);
     setTransferResult(null);
+    setGenericScanResult(null);
 
     const parsed = parseQRData(data);
     if (!parsed) {
-      setLookupError('رمز QR غير صالح - ليس رمز محفظة الجنوب');
+      // Not a FAHED QR code - try generic detection
+      const generic = detectQRType(data);
+      if (generic) {
+        setGenericScanResult(generic);
+      } else {
+        setLookupError('رمز QR غير صالح');
+      }
       return;
     }
 
@@ -463,6 +673,7 @@ export default function QRScreen() {
     setTransferCurrency('YER');
     setManualInput('');
     setCameraError('');
+    setGenericScanResult(null);
   };
 
   const qrData = (() => {
@@ -642,9 +853,26 @@ export default function QRScreen() {
                   </div>
                 )}
 
-                {/* Stop scanning button - overlaid on camera */}
+                {/* Stop scanning button and camera flip - overlaid on camera */}
                 {isScanning && (
-                  <div className="absolute bottom-4 left-0 right-0 flex justify-center z-10">
+                  <div className="absolute bottom-4 left-0 right-0 flex justify-center items-center gap-3 z-10">
+                    <button
+                      onClick={async () => {
+                        await stopScanning();
+                        setUseFrontCamera(prev => !prev);
+                        // Restart scanning with the new camera
+                        setTimeout(() => startScanning(), 300);
+                      }}
+                      className="p-2.5 rounded-xl"
+                      style={{
+                        background: 'rgba(0,0,0,0.7)',
+                        color: '#FFF',
+                        backdropFilter: 'blur(10px)',
+                      }}
+                      title={useFrontCamera ? 'الكاميرا الخلفية' : 'الكاميرا الأمامية'}
+                    >
+                      <SwitchCamera size={18} strokeWidth={1.5} />
+                    </button>
                     <button
                       onClick={stopScanning}
                       className="px-5 py-2.5 rounded-xl text-sm font-medium flex items-center gap-2"
@@ -812,7 +1040,7 @@ export default function QRScreen() {
                     exit={{ opacity: 0, y: -10 }}
                   >
                     {/* Error State */}
-                    {lookupError && (
+                    {lookupError && !genericScanResult && (
                       <div
                         className="rounded-2xl p-4"
                         style={{
@@ -1187,6 +1415,91 @@ export default function QRScreen() {
                         </div>
                       </div>
                     )}
+
+                    {/* Generic Scan Result (non-FAHED QR) */}
+                    {genericScanResult && (
+                      <div
+                        className="rounded-2xl p-5"
+                        style={{
+                          background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.7)',
+                          border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}`,
+                        }}
+                      >
+                        <div className="flex flex-col items-center">
+                          {/* Icon based on type */}
+                          <div
+                            className="w-16 h-16 rounded-full flex items-center justify-center mb-3"
+                            style={{
+                              background: genericScanResult.type === 'wallet_address'
+                                ? 'rgba(38,161,123,0.15)'
+                                : genericScanResult.type === 'url'
+                                  ? 'rgba(59,130,246,0.15)'
+                                  : genericScanResult.type === 'payment_link'
+                                    ? 'rgba(245,158,11,0.15)'
+                                    : 'rgba(156,163,175,0.15)',
+                            }}
+                          >
+                            {genericScanResult.type === 'wallet_address' ? (
+                              <Wallet size={32} color="#26A17B" strokeWidth={1.5} />
+                            ) : genericScanResult.type === 'url' ? (
+                              <ExternalLink size={32} color="#3B82F6" strokeWidth={1.5} />
+                            ) : genericScanResult.type === 'payment_link' ? (
+                              <HandCoins size={32} color="#F59E0B" strokeWidth={1.5} />
+                            ) : (
+                              <Clipboard size={32} color="#9CA3AF" strokeWidth={1.5} />
+                            )}
+                          </div>
+                          <h3 className="text-lg font-bold mb-1" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
+                            {genericScanResult.label}
+                          </h3>
+                          <p className="text-sm text-center mb-3" style={{ color: isDark ? '#AAA' : '#888' }}>
+                            {genericScanResult.description}
+                          </p>
+                          {/* Raw data display */}
+                          <div
+                            className="w-full rounded-xl p-3 mb-4"
+                            style={{ background: isDark ? '#1A1A1A' : '#F8F8F8' }}
+                          >
+                            <p className="text-xs font-mono break-all" style={{ color: isDark ? '#CCC' : '#555' }} dir="ltr">
+                              {genericScanResult.raw.length > 200
+                                ? genericScanResult.raw.substring(0, 200) + '...'
+                                : genericScanResult.raw}
+                            </p>
+                          </div>
+                          {/* Action buttons */}
+                          <div className="w-full flex gap-2">
+                            {genericScanResult.action && (
+                              <button
+                                onClick={genericScanResult.action.handler}
+                                className="flex-1 py-3 rounded-2xl font-bold text-white text-sm flex items-center justify-center gap-2"
+                                style={{
+                                  background: genericScanResult.type === 'wallet_address'
+                                    ? 'linear-gradient(135deg, #26A17B, #1A7A5A)'
+                                    : 'linear-gradient(135deg, #5C1A1B, #CC0000)',
+                                }}
+                              >
+                                {genericScanResult.type === 'url' ? (
+                                  <ExternalLink size={16} strokeWidth={1.5} />
+                                ) : genericScanResult.type === 'wallet_address' ? (
+                                  <Copy size={16} strokeWidth={1.5} />
+                                ) : null}
+                                {genericScanResult.action.label}
+                              </button>
+                            )}
+                            <button
+                              onClick={resetScanState}
+                              className="flex-1 py-3 rounded-2xl font-bold text-sm"
+                              style={{
+                                background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+                                color: isDark ? '#FFF' : '#1a1a1a',
+                              }}
+                            >
+                              مسح مرة أخرى
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -1356,35 +1669,55 @@ export default function QRScreen() {
                     )}
                   </div>
 
-                  {/* QR Code Section */}
+                  {/* QR Code Section - tappable to copy */}
                   <div className="flex justify-center mb-4">
                     <motion.div
                       initial={{ scale: 0.8, opacity: 0 }}
                       animate={{ scale: 1, opacity: 1 }}
                       transition={{ type: 'spring', stiffness: 200, damping: 15 }}
                     >
-                      <div
-                        className="p-3 rounded-2xl"
-                        style={{
-                          background: '#FFFFFF',
-                          boxShadow: '0 4px 24px rgba(0,0,0,0.3), 0 0 0 1px rgba(201,168,76,0.15)',
-                        }}
+                      <button
+                        onClick={handleCopy}
+                        className="relative group active:scale-95 transition-transform"
+                        title="اضغط لنسخ البيانات"
                       >
-                        <QRCodeSVG
-                          value={qrData}
-                          size={180}
-                          level="H"
-                          bgColor="#FFFFFF"
-                          fgColor="#0A1A3A"
-                          marginSize={0}
-                          imageSettings={{
-                            src: LOGO_BASE64,
-                            height: 36,
-                            width: 36,
-                            excavate: true,
+                        <div
+                          className="p-3 rounded-2xl"
+                          style={{
+                            background: '#FFFFFF',
+                            boxShadow: '0 4px 24px rgba(0,0,0,0.3), 0 0 0 1px rgba(201,168,76,0.15)',
                           }}
-                        />
-                      </div>
+                        >
+                          <QRCodeSVG
+                            value={qrData}
+                            size={200}
+                            level="H"
+                            bgColor="#FFFFFF"
+                            fgColor="#0A1A3A"
+                            marginSize={0}
+                            imageSettings={{
+                              src: LOGO_BASE64,
+                              height: 40,
+                              width: 40,
+                              excavate: true,
+                            }}
+                          />
+                        </div>
+                        {/* Copy overlay on hover */}
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover:bg-black/10 rounded-2xl transition-all">
+                          {copied ? (
+                            <div className="bg-green-500 text-white px-3 py-1.5 rounded-xl text-xs font-bold shadow-lg">
+                              <CheckCircle2 size={14} strokeWidth={1.5} className="inline mr-1" />
+                              تم النسخ
+                            </div>
+                          ) : (
+                            <div className="opacity-0 group-hover:opacity-100 bg-black/60 text-white px-3 py-1.5 rounded-xl text-xs font-bold shadow-lg transition-opacity">
+                              <Copy size={14} strokeWidth={1.5} className="inline mr-1" />
+                              اضغط للنسخ
+                            </div>
+                          )}
+                        </div>
+                      </button>
                     </motion.div>
                   </div>
 

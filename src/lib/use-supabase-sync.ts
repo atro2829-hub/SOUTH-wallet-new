@@ -103,22 +103,33 @@ function mapDbProviderToStore(dbProv: DbServiceProvider): ServiceProvider {
   };
 }
 
-/** Map a Supabase DbProductPackage row to the store's ProductPackage shape. */
+/** Map a Supabase DbProductPackage row to the store's ProductPackage shape.
+ *  Always displays prices in USD. If price_usd is not set, converts from
+ *  YER or SAR using approximate exchange rates.
+ */
 function mapDbPackageToStore(dbPkg: DbProductPackage): ProductPackage {
-  // Pick the first non-zero price as the display price
-  const price = dbPkg.price_yer || dbPkg.price_sar || dbPkg.price_usd || 0;
-  const currency = dbPkg.price_yer
-    ? 'YER' as const
-    : dbPkg.price_sar
-      ? 'SAR' as const
-      : 'USD' as const;
+  // USD-only pricing: prefer price_usd, convert from YER/SAR if needed
+  // Exchange rates: 1 USD ≈ 1550 YER, 1 USD ≈ 3.75 SAR
+  const YER_TO_USD = 1 / 1550;
+  const SAR_TO_USD = 1 / 3.75;
+
+  let priceUSD: number;
+  if (dbPkg.price_usd && dbPkg.price_usd > 0) {
+    priceUSD = dbPkg.price_usd;
+  } else if (dbPkg.price_yer && dbPkg.price_yer > 0) {
+    priceUSD = Math.ceil(dbPkg.price_yer * YER_TO_USD * 100) / 100; // round up to 2 decimals
+  } else if (dbPkg.price_sar && dbPkg.price_sar > 0) {
+    priceUSD = Math.ceil(dbPkg.price_sar * SAR_TO_USD * 100) / 100;
+  } else {
+    priceUSD = 0;
+  }
 
   return {
     id: dbPkg.id,
     providerId: dbPkg.provider_id || '',
     name: dbPkg.name || '',
-    price,
-    currency,
+    price: priceUSD,
+    currency: 'USD' as const, // Always USD
     executionType: dbPkg.execution_type === 'api' ? 'auto' : dbPkg.execution_type || 'manual',
     isActive: dbPkg.is_active ?? true,
     apiProvider: dbPkg.api_product_id || undefined,
@@ -835,6 +846,22 @@ export function useSupabaseSync() {
       globalChannelsRef.current = [];
     };
   }, []); // Run once on mount
+
+  // ─────────────────────────────────────────────────────────
+  //  Initialize G2Bulk API provider on first load
+  // ─────────────────────────────────────────────────────────
+
+  useEffect(() => {
+    const initProvider = async () => {
+      try {
+        const { initializeDefaultProviders } = await import('@/lib/api-providers');
+        await initializeDefaultProviders();
+      } catch (error) {
+        console.error('[SupabaseSync] Failed to initialize API providers:', error);
+      }
+    };
+    initProvider();
+  }, []);
 
   // ─────────────────────────────────────────────────────────
   //  Initial data fetch on mount

@@ -499,6 +499,53 @@ export const supabaseService = {
     return data as DbUser;
   },
 
+  /**
+   * Ensure a user exists in Supabase. If they don't, create them.
+   * If they do, update their info. This keeps Firebase and Supabase in sync.
+   * Called on every auth state change so that chat/search features can find users.
+   */
+  async ensureUser(firebaseUid: string, data: {
+    email?: string; phone?: string; displayName?: string;
+    firstName?: string; secondName?: string; thirdName?: string; familyName?: string;
+    avatar?: string; role?: string; userId?: string;
+  }) {
+    try {
+      const existing = await supabaseService.getUserByFirebaseUid(firebaseUid);
+
+      const userData: Record<string, unknown> = {
+        firebase_uid: firebaseUid,
+        email: data.email || null,
+        phone: data.phone || null,
+        display_name: data.displayName || '',
+        first_name: data.firstName || '',
+        second_name: data.secondName || '',
+        third_name: data.thirdName || '',
+        family_name: data.familyName || '',
+        avatar_url: data.avatar || '',
+        role: data.role || 'user',
+        is_active: true,
+        is_blocked: false,
+        updated_at: new Date().toISOString(),
+      };
+
+      if (existing) {
+        // Update existing user
+        await supabase
+          .from('users')
+          .update(userData)
+          .eq('id', existing.id);
+      } else {
+        // Create new user
+        userData.id = crypto.randomUUID();
+        userData.kyc_status = 'pending';
+        userData.created_at = new Date().toISOString();
+        await supabase.from('users').insert(userData);
+      }
+    } catch (err) {
+      console.error('Error ensuring user in Supabase:', err);
+    }
+  },
+
   // --- Transactions ---
   async getTransactions(userId: string, limit = 50) {
     const { data, error } = await supabase

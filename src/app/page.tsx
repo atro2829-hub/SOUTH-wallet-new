@@ -9,6 +9,7 @@ import { onAuthStateChanged } from 'firebase/auth';
 import { auth, database } from '@/lib/firebase';
 import { ref, get, update } from 'firebase/database';
 import { generateUserId } from '@/lib/utils';
+import { supabaseService } from '@/lib/supabase';
 import { ErrorBoundary } from '@/components/fahed/error-boundary';
 
 // Lazy-loaded screen components for better performance
@@ -40,6 +41,7 @@ const PinSetupScreen = lazy(() => import('@/components/fahed/pin-setup-screen'))
 const WalletTransferScreen = lazy(() => import('@/components/fahed/wallet-transfer-screen'));
 const EscrowScreen = lazy(() => import('@/components/fahed/escrow-screen'));
 const DirectChatScreen = lazy(() => import('@/components/fahed/direct-chat-screen'));
+const GamesScreen = lazy(() => import('@/components/fahed/games-screen'));
 
 // Eagerly loaded components (critical for initial render or frequently used)
 import BottomNav from '@/components/fahed/bottom-nav';
@@ -250,6 +252,20 @@ function AppContent() {
               governorate: data.governorate || '',
               theme: data.theme || 'light',
             });
+
+            // Sync user to Supabase so chat/search features can find them
+            supabaseService.ensureUser(firebaseUser.uid, {
+              email: data.email || firebaseUser.email || '',
+              phone: data.phone || '',
+              displayName: fullName,
+              firstName: data.firstName || '',
+              secondName: data.secondName || '',
+              thirdName: data.thirdName || '',
+              familyName: data.familyName || '',
+              avatar: data.avatar || '',
+              role: effectiveRole,
+              userId: data.userId || '',
+            });
           } else {
             // Firebase auth user exists but no DB record - create one
             const newUserId = generateUserId();
@@ -266,6 +282,14 @@ function AppContent() {
               [`userIds/${newUserId}`]: firebaseUser.uid,
             });
             useAppStore.getState().setUser({ id: firebaseUser.uid, ...newUserData });
+
+            // Sync new user to Supabase
+            supabaseService.ensureUser(firebaseUser.uid, {
+              email,
+              displayName: '',
+              role: newUserData.role,
+              userId: newUserId,
+            });
           }
         } catch (error) {
           console.error('Error fetching user data on auth state change:', error);
@@ -673,6 +697,7 @@ function AppContent() {
     'wallet-transfer': WalletTransferScreen,
     escrow: EscrowScreen,
     'direct-chat': DirectChatScreen,
+    games: GamesScreen,
   };
 
   if (activeScreen in overlayScreens) {

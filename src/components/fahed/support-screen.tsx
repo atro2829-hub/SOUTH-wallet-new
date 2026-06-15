@@ -21,6 +21,7 @@ interface TicketMessage {
   text: string;
   time: string;
   image?: string;
+  senderName?: string;
 }
 
 interface SupabaseTicket {
@@ -132,12 +133,12 @@ export default function SupportScreen() {
 
   // Load tickets from Supabase
   const loadTickets = async () => {
-    if (!user?.userId) return;
+    if (!user?.id) return;
     try {
       const { data: ticketData, error: ticketError } = await supabase
         .from('support_tickets')
         .select('*')
-        .eq('user_id', user.userId)
+        .eq('user_id', user.id)
         .order('created_at', { ascending: false });
 
       if (ticketError) throw ticketError;
@@ -161,16 +162,17 @@ export default function SupportScreen() {
         const ticketMessages = (messagesData || [])
           .filter(m => m.ticket_id === ticket.id)
           .map(m => ({
-            sender: m.sender_type === 'admin' ? 'support' as const : m.sender_type as 'user',
+            sender: (m.sender_type === 'admin' || m.sender_role === 'admin') ? 'support' as const : 'user' as const,
             text: m.message || '',
             time: m.created_at || new Date().toISOString(),
-            image: m.attachment_url || undefined,
+            image: m.attachments || m.attachment_url || undefined,
+            senderName: m.sender_name || undefined,
           }));
 
         return {
           id: ticket.id,
           userId: ticket.user_id || '',
-          userName: user.name || 'مستخدم',
+          userName: ticket.user_name || user.name || 'مستخدم',
           subject: ticket.subject || '',
           message: ticket.message || '',
           category: ticket.category || 'general',
@@ -190,13 +192,13 @@ export default function SupportScreen() {
 
   // Listen to tickets from Supabase
   useEffect(() => {
-    if (!user?.userId) return;
+    if (!user?.id) return;
     loadTickets();
 
     // Subscribe to ticket changes
     const ticketsChannel = supabase
       .channel('user-support-tickets')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'support_tickets', filter: `user_id=eq.${user.userId}` }, () => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'support_tickets', filter: `user_id=eq.${user.id}` }, () => {
         loadTickets();
       })
       .subscribe();
@@ -210,10 +212,11 @@ export default function SupportScreen() {
         // Also update selected ticket if viewing it
         if (selectedTicket && payload.new.ticket_id === selectedTicket.id) {
           const newMsg: TicketMessage = {
-            sender: payload.new.sender_type === 'admin' ? 'support' : 'user',
+            sender: (payload.new.sender_type === 'admin' || payload.new.sender_role === 'admin') ? 'support' : 'user',
             text: payload.new.message || '',
             time: payload.new.created_at || new Date().toISOString(),
-            image: payload.new.attachment_url || undefined,
+            image: payload.new.attachments || payload.new.attachment_url || undefined,
+            senderName: payload.new.sender_name || undefined,
           };
           setSelectedTicket(prev => prev ? { ...prev, messages: [...prev.messages, newMsg] } : prev);
         }
@@ -224,7 +227,7 @@ export default function SupportScreen() {
       supabase.removeChannel(ticketsChannel);
       supabase.removeChannel(messagesChannel);
     };
-  }, [user?.userId]);
+  }, [user?.id]);
 
   // Auto-scroll to bottom of messages
   useEffect(() => {
@@ -233,13 +236,13 @@ export default function SupportScreen() {
 
   // Load live chat from Supabase
   const loadLiveChat = async () => {
-    if (!user?.userId) return;
+    if (!user?.id) return;
     try {
       // Find or create active chat
       const { data: chatData, error: chatError } = await supabase
         .from('support_livechat')
         .select('*')
-        .eq('user_id', user.userId)
+        .eq('user_id', user.id)
         .neq('status', 'closed')
         .order('created_at', { ascending: false })
         .limit(1);
@@ -279,13 +282,13 @@ export default function SupportScreen() {
 
   // Listen to live chat messages from Supabase
   useEffect(() => {
-    if (!user?.userId) return;
+    if (!user?.id) return;
     loadLiveChat();
 
     // Subscribe to livechat changes
     const livechatChannel = supabase
       .channel('user-livechat')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'support_livechat', filter: `user_id=eq.${user.userId}` }, () => {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'support_livechat', filter: `user_id=eq.${user.id}` }, () => {
         loadLiveChat();
       })
       .subscribe();
@@ -314,7 +317,7 @@ export default function SupportScreen() {
       supabase.removeChannel(livechatChannel);
       supabase.removeChannel(livechatMessagesChannel);
     };
-  }, [user?.userId, activeChatId]);
+  }, [user?.id, activeChatId]);
 
   // Auto-scroll chat
   useEffect(() => {
@@ -327,13 +330,14 @@ export default function SupportScreen() {
   });
 
   const handleCreateTicket = async () => {
-    if (!newSubject || !newMessage || !user?.userId) return;
+    if (!newSubject || !newMessage || !user?.id) return;
     try {
       // Create ticket in support_tickets table
       const { data: ticketData, error: ticketError } = await supabase
         .from('support_tickets')
         .insert({
-          user_id: user.userId,
+          user_id: user.id,
+          user_name: user.name || 'مستخدم',
           subject: newSubject,
           message: newMessage,
           category: newCategory,
@@ -350,9 +354,12 @@ export default function SupportScreen() {
         .from('support_messages')
         .insert({
           ticket_id: ticketData.id,
+          sender_id: user.id,
           sender_type: 'user',
+          sender_name: user.name || 'مستخدم',
+          sender_role: 'user',
           message: newMessage,
-          attachment_url: newImage || null,
+          attachments: newImage || null,
         });
 
       if (msgError) throw msgError;
@@ -372,7 +379,10 @@ export default function SupportScreen() {
         .from('support_messages')
         .insert({
           ticket_id: selectedTicket.id,
+          sender_id: user.id,
           sender_type: 'user',
+          sender_name: user.name || 'مستخدم',
+          sender_role: 'user',
           message: messageText,
         });
 
@@ -388,7 +398,7 @@ export default function SupportScreen() {
 
   // Send live chat message to Supabase
   const handleSendChat = async () => {
-    if (!chatInput.trim() || !user?.userId) return;
+    if (!chatInput.trim() || !user?.id) return;
     const messageText = chatInput.trim();
     try {
       let chatId = activeChatId;
@@ -398,7 +408,8 @@ export default function SupportScreen() {
         const { data: newChat, error: chatError } = await supabase
           .from('support_livechat')
           .insert({
-            user_id: user.userId,
+            user_id: user.id,
+            user_name: user.name || 'مستخدم',
             status: 'waiting',
           })
           .select()
@@ -414,7 +425,9 @@ export default function SupportScreen() {
         .from('livechat_messages')
         .insert({
           chat_id: chatId,
+          sender_id: user.id,
           sender_type: 'user',
+          sender_name: user.name || 'مستخدم',
           message_type: 'text',
           content: messageText,
         });
@@ -824,7 +837,7 @@ export default function SupportScreen() {
                   <div className="max-w-[80%]">
                     {msg.sender === 'support' && (
                       <div className="flex items-center gap-1.5 mb-1 justify-end">
-                        <span className="text-[10px] font-medium" style={{ color: '#3B82F6' }}>فريق الدعم</span>
+                        <span className="text-[10px] font-medium" style={{ color: '#3B82F6' }}>{msg.senderName || 'فريق الدعم'}</span>
                         <div className="w-5 h-5 rounded-full flex items-center justify-center" style={{ background: 'rgba(59,130,246,0.15)' }}>
                           <Headphones size={10} color="#3B82F6" />
                         </div>

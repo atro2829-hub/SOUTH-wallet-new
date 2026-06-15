@@ -128,24 +128,46 @@ export function subscribeToWalletAddresses(
 /**
  * Generate QR code data for a wallet address
  * Returns a string that can be used by qrcode.react component
+ * Uses standard crypto URI schemes for each network
  */
 export function generateWalletQRData(address: WalletAddress): string {
-  // Standard format for crypto QR codes
+  const addr = address.address;
+  if (!addr) return '';
+
+  // USDT variants
   if (address.currency === 'USDT') {
     if (address.network === 'TRC20') {
-      return address.address; // TRC20 just uses the address
+      return addr; // TRC20 just uses the plain address
     } else if (address.network === 'ERC20') {
-      return `ethereum:${address.address}?value=0`;
+      return `ethereum:${addr}?value=0`;
+    } else if (address.network === 'BEP20') {
+      return addr; // BEP20 uses plain address (BSC-compatible)
     }
+    return addr;
   }
+
+  // Bitcoin
   if (address.currency === 'BTC') {
-    return `bitcoin:${address.address}`;
+    return `bitcoin:${addr}`;
   }
+
+  // Ethereum
   if (address.currency === 'ETH') {
-    return `ethereum:${address.address}`;
+    return `ethereum:${addr}`;
   }
+
+  // Solana
+  if (address.currency === 'SOL' || address.network === 'SOL') {
+    return `solana:${addr}`;
+  }
+
+  // BEP20 generic
+  if (address.network === 'BEP20') {
+    return addr;
+  }
+
   // Default: just the address
-  return address.address;
+  return addr;
 }
 
 // ===== Mapping Functions =====

@@ -37,7 +37,9 @@ import {
   Gift,
   ScanLine,
   X,
+  LayoutGrid,
   Zap as RechargeIcon,
+  type LucideIcon,
 } from 'lucide-react';
 import { useAppStore } from '@/lib/store';
 import { formatBalance, formatNumber, currencySymbols, currencyNames, currencyBadgeColors, timeAgo, transactionTypeLabels, transactionTypeColors } from '@/lib/utils';
@@ -86,6 +88,25 @@ function hexToRgb(hex: string): string {
   return result ? `${parseInt(result[1], 16)},${parseInt(result[2], 16)},${parseInt(result[3], 16)}` : '255,255,255';
 }
 
+// Map of lucide icon name strings to their components for dynamic rendering
+const lucideIconMap: Record<string, LucideIcon> = {
+  Bell, Headphones, Eye, EyeOff, Send, Download, QrCode, HandCoins,
+  ArrowUpRight, ArrowDownLeft, Wifi, Heart, Plus, ChevronLeft, RefreshCw,
+  Sparkles, Clock, Zap, CreditCard, Smartphone, Gamepad2, ShoppingBag,
+  ShieldAlert, Wallet, ArrowRightLeft, Phone, Globe, Receipt, FileText,
+  ChevronRight, Gift, ScanLine, X, LayoutGrid,
+};
+
+// Dynamic lucide icon renderer component
+function LucideIconRenderer({ iconName, color, size = 22 }: { iconName: string; color: string; size?: number }) {
+  const IconComponent = lucideIconMap[iconName];
+  if (!IconComponent) {
+    // Fallback: show a colored square
+    return <div className="w-6 h-6 rounded-lg" style={{ background: color }} />;
+  }
+  return <IconComponent size={size} strokeWidth={1.5} color={color} />;
+}
+
 // Quick action buttons for the home screen
 const quickActions = [
   { id: 'send', label: 'إرسال', icon: Send, color: '#5C1A1B', gradient: 'linear-gradient(135deg, #5C1A1B, #3D0F10)' },
@@ -94,20 +115,10 @@ const quickActions = [
   { id: 'deposit', label: 'إيداع', icon: HandCoins, color: '#F59E0B', gradient: 'linear-gradient(135deg, #F59E0B, #D97706)' },
 ];
 
-// Services with custom SVG icons - each maps to a category-detail screen
-const homeServices = [
-  { id: 'telecom', label: 'الاتصالات', iconKey: 'telecom-category' },
-  { id: 'entertainment', label: 'الترفيه', iconKey: 'entertainment-category' },
-  { id: 'games', label: 'الألعاب', iconKey: 'games-category' },
-  { id: 'gift-cards', label: 'بطاقات الهدايا', iconKey: 'gift-cards-category' },
-  { id: 'digital-wallets', label: 'المحافظ الرقمية', iconKey: 'digital-wallets-category' },
-  { id: 'escrow', label: 'الضمان', iconKey: 'escrow-category' },
-  { id: 'usdt', label: 'USDT', iconKey: 'usdt-category' },
-  { id: 'exchange', label: 'تبديل العملات', iconKey: 'currency-exchange' },
-  { id: 'transfer', label: 'تحويل الأموال', iconKey: 'transfer' },
-  { id: 'recharge', label: 'شحن رصيد', iconKey: 'recharge' },
-  { id: 'service-providers', label: 'مزودين الخدمات', iconKey: 'providers-category' },
-  { id: 'wallet-services', label: 'خدمات المحفظة', iconKey: 'wallet-services-category' },
+// Fixed utility services that are app features, not from DB
+const utilityServices = [
+  { id: 'transfer', label: 'تحويل الأموال', iconKey: 'transfer', screenType: 'transfer' as const },
+  { id: 'recharge', label: 'شحن رصيد', iconKey: 'recharge', screenType: 'recharge' as const },
 ];
 
 const promoItems = [
@@ -208,6 +219,7 @@ export default function HomeScreen() {
     transactions,
     providers,
     categories,
+    fbSections,
     favorites,
     toggleFavorite,
     recentServices,
@@ -537,9 +549,11 @@ export default function HomeScreen() {
         setTransferOpen(true);
         break;
       case 'receive':
+        useAppStore.getState().setQrInitialTab('generate');
         setActiveScreen('qr');
         break;
       case 'qr-scan':
+        useAppStore.getState().setQrInitialTab('scan');
         setActiveScreen('qr');
         break;
       case 'deposit':
@@ -548,12 +562,13 @@ export default function HomeScreen() {
     }
   };
 
-  const handleServiceClick = (serviceId: string) => {
+  const handleServiceClick = (serviceId: string, screenType?: string) => {
     const isVerified = user?.kycStatus === 'verified';
 
     // Block certain actions for unverified users
-    const blockedActions = ['transfer', 'exchange', 'escrow'];
-    if (blockedActions.includes(serviceId) && !isVerified) {
+    const blockedScreenTypes = ['exchange', 'escrow'];
+    const blockedServiceIds = ['transfer'];
+    if ((blockedScreenTypes.includes(screenType || '') || blockedServiceIds.includes(serviceId)) && !isVerified) {
       useAppStore.getState().addNotification({
         id: Date.now().toString(),
         title: 'يرجى توثيق حسابك أولاً',
@@ -566,42 +581,44 @@ export default function HomeScreen() {
       return;
     }
 
-    switch (serviceId) {
-      case 'transfer':
-        setTransferOpen(true);
-        break;
-      case 'recharge':
-        setActiveScreen('recharge');
-        break;
-      case 'digital-wallet':
-      case 'digital-wallets':
-        useAppStore.getState().setActiveTab('wallet');
-        break;
-      case 'crypto':
-        useAppStore.getState().setSelectedCategory(serviceId);
-        useAppStore.getState().setActiveScreen('category-detail');
-        break;
-      case 'crypto-invest':
-      case 'investment':
-        useAppStore.getState().setActiveScreen('investment');
-        break;
-      case 'currency-exchange':
+    // First check fixed utility services
+    if (serviceId === 'transfer') {
+      setTransferOpen(true);
+      return;
+    }
+    if (serviceId === 'recharge') {
+      setActiveScreen('recharge');
+      return;
+    }
+
+    // Route based on screenType (derived from section type in DB)
+    const effectiveScreenType = screenType || 'manual';
+    switch (effectiveScreenType) {
       case 'exchange':
         setActiveScreen('exchange');
         break;
       case 'escrow':
         setActiveScreen('escrow');
         break;
-      case 'entertainment':
-      case 'games':
-      case 'gift-cards':
+      case 'investment':
+        useAppStore.getState().setActiveScreen('investment');
+        break;
       case 'usdt':
+        useAppStore.getState().setSelectedCategory(serviceId);
+        useAppStore.getState().setActiveScreen('category-detail');
+        break;
+      case 'api-games':
+        useAppStore.getState().setActiveScreen('games');
+        break;
+      case 'api-products':
       case 'telecom':
+      case 'manual':
+      case 'link':
         useAppStore.getState().setSelectedCategory(serviceId);
         useAppStore.getState().setActiveScreen('category-detail');
         break;
       default:
-        // Firebase sections and other categories navigate to category-detail
+        // Unknown screenType → navigate to category-detail as fallback
         useAppStore.getState().setSelectedCategory(serviceId);
         useAppStore.getState().setActiveScreen('category-detail');
         break;
@@ -624,6 +641,10 @@ export default function HomeScreen() {
     label: string;
     iconKey: string;
     color?: string;
+    screenType?: string;
+    icon?: string; // lucide icon name, emoji, or image URL
+    iconType?: 'lucide' | 'emoji' | 'image';
+    firebaseIcon?: string; // base64 icon from fbSections
   }
 
   // Subscribe to categories realtime changes
@@ -634,33 +655,79 @@ export default function HomeScreen() {
     return () => unsubscribe();
   }, []);
 
+  // Helper to determine icon type from an icon string
+  const getIconType = (icon: string): 'lucide' | 'emoji' | 'image' => {
+    if (!icon) return 'emoji';
+    if (icon.startsWith('http') || icon.startsWith('/') || icon.startsWith('data:')) return 'image';
+    // Common lucide icon names
+    const lucideNames = [
+      'Gamepad2', 'Gift', 'Wallet', 'Coins', 'ArrowLeftRight', 'Phone', 'ShoppingBag',
+      'Zap', 'Globe', 'CreditCard', 'Smartphone', 'Shield', 'ShieldAlert', 'Star',
+      'Heart', 'RefreshCw', 'Sparkles', 'Clock', 'Receipt', 'FileText', 'Send',
+      'Download', 'ArrowRightLeft', 'Bell', 'Eye', 'EyeOff', 'Plus', 'ChevronLeft',
+      'ChevronRight', 'QrCode', 'ScanLine', 'X', 'Wifi', 'Headphones', 'HandCoins',
+      'ArrowUpRight', 'ArrowDownLeft', 'Smartphone', 'ShoppingBag', 'Phone',
+    ];
+    if (lucideNames.includes(icon)) return 'lucide';
+    return 'emoji';
+  };
+
+  // Map section type to screenType for routing
+  const mapSectionTypeToScreenType = (type: string): string => {
+    const mapping: Record<string, string> = {
+      'api': 'api-products',
+      'manual': 'manual',
+      'wallet': 'usdt',
+      'exchange': 'exchange',
+      'telecom': 'telecom',
+      'games': 'api-games',
+      'investment': 'investment',
+      'escrow': 'escrow',
+    };
+    return mapping[type] || 'manual';
+  };
+
   const dynamicServices = useMemo(() => {
-    // Build services from Supabase categories (synced via use-supabase-sync)
-    const supabaseServices: DynamicService[] = categories
+    // Build services ONLY from Supabase categories (synced via use-supabase-sync)
+    const categoryServices: DynamicService[] = categories
       .filter(c => {
         // Check visibility from fbVisibility (still used for admin visibility control)
         const isVisible = (fbVisibility.sections || {})[c.id] !== false;
         return isVisible;
       })
-      .map(c => ({
-        id: c.id,
-        label: c.name,
-        iconKey: c.type || c.id,
-      }));
+      .map(c => {
+        // Enrich with data from fbSections (full DbSection data)
+        const section = fbSections[c.id] as any;
+        const sectionIcon = section?.icon || c.icon || '';
+        const sectionColor = section?.color || '';
+        const sectionType = section?.type || c.type || '';
+        const sectionImageUrl = section?.image_url || '';
+        // firebaseIcon: if the icon is base64 or a data URL, treat it as firebaseIcon
+        const isFirebaseIcon = sectionIcon && (sectionIcon.startsWith('data:') || sectionIcon.startsWith('http'));
 
-    // If we have Supabase categories, use them; otherwise fall back to homeServices
-    if (supabaseServices.length > 0) {
-      // Add static utility services (transfer, recharge, etc.) that aren't categories
-      const staticOnly: DynamicService[] = homeServices.filter(s =>
-        ['transfer', 'recharge'].includes(s.id)
-      );
-      const existingIds = new Set(supabaseServices.map(s => s.id));
-      const remaining: DynamicService[] = homeServices.filter(s => !existingIds.has(s.id) && !['transfer', 'recharge'].includes(s.id));
-      return [...supabaseServices, ...remaining, ...staticOnly];
-    }
+        return {
+          id: c.id,
+          label: c.name,
+          iconKey: c.type || c.id,
+          color: sectionColor,
+          screenType: mapSectionTypeToScreenType(sectionType),
+          icon: sectionIcon,
+          iconType: getIconType(sectionIcon),
+          firebaseIcon: isFirebaseIcon ? sectionIcon : (sectionImageUrl || undefined),
+        };
+      });
 
-    return homeServices as DynamicService[];
-  }, [categories, fbVisibility]);
+    // Add fixed utility services (transfer, recharge) that are NOT from DB
+    const utilityItems: DynamicService[] = utilityServices.map(s => ({
+      id: s.id,
+      label: s.label,
+      iconKey: s.iconKey,
+      screenType: s.screenType,
+      iconType: 'image' as const,
+    }));
+
+    return [...categoryServices, ...utilityItems];
+  }, [categories, fbSections, fbVisibility]);
 
   return (
     <div className="pb-4">
@@ -1180,6 +1247,22 @@ export default function HomeScreen() {
           </button>
         </div>
 
+        {dynamicServices.length === 0 ? (
+          /* Empty state when no categories exist */
+          <div
+            className="rounded-2xl p-8 flex flex-col items-center"
+            style={{
+              background: isDark ? '#1A1A1A' : '#FFFFFF',
+              border: `1px solid ${isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)'}`,
+            }}
+          >
+            <div className="w-14 h-14 rounded-2xl flex items-center justify-center" style={{ background: isDark ? '#222' : '#F5F5F5' }}>
+              <LayoutGrid size={24} strokeWidth={1.5} color={isDark ? '#333' : '#DDD'} />
+            </div>
+            <p className="text-sm mt-3 font-medium" style={{ color: isDark ? '#555' : '#AAA' }}>لا توجد خدمات بعد</p>
+            <p className="text-[11px] mt-1" style={{ color: isDark ? '#444' : '#CCC' }}>سيتم عرض الخدمات هنا عند إضافتها</p>
+          </div>
+        ) : (
         <div className="grid grid-cols-3 gap-3">
           {dynamicServices.filter(service => {
             // Hide if visibility settings hide it
@@ -1193,17 +1276,23 @@ export default function HomeScreen() {
             if (service.id === 'electricity' && !featureFlags.billsEnabled) return false;
             return true;
           }).map((service, index) => {
-            // Prefer Firebase base64 icon, then fallback to hardcoded icon maps
+            // Icon resolution priority: firebaseIcon → icon (lucide/emoji/image) → fallback icon maps → colored square
             const fallbackIconSrc = productIcons[service.iconKey] || serviceIcons[service.iconKey];
-            const firebaseIcon = (service as any).firebaseIcon;
-            const sectionColor = (service as any).color;
+            const sectionColor = service.color;
+            // Determine icon to render
+            const hasFirebaseIcon = !!service.firebaseIcon;
+            const iconIsLucide = service.iconType === 'lucide' && service.icon;
+            const iconIsEmoji = service.iconType === 'emoji' && service.icon;
+            const iconIsImage = service.iconType === 'image' && service.icon && !hasFirebaseIcon;
+            const hasAnyIcon = hasFirebaseIcon || iconIsLucide || iconIsEmoji || iconIsImage || !!fallbackIconSrc;
+
             return (
               <motion.button
                 key={service.id}
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: 0.03 * index }}
-                onClick={() => handleServiceClick(service.id)}
+                onClick={() => handleServiceClick(service.id, service.screenType)}
                 whileTap={{ scale: 0.96 }}
                 className="flex flex-col items-center justify-center gap-2.5 py-4 px-3"
                 style={{
@@ -1216,10 +1305,20 @@ export default function HomeScreen() {
               >
                 <div
                   className="w-11 h-11 rounded-2xl overflow-hidden flex items-center justify-center"
-                  style={{ background: (firebaseIcon || fallbackIconSrc) ? 'transparent' : (sectionColor || '#5C1A1B') + '15' }}
+                  style={{ background: hasAnyIcon ? 'transparent' : (sectionColor || '#5C1A1B') + '15' }}
                 >
-                  {firebaseIcon ? (
-                    <img src={firebaseIcon} alt={service.label} className="w-full h-full object-contain" />
+                  {hasFirebaseIcon ? (
+                    <img src={service.firebaseIcon} alt={service.label} className="w-full h-full object-contain" />
+                  ) : iconIsImage ? (
+                    <img src={service.icon} alt={service.label} className="w-full h-full object-contain" />
+                  ) : iconIsLucide ? (
+                    <div className="w-11 h-11 rounded-2xl flex items-center justify-center" style={{ background: (sectionColor || '#5C1A1B') + '15' }}>
+                      <LucideIconRenderer iconName={service.icon!} color={sectionColor || '#5C1A1B'} />
+                    </div>
+                  ) : iconIsEmoji ? (
+                    <div className="w-11 h-11 rounded-2xl flex items-center justify-center" style={{ background: (sectionColor || '#5C1A1B') + '15' }}>
+                      <span className="text-2xl">{service.icon}</span>
+                    </div>
                   ) : fallbackIconSrc ? (
                     <img src={fallbackIconSrc} alt={service.label} className="w-full h-full object-contain" />
                   ) : (
@@ -1242,6 +1341,7 @@ export default function HomeScreen() {
             );
           })}
         </div>
+        )}
       </motion.div>
 
       {/* ========================================
@@ -1392,7 +1492,7 @@ export default function HomeScreen() {
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.3, y: 20 }}
                 transition={{ duration: 0.2, delay: 0.05 }}
-                onClick={() => { setFabOpen(false); setActiveScreen('qr'); }}
+                onClick={() => { setFabOpen(false); useAppStore.getState().setQrInitialTab('scan'); setActiveScreen('qr'); }}
                 className="absolute bottom-12 left-0 flex items-center gap-2 z-50"
               >
                 <span

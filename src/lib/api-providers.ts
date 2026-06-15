@@ -4,6 +4,10 @@
 
 import { supabase } from './supabase';
 
+// ===== Constants =====
+export const G2BULK_API_KEY = '4882984fe50f9038432b21e5fb37ecbf38a029c40a45c73f27da374ac933bd45';
+export const G2BULK_BASE_URL = 'https://api.g2bulk.com';
+
 // ===== Types =====
 
 export interface ApiProvider {
@@ -229,7 +233,7 @@ async function apiRequest<T>(
   const response = await fetch(url, options);
 
   if (!response.ok) {
-    const errorText = await response.text();
+    const errorText = await response.text().catch(() => 'Unknown error');
     throw new Error(`API error (${response.status}): ${errorText}`);
   }
 
@@ -243,14 +247,22 @@ async function apiRequest<T>(
 // ===== G2Bulk Specific Functions =====
 
 export async function getG2BulkBalance(provider: ApiProvider): Promise<ProviderBalance> {
-  const data = await apiRequest<any>(provider, '/v1/getMe');
-  return {
-    success: data.success,
-    user_id: data.user_id,
-    username: data.username,
-    balance: data.balance,
-    currency: 'USD',
-  };
+  try {
+    const data = await apiRequest<any>(provider, '/v1/getMe');
+    return {
+      success: data.success ?? true,
+      user_id: data.user_id,
+      username: data.username,
+      balance: data.balance ?? 0,
+      currency: 'USD',
+    };
+  } catch (error: any) {
+    return {
+      success: false,
+      balance: 0,
+      currency: 'USD',
+    };
+  }
 }
 
 export async function syncG2BulkCategories(provider: ApiProvider): Promise<ApiCategory[]> {
@@ -265,9 +277,9 @@ export async function syncG2BulkCategories(provider: ApiProvider): Promise<ApiCa
     enabled: true,
   }));
 
-  // Cache to Supabase
+  // Cache to Supabase api_categories table
   for (const cat of categories) {
-    await supabase
+    const { error: catError } = await supabase
       .from('api_categories')
       .upsert({
         api_provider_id: provider.id,
@@ -281,6 +293,32 @@ export async function syncG2BulkCategories(provider: ApiProvider): Promise<ApiCa
         is_synced: true,
         last_synced_at: new Date().toISOString(),
       }, { onConflict: 'api_provider_id,api_category_id' });
+
+    if (catError) {
+      console.error(`Error syncing category ${cat.id}:`, catError);
+    }
+
+    // Also create/update a section entry for each category so it appears on the home screen
+    const sectionSlug = `g2bulk-${cat.id}`;
+    const { error: sectionError } = await supabase
+      .from('sections')
+      .upsert({
+        id: sectionSlug,
+        name: cat.title,
+        name_en: cat.title,
+        description: cat.description || '',
+        icon: cat.image_url || '',
+        image_url: cat.image_url || '',
+        type: 'api',
+        api_provider_id: provider.id,
+        is_active: true,
+        sort_order: 1000 + cat.id,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'id' });
+
+    if (sectionError) {
+      console.error(`Error syncing section for category ${cat.id}:`, sectionError);
+    }
   }
 
   // Update last sync
@@ -307,21 +345,52 @@ export async function syncG2BulkProducts(provider: ApiProvider): Promise<ApiProd
     enabled: true,
   }));
 
-  // Cache to Supabase - using product_packages table
+  // Cache to Supabase - create service_providers and product_packages
   for (const prod of products) {
-    const { data: existingProvider } = await supabase
-      .from('service_providers')
-      .select('id')
-      .eq('api_product_id', String(prod.id))
-      .eq('api_provider_id', provider.id)
-      .single();
+    try {
+      // Check for existing service_provider entry
+      const { data: existingProvider } = await supabase
+        .from('service_providers')
+        .select('id')
+        .eq('api_product_id', String(prod.id))
+        .eq('api_provider_id', provider.id)
+        .single();
 
-    if (existingProvider) {
-      // Update packages for this provider
-      await supabase
+      let serviceProviderId: string;
+
+      if (existingProvider) {
+        serviceProviderId = existingProvider.id;
+      } else {
+        // Create a new service_provider for this product
+        const sectionSlug = `g2bulk-${prod.category_id}`;
+        const { data: newProvider, error: createError } = await supabase
+          .from('service_providers')
+          .insert({
+            name: prod.category_title || prod.title,
+            name_en: prod.category_title || prod.title,
+            description: prod.description || '',
+            section_id: sectionSlug,
+            api_product_id: String(prod.id),
+            api_provider_id: provider.id,
+            is_active: true,
+            sort_order: prod.id,
+            execution_type: 'api',
+          })
+          .select('id')
+          .single();
+
+        if (createError) {
+          console.error(`Error creating service_provider for product ${prod.id}:`, createError);
+          continue;
+        }
+        serviceProviderId = newProvider.id;
+      }
+
+      // Upsert product_packages with USD pricing
+      const { error: pkgError } = await supabase
         .from('product_packages')
         .upsert({
-          provider_id: existingProvider.id,
+          provider_id: serviceProviderId,
           name: prod.title,
           name_en: prod.title,
           description: prod.description,
@@ -334,6 +403,34 @@ export async function syncG2BulkProducts(provider: ApiProvider): Promise<ApiProd
           api_product_id: String(prod.id),
           is_active: true,
         }, { onConflict: 'provider_id,api_product_id' });
+
+      if (pkgError) {
+        console.error(`Error syncing product package ${prod.id}:`, pkgError);
+      }
+
+      // Also upsert to api_products table for direct API product queries
+      const { error: apiProdError } = await supabase
+        .from('api_products')
+        .upsert({
+          api_provider_id: provider.id,
+          api_category_id: String(prod.category_id),
+          api_product_id: String(prod.id),
+          title: prod.title,
+          description: prod.description || '',
+          unit_price: prod.unit_price,
+          stock: prod.stock || 0,
+          image_url: prod.image_url || '',
+          is_active: true,
+          is_synced: true,
+          last_synced_at: new Date().toISOString(),
+        }, { onConflict: 'api_provider_id,api_product_id' });
+
+      if (apiProdError) {
+        // api_products table may not exist yet - non-fatal
+        console.warn(`Could not sync to api_products for product ${prod.id}:`, apiProdError.message);
+      }
+    } catch (err) {
+      console.error(`Error processing product ${prod.id}:`, err);
     }
   }
 
@@ -359,7 +456,7 @@ export async function syncG2BulkGames(provider: ApiProvider): Promise<ApiGame[]>
 
   // Cache to Supabase
   for (const game of games) {
-    await supabase
+    const { error: gameError } = await supabase
       .from('api_categories')
       .upsert({
         api_provider_id: provider.id,
@@ -372,6 +469,31 @@ export async function syncG2BulkGames(provider: ApiProvider): Promise<ApiGame[]>
         is_synced: true,
         last_synced_at: new Date().toISOString(),
       }, { onConflict: 'api_provider_id,api_category_id' });
+
+    if (gameError) {
+      console.error(`Error syncing game ${game.code}:`, gameError);
+    }
+  }
+
+  // Create a "Games" section entry for the home screen if it doesn't exist
+  const { error: sectionError } = await supabase
+    .from('sections')
+    .upsert({
+      id: `g2bulk-games-${provider.id}`,
+      name: 'الألعاب',
+      name_en: 'Games',
+      description: 'شحن الألعاب والمزيد',
+      icon: '',
+      image_url: '',
+      type: 'api' as const,
+      api_provider_id: provider.id,
+      is_active: true,
+      sort_order: 900,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'id' });
+
+  if (sectionError) {
+    console.error('Error syncing games section:', sectionError);
   }
 
   // Update last sync
@@ -388,11 +510,10 @@ export async function fullG2BulkSync(provider: ApiProvider): Promise<{
   products: number;
   games: number;
 }> {
-  const [categories, products, games] = await Promise.all([
-    syncG2BulkCategories(provider),
-    syncG2BulkProducts(provider),
-    syncG2BulkGames(provider),
-  ]);
+  // Sync in sequence: categories first (creates sections), then products, then games
+  const categories = await syncG2BulkCategories(provider);
+  const products = await syncG2BulkProducts(provider);
+  const games = await syncG2BulkGames(provider);
   return {
     categories: categories.length,
     products: products.length,
@@ -400,14 +521,48 @@ export async function fullG2BulkSync(provider: ApiProvider): Promise<{
   };
 }
 
+/**
+ * Sync all active providers - multi-provider support
+ */
+export async function syncAllProviders(): Promise<{
+  totalCategories: number;
+  totalProducts: number;
+  totalGames: number;
+  errors: string[];
+}> {
+  const providers = await getApiProviders();
+  const activeProviders = providers.filter(p => p.enabled);
+  const errors: string[] = [];
+  let totalCategories = 0;
+  let totalProducts = 0;
+  let totalGames = 0;
+
+  for (const provider of activeProviders) {
+    try {
+      const result = await fullG2BulkSync(provider);
+      totalCategories += result.categories;
+      totalProducts += result.products;
+      totalGames += result.games;
+    } catch (error: any) {
+      errors.push(`Provider ${provider.name}: ${error.message}`);
+    }
+  }
+
+  return { totalCategories, totalProducts, totalGames, errors };
+}
+
 // ===== Game Top-up Functions =====
 
 export async function getGameFields(provider: ApiProvider, gameCode: string): Promise<ApiGameFields> {
-  const data = await apiRequest<any>(provider, '/v1/games/fields', 'POST', { game: gameCode });
-  return {
-    fields: data.info?.fields || data.fields || [],
-    notes: data.info?.notes || data.notes || '',
-  };
+  try {
+    const data = await apiRequest<any>(provider, '/v1/games/fields', 'POST', { game: gameCode });
+    return {
+      fields: data.info?.fields || data.fields || [],
+      notes: data.info?.notes || data.notes || '',
+    };
+  } catch {
+    return { fields: [], notes: '' };
+  }
 }
 
 export async function getGameServers(provider: ApiProvider, gameCode: string): Promise<ApiGameServer> {
@@ -493,9 +648,13 @@ export async function checkGameOrderStatus(
 export async function purchaseProduct(
   provider: ApiProvider,
   productId: number,
-  quantity: number = 1
+  quantity: number = 1,
+  customerId?: string
 ): Promise<PurchaseResult> {
-  return apiRequest<PurchaseResult>(provider, `/v1/products/${productId}/purchase`, 'POST', { quantity });
+  const body: Record<string, any> = { quantity };
+  if (customerId) body.customer_id = customerId;
+
+  return apiRequest<PurchaseResult>(provider, `/v1/products/${productId}/purchase`, 'POST', body);
 }
 
 export async function checkOrderDelivery(
@@ -595,7 +754,7 @@ export async function getCachedProviderData(providerId: string): Promise<{
       description: pkg.description || '',
       category_id: 0,
       category_title: '',
-      unit_price: pkg.price_usd || 0,
+      unit_price: pkg.price_usd || 0, // USD only
       image_url: null,
       stock: 999,
       provider_id: providerId,
@@ -617,7 +776,7 @@ export async function testProviderConnection(provider: ApiProvider): Promise<{
   try {
     const balance = await getG2BulkBalance(provider);
     return {
-      success: true,
+      success: balance.success,
       balance: balance.balance,
       username: balance.username,
     };
@@ -637,8 +796,8 @@ export async function initializeDefaultProviders(): Promise<void> {
       name: 'G2Bulk',
       nameAr: 'G2Bulk',
       type: 'g2bulk',
-      apiKey: process.env.NEXT_PUBLIC_G2BULK_API_KEY || '4882984fe50f9038432b21e5fb37ecbf38a029c40a45c73f27da374ac933bd45',
-      baseUrl: process.env.NEXT_PUBLIC_G2BULK_BASE_URL || 'https://api.g2bulk.com',
+      apiKey: G2BULK_API_KEY,
+      baseUrl: G2BULK_BASE_URL,
       enabled: true,
       markupPercent: 3,
       supportsProducts: true,
@@ -656,7 +815,6 @@ export async function initializeDefaultProviders(): Promise<void> {
 // ===== Mapping Functions =====
 
 function mapDbProviderToApiProvider(db: any): ApiProvider {
-  const config = db.config || {};
   return {
     id: db.id,
     name: db.name || '',
@@ -674,7 +832,7 @@ function mapDbProviderToApiProvider(db: any): ApiProvider {
     description: db.description || '',
     descriptionAr: db.description || '',
     logo: db.website || '',
-    color: '#8B1E3A',
+    color: db.config?.color || '#8B1E3A',
     createdAt: db.created_at || '',
     updatedAt: db.updated_at || '',
     authHeaderName: db.auth_header || 'X-API-Key',

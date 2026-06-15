@@ -136,6 +136,12 @@ export async function sendEscrowChatMessage(
     return null;
   }
 
+  // Update the escrow_chat's updated_at timestamp
+  await supabase
+    .from('escrow_chats')
+    .update({ updated_at: new Date().toISOString() })
+    .eq('id', chatId);
+
   return mapDbMessage(data);
 }
 

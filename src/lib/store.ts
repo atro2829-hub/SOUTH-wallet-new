@@ -387,6 +387,10 @@ interface AppState {
   previousScreen: string;
   setPreviousScreen: (screen: string) => void;
 
+  // QR screen initial tab (set before navigating to QR screen)
+  qrInitialTab: 'scan' | 'generate' | null;
+  setQrInitialTab: (tab: 'scan' | 'generate' | null) => void;
+
   // Balance visibility
   balanceVisible: boolean;
   toggleBalance: () => void;
@@ -658,6 +662,10 @@ export const useAppStore = create<AppState>()(
       setActiveScreen: (activeScreen) => set((state) => ({ previousScreen: state.activeScreen, activeScreen })),
       previousScreen: '',
       setPreviousScreen: (previousScreen) => set({ previousScreen }),
+
+      // QR screen initial tab
+      qrInitialTab: null,
+      setQrInitialTab: (qrInitialTab) => set({ qrInitialTab }),
 
       // Balance
       balanceVisible: true,

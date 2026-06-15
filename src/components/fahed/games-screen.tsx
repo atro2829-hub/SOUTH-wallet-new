@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowRight, Search, Gamepad2, Loader2, CheckCircle, AlertTriangle, ChevronDown, ChevronUp, Globe, ShoppingCart, Star, Users } from 'lucide-react';
-import { useStore } from '@/lib/store';
+import { useAppStore } from '@/lib/store';
 import { supabase, supabaseService } from '@/lib/supabase';
 import { getApiProvider, getCachedProviderData, type ApiGame, type ApiGameCatalogue, type ApiGameFields, type ApiGameServer } from '@/lib/api-providers';
 import { subscribeToCategories, type DynamicCategory } from '@/lib/categories';
@@ -14,7 +14,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 
 export function GamesScreen() {
-  const { user, navigateBack, categories } = useStore();
+  const { user, categories, setActiveScreen } = useAppStore();
   const [games, setGames] = useState<ApiGame[]>([]);
   const [selectedGame, setSelectedGame] = useState<ApiGame | null>(null);
   const [catalogue, setCatalogue] = useState<ApiGameCatalogue[]>([]);
@@ -94,7 +94,7 @@ export function GamesScreen() {
       setGameFields(null);
       setGameServers({});
     } else {
-      navigateBack();
+      setActiveScreen('main');
     }
   };
 

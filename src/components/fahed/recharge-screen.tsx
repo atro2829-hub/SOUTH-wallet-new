@@ -76,12 +76,12 @@ export default function RechargeScreen() {
   );
   const selectedPackage = providerPackages.find(pkg => pkg.id === selectedPackageId);
 
-  // Always YER for recharge
-  const CURRENCY = 'YER';
+  // All prices displayed in USD only
+  const CURRENCY = 'USD';
 
   const getBalance = (): number => {
     if (!user) return 0;
-    return user.balanceYER || 0;
+    return user.balanceUSD || 0;
   };
 
   const effectivePrice = rechargeMode === 'packages' && selectedPackage
@@ -172,11 +172,11 @@ export default function RechargeScreen() {
       packageId = selectedPackage.id;
     } else {
       amount = parseInt(customAmount) || 0;
-      if (amount < 50) {
-        setErrorMessage('الحد الأدنى للشحن 50 ر.ي');
+      if (amount < 0.5) {
+        setErrorMessage('الحد الأدنى للشحن $0.50');
         return;
       }
-      packageName = `شحن فوري ${amount.toLocaleString()} ر.ي`;
+      packageName = `شحن فوري $${amount.toFixed(2)}`;
       packageId = `instant-${selectedCompany.id}`;
     }
 
@@ -191,7 +191,7 @@ export default function RechargeScreen() {
 
     try {
       const newBalance = currentBalance - amount;
-      const updatedUser = { ...user, balanceYER: newBalance };
+      const updatedUser = { ...user, balanceUSD: newBalance };
 
       const orderId = generateReference();
       const newOrder: Order = {
@@ -220,7 +220,7 @@ export default function RechargeScreen() {
 
       try {
         const userRef = ref(database, `users/${user.id}`);
-        await update(userRef, { balanceYER: newBalance });
+        await update(userRef, { balanceUSD: newBalance });
       } catch {
         // Continue locally
       }
@@ -231,7 +231,7 @@ export default function RechargeScreen() {
         fromUserId: user.id,
         toUserId: 'system',
         amount: amount,
-        currency: 'YER' as const,
+        currency: 'USD' as const,
         type: 'order' as const,
         status: 'completed' as const,
         description: `${packageName} - ${selectedCompany.name}`,
@@ -579,7 +579,7 @@ export default function RechargeScreen() {
                       <Edit3 size={18} strokeWidth={1.5} color={selectedCompany.color} />
                       <input
                         type="number"
-                        placeholder="أدخل المبلغ بالريال اليمني"
+                        placeholder="أدخل المبلغ بالدولار"
                         value={customAmount}
                         onChange={(e) => {
                           const val = e.target.value;

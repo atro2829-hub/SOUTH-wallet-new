@@ -1091,15 +1091,35 @@ export default function DepositScreen() {
                                 الحد الأدنى: ${addr.minDeposit} USD
                               </p>
                             )}
-                            {/* QR Code for wallet address */}
+                            {/* QR Code for wallet address - tap to copy */}
                             <div className="flex justify-center my-3">
-                              <QRCodeSVG
-                                value={generateWalletQRData(addr)}
-                                size={180}
-                                bgColor={isDark ? '#1e1b4b' : '#ffffff'}
-                                fgColor={isDark ? '#ffffff' : '#000000'}
-                                level="M"
-                              />
+                              <button
+                                onClick={() => handleCopyText(addr.address, 'crypto', addr.id)}
+                                className="relative group active:scale-95 transition-transform"
+                                title="اضغط لنسخ العنوان"
+                              >
+                                <QRCodeSVG
+                                  value={generateWalletQRData(addr)}
+                                  size={200}
+                                  bgColor={isDark ? '#1e1b4b' : '#ffffff'}
+                                  fgColor={isDark ? '#ffffff' : '#000000'}
+                                  level="M"
+                                />
+                                {/* Copy overlay on tap */}
+                                <div className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover:bg-black/10 rounded-lg transition-all">
+                                  {copiedCryptoId === addr.id ? (
+                                    <div className="bg-green-500 text-white px-3 py-1.5 rounded-xl text-xs font-bold shadow-lg">
+                                      <Check size={14} strokeWidth={2} className="inline mr-1" />
+                                      تم النسخ
+                                    </div>
+                                  ) : (
+                                    <div className="opacity-0 group-hover:opacity-100 bg-black/60 text-white px-3 py-1.5 rounded-xl text-xs font-bold shadow-lg transition-opacity">
+                                      <Copy size={14} strokeWidth={1.5} className="inline mr-1" />
+                                      اضغط للنسخ
+                                    </div>
+                                  )}
+                                </div>
+                              </button>
                             </div>
                             {addr.instructionsAr && (
                               <p className="text-[9px] mt-1" style={{ color: isDark ? '#444' : '#BBB' }}>{addr.instructionsAr}</p>
@@ -1247,15 +1267,35 @@ export default function DepositScreen() {
                                     )}
                                   </button>
                                 </div>
-                                {/* QR Code using QRCodeSVG with generateWalletQRData */}
+                                {/* QR Code using QRCodeSVG with generateWalletQRData - tap to copy */}
                                 <div className="flex justify-center my-3">
-                                  <QRCodeSVG
-                                    value={walletAddr ? generateWalletQRData(walletAddr) : displayNetData.walletAddress}
-                                    size={180}
-                                    bgColor={isDark ? '#1e1b4b' : '#ffffff'}
-                                    fgColor={isDark ? '#ffffff' : '#000000'}
-                                    level="M"
-                                  />
+                                  <button
+                                    onClick={() => handleCopyText(displayNetData.walletAddress, 'network', `${selectedCrypto.id}-${displayNetData.networkName}`)}
+                                    className="relative group active:scale-95 transition-transform"
+                                    title="اضغط لنسخ العنوان"
+                                  >
+                                    <QRCodeSVG
+                                      value={walletAddr ? generateWalletQRData(walletAddr) : displayNetData.walletAddress}
+                                      size={200}
+                                      bgColor={isDark ? '#1e1b4b' : '#ffffff'}
+                                      fgColor={isDark ? '#ffffff' : '#000000'}
+                                      level="M"
+                                    />
+                                    {/* Copy overlay on tap */}
+                                    <div className="absolute inset-0 flex items-center justify-center bg-black/0 group-hover:bg-black/10 rounded-lg transition-all">
+                                      {copiedNetworkKey === `${selectedCrypto.id}-${displayNetData.networkName}` ? (
+                                        <div className="bg-green-500 text-white px-3 py-1.5 rounded-xl text-xs font-bold shadow-lg">
+                                          <Check size={14} strokeWidth={2} className="inline mr-1" />
+                                          تم النسخ
+                                        </div>
+                                      ) : (
+                                        <div className="opacity-0 group-hover:opacity-100 bg-black/60 text-white px-3 py-1.5 rounded-xl text-xs font-bold shadow-lg transition-opacity">
+                                          <Copy size={14} strokeWidth={1.5} className="inline mr-1" />
+                                          اضغط للنسخ
+                                        </div>
+                                      )}
+                                    </div>
+                                  </button>
                                 </div>
                               </div>
                             );
