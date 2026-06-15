@@ -54,6 +54,16 @@ const statusConfig: Record<EscrowStatus, { label: string; color: string; bgColor
 
 type ScreenTab = 'active' | 'create' | 'history';
 
+// Escrow chat message
+interface EscrowChatMessage {
+  id: string;
+  senderId: string;
+  senderName: string;
+  senderRole: 'buyer' | 'seller' | 'admin';
+  text: string;
+  time: string;
+}
+
 export default function EscrowScreen() {
   const { theme } = useTheme();
   const isDark = theme === 'dark';
@@ -80,6 +90,12 @@ export default function EscrowScreen() {
   const [disputeReason, setDisputeReason] = useState('');
   const [copiedRef, setCopiedRef] = useState(false);
 
+  // Escrow chat state - 3-party chat (buyer, seller, admin)
+  const [chatMessages, setChatMessages] = useState<EscrowChatMessage[]>([]);
+  const [chatInput, setChatInput] = useState('');
+  const [showChat, setShowChat] = useState(false);
+  const chatEndRef = useState<HTMLDivElement | null>(null)[0];
+
   // Fetch user escrows from Firebase
   useEffect(() => {
     if (!user?.id) return;
@@ -101,6 +117,63 @@ export default function EscrowScreen() {
 
   const activeEscrows = escrows.filter(e => e.status !== 'completed' && e.status !== 'cancelled');
   const historyEscrows = escrows.filter(e => e.status === 'completed' || e.status === 'cancelled');
+
+  // Listen to escrow chat messages (3-party: buyer, seller, admin)
+  useEffect(() => {
+    if (!selectedEscrow?.id) {
+      setChatMessages([]);
+      return;
+    }
+    const chatRef = ref(database, `escrowChat/${selectedEscrow.id}/messages`);
+    const unsubscribe = onValue(chatRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.val();
+        const msgs = Object.entries(data).map(([id, val]: [string, any]) => ({
+          id,
+          senderId: val.senderId || '',
+          senderName: val.senderName || '',
+          senderRole: val.senderRole || 'buyer',
+          text: val.text || '',
+          time: val.time || '',
+        })) as EscrowChatMessage[];
+        msgs.sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
+        setChatMessages(msgs);
+      } else {
+        setChatMessages([]);
+      }
+    });
+    return () => off(chatRef);
+  }, [selectedEscrow?.id]);
+
+  // Send chat message in escrow
+  const handleSendEscrowChat = async () => {
+    if (!chatInput.trim() || !selectedEscrow?.id || !user?.id) return;
+    const msgText = chatInput.trim();
+    const senderRole = selectedEscrow.buyerId === user.id ? 'buyer' : 'seller';
+    try {
+      await push(ref(database, `escrowChat/${selectedEscrow.id}/messages`), {
+        senderId: user.id,
+        senderName: user.name || 'مستخدم',
+        senderRole,
+        text: msgText,
+        time: new Date().toISOString(),
+      });
+      // Also store in global escrow for admin to see
+      const escrowChatMeta = ref(database, `escrowChat/${selectedEscrow.id}`);
+      await update(escrowChatMeta, {
+        escrowId: selectedEscrow.id,
+        buyerId: selectedEscrow.buyerId,
+        buyerName: selectedEscrow.buyerName,
+        sellerId: selectedEscrow.sellerId,
+        sellerName: selectedEscrow.sellerName,
+        lastMessage: msgText,
+        lastMessageTime: new Date().toISOString(),
+      });
+      setChatInput('');
+    } catch (error) {
+      console.error('Error sending escrow chat message:', error);
+    }
+  };
 
   // Create escrow
   const handleCreateEscrow = async () => {
@@ -740,6 +813,103 @@ export default function EscrowScreen() {
             )}
           </div>
         </div>
+
+        {/* 3-Party Escrow Chat (Buyer, Seller, Admin) */}
+        {selectedEscrow && (
+          <div className="mt-4">
+            <button
+              onClick={() => setShowChat(!showChat)}
+              className="w-full py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2"
+              style={{
+                background: showChat ? (isDark ? 'rgba(92,26,27,0.2)' : 'rgba(92,26,27,0.08)') : (isDark ? 'rgba(92,26,27,0.1)' : 'rgba(92,26,27,0.05)'),
+                color: '#5C1A1B',
+                border: `1px solid ${isDark ? 'rgba(92,26,27,0.3)' : 'rgba(92,26,27,0.15)'}`,
+              }}
+            >
+              <MessageSquare size={16} />
+              {showChat ? 'إخفاء المحادثة' : 'محادثة الأطراف'}
+              {chatMessages.length > 0 && (
+                <span className="bg-[#5C1A1B] text-white text-[10px] px-1.5 py-0.5 rounded-full">{chatMessages.length}</span>
+              )}
+            </button>
+
+            {showChat && (
+              <div className="mt-3 rounded-xl overflow-hidden" style={{ border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'}` }}>
+                {/* Chat participants info */}
+                <div className="px-3 py-2 flex items-center gap-4 text-[11px]" style={{ background: isDark ? '#1A1A1A' : '#F8F8F8', borderBottom: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'}` }}>
+                  <span className="flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-blue-500" />
+                    المشتري: {selectedEscrow.buyerName || 'غير معروف'}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-green-500" />
+                    البائع: {selectedEscrow.sellerName || 'غير معروف'}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="w-2 h-2 rounded-full bg-orange-500" />
+                    الأدمن
+                  </span>
+                </div>
+
+                {/* Chat messages */}
+                <div className="max-h-[250px] overflow-y-auto p-3 space-y-2" style={{ background: isDark ? '#111' : '#FFF' }}>
+                  {chatMessages.length === 0 ? (
+                    <p className="text-center text-xs py-4" style={{ color: isDark ? '#666' : '#999' }}>لا توجد رسائل بعد</p>
+                  ) : (
+                    chatMessages.map((msg) => {
+                      const isMe = msg.senderId === user?.id;
+                      const roleColors: Record<string, { bg: string; text: string; label: string }> = {
+                        buyer: { bg: isDark ? 'rgba(59,130,246,0.15)' : 'rgba(59,130,246,0.08)', text: '#3B82F6', label: 'مشتري' },
+                        seller: { bg: isDark ? 'rgba(16,185,129,0.15)' : 'rgba(16,185,129,0.08)', text: '#10B981', label: 'بائع' },
+                        admin: { bg: isDark ? 'rgba(245,158,11,0.15)' : 'rgba(245,158,11,0.08)', text: '#F59E0B', label: 'أدمن' },
+                      };
+                      const rc = roleColors[msg.senderRole] || roleColors.buyer;
+                      return (
+                        <div key={msg.id} className={`flex gap-2 ${isMe ? 'flex-row-reverse' : ''}`}>
+                          <div className="w-7 h-7 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0" style={{ background: rc.bg, color: rc.text }}>
+                            {msg.senderRole === 'admin' ? 'إ' : msg.senderName?.charAt(0) || '?'}
+                          </div>
+                          <div className={`max-w-[75%] ${isMe ? 'text-left' : ''}`}>
+                            <div className="flex items-center gap-1.5 mb-0.5">
+                              <span className="text-[10px] font-medium" style={{ color: rc.text }}>{msg.senderName}</span>
+                              <span className="text-[8px] px-1 py-0.5 rounded-full" style={{ background: rc.bg, color: rc.text }}>{rc.label}</span>
+                            </div>
+                            <div className="p-2.5 rounded-xl text-xs leading-relaxed" style={{ background: isMe ? (isDark ? 'rgba(92,26,27,0.2)' : 'rgba(92,26,27,0.08)') : (isDark ? '#1E1E1E' : '#F5F5F5'), color: isDark ? '#E0E0E0' : '#333' }}>
+                              {msg.text}
+                            </div>
+                            <p className="text-[9px] mt-0.5" style={{ color: isDark ? '#555' : '#BBB' }}>
+                              {new Date(msg.time).toLocaleTimeString('ar', { hour: '2-digit', minute: '2-digit' })}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+
+                {/* Chat input */}
+                <div className="p-2 flex gap-2" style={{ background: isDark ? '#1A1A1A' : '#F8F8F8', borderTop: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'}` }}>
+                  <input
+                    value={chatInput}
+                    onChange={(e) => setChatInput(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSendEscrowChat()}
+                    placeholder="اكتب رسالة..."
+                    className="flex-1 py-2 px-3 rounded-xl text-xs outline-none"
+                    style={{ background: isDark ? '#222' : '#FFF', color: isDark ? '#FFF' : '#333', border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'}` }}
+                  />
+                  <button
+                    onClick={handleSendEscrowChat}
+                    disabled={!chatInput.trim()}
+                    className="w-9 h-9 rounded-xl flex items-center justify-center"
+                    style={{ background: chatInput.trim() ? '#5C1A1B' : (isDark ? '#333' : '#DDD'), color: chatInput.trim() ? '#FFF' : (isDark ? '#666' : '#AAA') }}
+                  >
+                    <Send size={14} />
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Dispute Modal */}
         <AnimatePresence>

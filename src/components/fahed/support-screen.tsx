@@ -99,11 +99,22 @@ export default function SupportScreen() {
   // Listen to tickets from Firebase
   useEffect(() => {
     if (!user?.id) return;
-    const ticketsRef = ref(database, 'support-tickets');
+    const ticketsRef = ref(database, 'supportTickets');
     const unsubscribe = onValue(ticketsRef, (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.val();
-        const allTickets = Object.values(data) as FirebaseTicket[];
+        const allTickets = Object.entries(data).map(([key, val]: [string, any]) => ({
+          id: key,
+          userId: val.userId || '',
+          userName: val.userName || '',
+          subject: val.subject || '',
+          message: val.message || '',
+          category: val.category || 'general',
+          status: val.status || 'open',
+          messages: val.messages || [],
+          createdAt: val.createdAt || new Date().toISOString(),
+          image: val.image || undefined,
+        })) as FirebaseTicket[];
         const userTickets = allTickets
           .filter(t => t.userId === user.id)
           .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
@@ -123,16 +134,17 @@ export default function SupportScreen() {
   // Listen to live chat messages from Firebase
   useEffect(() => {
     if (!user?.id) return;
-    const chatRef = ref(database, `supportChat/${user.id}/messages`);
+    const chatRef = ref(database, `liveChats/${user.id}`);
     const unsubscribe = onValue(chatRef, (snapshot) => {
       if (snapshot.exists()) {
         const data = snapshot.val();
-        const msgs = Object.entries(data).map(([id, val]: [string, any]) => ({
+        const msgsData = data.messages || {};
+        const msgs = Object.entries(msgsData).map(([id, val]: [string, any]) => ({
           id,
           sender: val.sender as 'user' | 'admin',
           text: val.text || '',
           time: val.time || '',
-          adminName: val.adminName || '',
+          adminName: val.senderName || '',
         }));
         msgs.sort((a, b) => new Date(a.time).getTime() - new Date(b.time).getTime());
         setChatMessages(msgs);
@@ -163,7 +175,7 @@ export default function SupportScreen() {
       createdAt: new Date().toISOString(), image: newImage || undefined,
     };
     try {
-      await set(ref(database, `support-tickets/${id}`), ticket);
+      await set(ref(database, `supportTickets/${id}`), ticket);
     } catch {}
     addTicket({ id, userId: user.id, userName: user.name, subject: newSubject, message: newMessage, category: newCategory, status: 'open', messages: [{ sender: 'user', text: newMessage, time: new Date().toISOString() }], createdAt: new Date().toISOString() });
     setNewSubject(''); setNewMessage(''); setNewImage(''); setView('main'); setActiveTab('tickets');
@@ -175,37 +187,36 @@ export default function SupportScreen() {
     const updatedMessages = [...(selectedTicket.messages || []), newMsg];
     const updatedTicket = { ...selectedTicket, messages: updatedMessages };
     try {
-      await update(ref(database, `support-tickets/${selectedTicket.id}`), { messages: updatedMessages });
+      await update(ref(database, `supportTickets/${selectedTicket.id}`), { messages: updatedMessages });
     } catch {}
     setSelectedTicket(updatedTicket);
     setMessageInput('');
   };
 
-  // Send live chat message to Firebase
+  // Send live chat message to Firebase (using liveChats path to match admin panel)
   const handleSendChat = async () => {
     if (!chatInput.trim() || !user?.id) return;
     const messageText = chatInput.trim();
     try {
-      await push(ref(database, `supportChat/${user.id}/messages`), {
+      const newMsg = {
         sender: 'user',
         text: messageText,
         time: new Date().toISOString(),
-        isRead: false,
-      });
+        senderName: user.name || 'مستخدم',
+      };
 
-      // Get current unreadAdmin count and increment it
-      const convRef = ref(database, `supportChat/${user.id}`);
-      const convSnap = await get(convRef);
-      const currentUnread = convSnap.exists() ? (convSnap.val().unreadAdmin || 0) : 0;
+      // Push message to liveChats/{userId}/messages (same path admin reads from)
+      await push(ref(database, `liveChats/${user.id}/messages`), newMsg);
 
       // Update conversation metadata for admin panel
-      await update(convRef, {
+      await update(ref(database, `liveChats/${user.id}`), {
+        userId: user.id,
         userName: user.name || 'مستخدم',
         userPhone: user.phone || '',
-        lastMessage: messageText,
-        lastMessageTime: new Date().toISOString(),
-        unreadAdmin: currentUnread + 1,
-        status: 'open',
+        userEmail: user.email || '',
+        status: 'active',
+        updatedAt: new Date().toISOString(),
+        createdAt: (await get(ref(database, `liveChats/${user.id}/createdAt`))).exists() ? undefined : new Date().toISOString(),
       });
 
       // Send push notification to admin about new chat message
@@ -223,19 +234,6 @@ export default function SupportScreen() {
         });
       } catch (notifErr) {
         console.warn('Failed to notify admin about chat:', notifErr);
-      }
-
-      // Send FCM push to admin for new chat message
-      try {
-        const { sendNotificationToAdmin } = await import('@/lib/notifications');
-        await sendNotificationToAdmin({
-          title: 'رسالة دعم فني جديدة',
-          body: `${user?.name || 'مستخدم'}: ${messageText.substring(0, 50)}`,
-          type: 'info',
-          category: 'support',
-        });
-      } catch (notifErr) {
-        console.warn('Support chat notification failed:', notifErr);
       }
 
       setChatInput('');

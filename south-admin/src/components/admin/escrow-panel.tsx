@@ -60,6 +60,11 @@ export default function EscrowPanel() {
   const [resolveNote, setResolveNote] = useState('');
   const [resolving, setResolving] = useState(false);
 
+  // Escrow chat state (3-party: buyer, seller, admin)
+  const [escrowChatMessages, setEscrowChatMessages] = useState<{ id: string; senderId: string; senderName: string; senderRole: string; text: string; time: string }[]>([]);
+  const [adminChatInput, setAdminChatInput] = useState('');
+  const [showEscrowChat, setShowEscrowChat] = useState(false);
+
   useEffect(() => {
     const escRef = ref(database, 'escrow');
     const unsub = onValue(escRef, (snapshot) => {
@@ -87,6 +92,54 @@ export default function EscrowPanel() {
     });
     return () => unsub();
   }, []);
+
+  // Listen to escrow chat messages for admin
+  useEffect(() => {
+    if (!selectedEscrow?.id) {
+      setEscrowChatMessages([]);
+      return;
+    }
+    const chatRef = ref(database, `escrowChat/${selectedEscrow.id}/messages`);
+    const unsub = onValue(chatRef, (snapshot) => {
+      if (snapshot.exists()) {
+        const data = snapshot.val();
+        const msgs = Object.entries(data).map(([id, val]: [string, any]) => ({
+          id,
+          senderId: val.senderId || '',
+          senderName: val.senderName || '',
+          senderRole: val.senderRole || 'buyer',
+          text: val.text || '',
+          time: val.time || '',
+        }));
+        msgs.sort((a: any, b: any) => new Date(a.time).getTime() - new Date(b.time).getTime());
+        setEscrowChatMessages(msgs);
+      } else {
+        setEscrowChatMessages([]);
+      }
+    });
+    return () => unsub();
+  }, [selectedEscrow?.id]);
+
+  // Admin send message in escrow chat
+  const handleAdminSendEscrowChat = async () => {
+    if (!adminChatInput.trim() || !selectedEscrow?.id) return;
+    try {
+      await push(ref(database, `escrowChat/${selectedEscrow.id}/messages`), {
+        senderId: adminUser?.uid || 'admin',
+        senderName: adminUser?.displayName || 'الإدارة',
+        senderRole: 'admin',
+        text: adminChatInput.trim(),
+        time: new Date().toISOString(),
+      });
+      await update(ref(database, `escrowChat/${selectedEscrow.id}`), {
+        lastMessage: adminChatInput.trim(),
+        lastMessageTime: new Date().toISOString(),
+      });
+      setAdminChatInput('');
+    } catch {
+      showToast('حدث خطأ في إرسال الرسالة', 'error');
+    }
+  };
 
   const filtered = useMemo(() => {
     return escrows.filter(e => {
@@ -282,6 +335,18 @@ export default function EscrowPanel() {
                                 className="h-7 text-[10px] px-2"
                                 onClick={() => {
                                   setSelectedEscrow(escrow);
+                                  setShowEscrowChat(true);
+                                }}
+                              >
+                                <MessageSquare className="w-3 h-3 ml-1" />
+                                محادثة
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-[10px] px-2"
+                                onClick={() => {
+                                  setSelectedEscrow(escrow);
                                   setResolveAction('release');
                                   setResolveDialog(true);
                                 }}
@@ -323,6 +388,78 @@ export default function EscrowPanel() {
           )}
         </AnimatePresence>
       </div>
+
+      {/* Escrow 3-Party Chat Panel */}
+      <Dialog open={showEscrowChat} onOpenChange={setShowEscrowChat}>
+        <DialogContent className="max-w-2xl max-h-[90vh]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <MessageSquare className="w-5 h-5 text-[#5C1A1B]" />
+              محادثة الوسيط - الأطراف الثلاثة
+            </DialogTitle>
+          </DialogHeader>
+          {selectedEscrow && (
+            <div className="space-y-3">
+              {/* Participants */}
+              <div className="flex items-center gap-4 text-xs">
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500" />المشتري: {selectedEscrow.buyerName}</span>
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500" />البائع: {selectedEscrow.sellerName}</span>
+                <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-orange-500" />الأدمن</span>
+              </div>
+
+              {/* Messages */}
+              <ScrollArea className="max-h-[350px] p-3 border border-border/30 rounded-xl">
+                <div className="space-y-3">
+                  {escrowChatMessages.length === 0 ? (
+                    <p className="text-center text-muted-foreground text-sm py-8">لا توجد رسائل بعد</p>
+                  ) : (
+                    escrowChatMessages.map((msg) => {
+                      const roleColors: Record<string, { bg: string; text: string; label: string }> = {
+                        buyer: { bg: 'bg-blue-500/10', text: 'text-blue-600 dark:text-blue-400', label: 'مشتري' },
+                        seller: { bg: 'bg-green-500/10', text: 'text-green-600 dark:text-green-400', label: 'بائع' },
+                        admin: { bg: 'bg-orange-500/10', text: 'text-orange-600 dark:text-orange-400', label: 'أدمن' },
+                      };
+                      const rc = roleColors[msg.senderRole] || roleColors.buyer;
+                      const isAdmin = msg.senderRole === 'admin';
+                      return (
+                        <div key={msg.id} className={cn('flex gap-2', isAdmin && 'flex-row-reverse')}>
+                          <div className={cn('w-8 h-8 rounded-full flex items-center justify-center shrink-0 text-xs font-bold', rc.bg, rc.text)}>
+                            {msg.senderRole === 'admin' ? 'إ' : msg.senderName?.charAt(0) || '?'}
+                          </div>
+                          <div className={cn('max-w-[75%]', isAdmin && 'text-left')}>
+                            <div className="flex items-center gap-1.5 mb-0.5">
+                              <span className={cn('text-xs font-medium', rc.text)}>{msg.senderName}</span>
+                              <Badge className={cn('text-[8px]', rc.bg, rc.text)}>{rc.label}</Badge>
+                            </div>
+                            <div className={cn('p-2.5 rounded-xl text-sm', isAdmin ? 'bg-[#5C1A1B]/10 rounded-tl-none' : 'bg-muted/30 rounded-tr-none')}>
+                              {msg.text}
+                            </div>
+                            <p className="text-[10px] text-muted-foreground mt-1">{timeAgo(msg.time)}</p>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </ScrollArea>
+
+              {/* Admin chat input */}
+              <div className="flex gap-2">
+                <Input
+                  value={adminChatInput}
+                  onChange={(e) => setAdminChatInput(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleAdminSendEscrowChat()}
+                  placeholder="اكتب ردك كإدارة..."
+                  className="flex-1"
+                />
+                <Button onClick={handleAdminSendEscrowChat} disabled={!adminChatInput.trim()} className="bg-[#5C1A1B] hover:bg-[#3D0F10]">
+                  <Send className="w-4 h-4" />
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Resolve Dialog */}
       <Dialog open={resolveDialog} onOpenChange={setResolveDialog}>
