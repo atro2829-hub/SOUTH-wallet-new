@@ -2,254 +2,106 @@
 
 import { useAdminStore, AdminRole } from '@/lib/store';
 import { cn } from '@/lib/utils';
-import { database } from '@/lib/firebase';
-import { ref, onValue } from 'firebase/database';
 import {
   LayoutDashboard,
-  Server,
-  Globe,
-  Code,
-  RefreshCw,
-  Wallet,
-  CircleDollarSign,
-  Grid3X3,
-  Layers,
-  Eye,
-  Image,
-  Palette,
   Users,
-  Shield,
-  UserCog,
-  Banknote,
+  ShoppingCart,
   ArrowDownCircle,
   ArrowUpCircle,
-  ShoppingCart,
-  Landmark,
+  Shield,
+  Server,
+  DollarSign,
   Gift,
-  Headphones,
-  Ticket,
+  Tag,
+  Image,
+  Building2,
   MessageCircle,
   Link2,
   FileText,
-  Bell,
-  Send,
+  Layers,
+  Eye,
   Settings,
-  SlidersHorizontal,
-  BarChart3,
+  Bell,
   Activity,
-  Wrench,
   Database,
-  Building2,
-  Info,
+  Code,
   LogOut,
   X,
   Moon,
   Sun,
-  ChevronDown,
-  ArrowLeftRight,
-  ShieldCheck,
-  TrendingUp,
   Percent,
-  Layers3,
-  Star,
-  Megaphone,
-  MapPin,
-  FileBarChart,
-  Download,
-  CreditCard,
-  ClipboardList,
-  Tag,
+  TrendingUp,
+  Send,
+  Palette,
   Zap,
+  Package,
+  Bot,
+  Smartphone,
+  Sparkles,
+  Globe,
+  Monitor,
+  Ticket,
 } from 'lucide-react';
 import { signOut } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
 import { motion, AnimatePresence } from 'framer-motion';
+import { Badge } from '@/components/ui/badge';
 import { useTheme } from 'next-themes';
 import { APP_ICON_BASE64 } from '@/lib/app-icon';
-import { useMemo, useState, useEffect } from 'react';
 
 interface NavItem {
   id: string;
   label: string;
   icon: React.ElementType;
   roles: AdminRole[];
-  badge?: string;
+  badge?: number;
 }
 
-interface NavSection {
-  id: string;
-  label: string;
-  icon: React.ElementType;
-  items: NavItem[];
-}
-
-const navSections: NavSection[] = [
-  {
-    id: 'dashboard',
-    label: 'لوحة التحكم',
-    icon: LayoutDashboard,
-    items: [
-      { id: 'dashboard', label: 'الرئيسية', icon: LayoutDashboard, roles: ['admin', 'owner'] },
-    ],
-  },
-  {
-    id: 'financial',
-    label: 'العمليات المالية',
-    icon: Banknote,
-    items: [
-      { id: 'deposits', label: 'الإيداعات', icon: ArrowDownCircle, roles: ['admin', 'owner'], badge: 'deposit' },
-      { id: 'withdrawals', label: 'السحوبات', icon: ArrowUpCircle, roles: ['admin', 'owner'], badge: 'withdraw' },
-      { id: 'orders', label: 'الطلبات', icon: ShoppingCart, roles: ['admin', 'owner'], badge: 'orders' },
-      { id: 'transfers', label: 'التحويلات', icon: ArrowLeftRight, roles: ['admin', 'owner'] },
-      { id: 'commissions', label: 'العمولات', icon: Percent, roles: ['admin', 'owner'] },
-      { id: 'investments', label: 'الاستثمارات', icon: TrendingUp, roles: ['admin', 'owner'] },
-      { id: 'escrow', label: 'الضمان/الوسيط', icon: ShieldCheck, roles: ['admin', 'owner'] },
-    ],
-  },
-  {
-    id: 'api-management',
-    label: 'إدارة API',
-    icon: Server,
-    items: [
-      { id: 'api-settings', label: 'إعدادات API', icon: Code, roles: ['owner'] },
-      { id: 'api-sync', label: 'المزامنة', icon: RefreshCw, roles: ['admin', 'owner'] },
-      { id: 'balance-log', label: 'سجل الأرصدة', icon: ClipboardList, roles: ['admin', 'owner'] },
-      { id: 'price-customization', label: 'تخصيص الأسعار', icon: Tag, roles: ['admin', 'owner'] },
-      { id: 'commission-config', label: 'تخصيص العمولة', icon: Percent, roles: ['admin', 'owner'] },
-    ],
-  },
-  {
-    id: 'services-content',
-    label: 'الخدمات والمحتوى',
-    icon: Grid3X3,
-    items: [
-      { id: 'sections', label: 'الأقسام', icon: Layers, roles: ['owner'] },
-      { id: 'sub-sections', label: 'الأقسام الفرعية', icon: Layers3, roles: ['admin', 'owner'] },
-      { id: 'providers', label: 'المزودون', icon: Globe, roles: ['admin', 'owner'] },
-      { id: 'packages', label: 'الباقات', icon: CreditCard, roles: ['admin', 'owner'] },
-      { id: 'instant-recharge', label: 'الشحن الفوري', icon: Zap, roles: ['admin', 'owner'] },
-      { id: 'visibility', label: 'الرؤية والإخفاء', icon: Eye, roles: ['owner'] },
-      { id: 'banners', label: 'البانرات', icon: Image, roles: ['admin', 'owner'] },
-      { id: 'bulk-codes', label: 'أكواد الجملة', icon: Layers3, roles: ['admin', 'owner'] },
-    ],
-  },
-  {
-    id: 'digital-wallet',
-    label: 'محفظة رقمية',
-    icon: Wallet,
-    items: [
-      { id: 'wallet-services', label: 'خدمات المحفظة', icon: Wallet, roles: ['admin', 'owner'] },
-      { id: 'wallet-addresses', label: 'عناوين المحافظ', icon: CircleDollarSign, roles: ['admin', 'owner'] },
-      { id: 'exchange-rates', label: 'أسعار الصرف', icon: CircleDollarSign, roles: ['admin', 'owner'] },
-      { id: 'banks', label: 'البنوك', icon: Landmark, roles: ['admin', 'owner'] },
-      { id: 'currency-cards', label: 'بطاقات العملات', icon: CreditCard, roles: ['admin', 'owner'] },
-      { id: 'card-colors', label: 'ألوان البطاقات', icon: Palette, roles: ['owner'] },
-    ],
-  },
-  {
-    id: 'users',
-    label: 'المستخدمين',
-    icon: Users,
-    items: [
-      { id: 'users', label: 'المستخدمين', icon: Users, roles: ['admin', 'owner'] },
-      { id: 'kyc', label: 'التحقق KYC', icon: Shield, roles: ['admin', 'owner'], badge: 'kyc' },
-      { id: 'gift-codes', label: 'أكواد الهدايا', icon: Gift, roles: ['admin', 'owner'] },
-      { id: 'user-gift-codes', label: 'قسائم المستخدمين', icon: Gift, roles: ['admin', 'owner'] },
-      { id: 'offices', label: 'المكاتب والوكلاء', icon: Building2, roles: ['admin', 'owner'] },
-    ],
-  },
-  {
-    id: 'support',
-    label: 'الدعم',
-    icon: Headphones,
-    items: [
-      { id: 'support-tickets', label: 'تذاكر الدعم', icon: Ticket, roles: ['admin', 'owner'] },
-      { id: 'support-livechat', label: 'الدردشة المباشرة', icon: MessageCircle, roles: ['admin', 'owner'] },
-      { id: 'direct-chat', label: 'محادثات العملاء', icon: MessageCircle, roles: ['admin', 'owner'] },
-      { id: 'social-links', label: 'الروابط الاجتماعية', icon: Link2, roles: ['admin', 'owner'] },
-      { id: 'user-reviews', label: 'تقييمات المستخدمين', icon: Star, roles: ['admin', 'owner'] },
-    ],
-  },
-  {
-    id: 'content-legal',
-    label: 'المحتوى والقانون',
-    icon: FileText,
-    items: [
-      { id: 'legal-content', label: 'المحتوى القانوني', icon: FileText, roles: ['admin', 'owner'] },
-      { id: 'promo-codes', label: 'العروض والأكواد', icon: Tag, roles: ['admin', 'owner'] },
-      { id: 'notifications', label: 'الإشعارات', icon: Bell, roles: ['admin', 'owner'] },
-      { id: 'push-notifications', label: 'دفع الإشعارات', icon: Send, roles: ['admin', 'owner'] },
-      { id: 'marketing-content', label: 'المحتوى التسويقي', icon: Megaphone, roles: ['admin', 'owner'] },
-    ],
-  },
-  {
-    id: 'settings',
-    label: 'الإعدادات',
-    icon: Settings,
-    items: [
-      { id: 'settings', label: 'عام', icon: Settings, roles: ['admin', 'owner'] },
-      { id: 'branding', label: 'العلامة التجارية', icon: Palette, roles: ['owner'] },
-      { id: 'employees', label: 'الموظفين', icon: UserCog, roles: ['owner'] },
-      { id: 'limits', label: 'حدود المعاملات', icon: SlidersHorizontal, roles: ['admin', 'owner'] },
-      { id: 'branch-management', label: 'إدارة الفروع', icon: MapPin, roles: ['admin', 'owner'] },
-      { id: 'service-analytics', label: 'التحليلات', icon: BarChart3, roles: ['admin', 'owner'] },
-      { id: 'activity-log', label: 'سجل النشاط', icon: Activity, roles: ['owner'] },
-      { id: 'custom-reports', label: 'تقارير مخصصة', icon: FileBarChart, roles: ['admin', 'owner'] },
-      { id: 'data-export', label: 'التصدير', icon: Download, roles: ['admin', 'owner'] },
-      { id: 'maintenance', label: 'الصيانة', icon: Wrench, roles: ['owner'] },
-      { id: 'backup', label: 'النسخ الاحتياطي', icon: Database, roles: ['owner'] },
-      { id: 'about', label: 'حول النظام', icon: Info, roles: ['admin', 'owner'] },
-    ],
-  },
+const navItems: NavItem[] = [
+  // Admin + Owner sections
+  { id: 'dashboard', label: 'لوحة المعلومات', icon: LayoutDashboard, roles: ['admin', 'owner'] },
+  { id: 'users', label: 'إدارة المستخدمين', icon: Users, roles: ['admin', 'owner'] },
+  { id: 'orders', label: 'إدارة الطلبات', icon: ShoppingCart, roles: ['admin', 'owner'] },
+  { id: 'escrow', label: 'إدارة الوسيط', icon: Shield, roles: ['admin', 'owner'] },
+  { id: 'deposit', label: 'طلبات الإيداع', icon: ArrowDownCircle, roles: ['admin', 'owner'] },
+  { id: 'withdraw', label: 'طلبات السحب', icon: ArrowUpCircle, roles: ['admin', 'owner'] },
+  { id: 'kyc', label: 'التحقق من الهوية', icon: Shield, roles: ['admin', 'owner'] },
+  { id: 'instant-recharge', label: 'خدمات الشحن الفوري', icon: Zap, roles: ['admin', 'owner'] },
+  { id: 'packages', label: 'إدارة الباقات', icon: Package, roles: ['admin', 'owner'] },
+  { id: 'exchange-rates', label: 'أسعار الصرف', icon: DollarSign, roles: ['admin', 'owner'] },
+  { id: 'commissions', label: 'ضبط العمولات', icon: Percent, roles: ['admin', 'owner'] },
+  { id: 'gift-codes', label: 'أكواد الهدايا', icon: Gift, roles: ['admin', 'owner'] },
+  { id: 'promo-codes', label: 'أكواد الخصم', icon: Tag, roles: ['admin', 'owner'] },
+  { id: 'banners', label: 'البانرات الإعلانية', icon: Image, roles: ['admin', 'owner'] },
+  { id: 'banks', label: 'الحسابات البنكية', icon: Building2, roles: ['admin', 'owner'] },
+  { id: 'support-chat', label: 'شات الدعم', icon: MessageCircle, roles: ['admin', 'owner'] },
+  { id: 'support-tickets', label: 'تذاكر الدعم', icon: Ticket, roles: ['admin', 'owner'] },
+  { id: 'chat-monitor', label: 'مراقبة المحادثات', icon: Monitor, roles: ['admin', 'owner'] },
+  { id: 'social-links', label: 'روابط التواصل', icon: Link2, roles: ['admin', 'owner'] },
+  { id: 'legal-content', label: 'المحتوى القانوني', icon: FileText, roles: ['admin', 'owner'] },
+  { id: 'notifications', label: 'الإشعارات', icon: Bell, roles: ['admin', 'owner'] },
+  { id: 'push-notifications', label: 'إرسال إشعارات', icon: Send, roles: ['admin', 'owner'] },
+  { id: 'settings', label: 'الإعدادات', icon: Settings, roles: ['admin', 'owner'] },
+  // Owner-only sections
+  { id: 'card-colors', label: 'ألوان البطائق', icon: Palette, roles: ['owner'] },
+  { id: 'g2bulk', label: 'G2Bulk', icon: Globe, roles: ['owner'] },
+  { id: 'sections', label: 'إدارة الأقسام', icon: Layers, roles: ['owner'] },
+  { id: 'visibility', label: 'إعدادات الظهور', icon: Eye, roles: ['owner'] },
+  { id: 'activity-log', label: 'سجل النشاط', icon: Activity, roles: ['owner'] },
+  { id: 'backup', label: 'النسخ الاحتياطي', icon: Database, roles: ['owner'] },
 ];
 
 export default function Sidebar() {
-  const {
-    activePanel, setActivePanel, sidebarOpen, setSidebarOpen,
-    adminUser, logout,
-    depositRequests, withdrawRequests, kycPendingUsers, orders,
-  } = useAdminStore();
+  const { activePanel, setActivePanel, sidebarOpen, setSidebarOpen, adminUser, logout } = useAdminStore();
   const { theme, setTheme } = useTheme();
-  const [appName, setAppName] = useState('لوحة الإدارة');
 
-  // Listen for app name from Firebase
-  useEffect(() => {
-    const configRef = ref(database, 'ownerSettings/projectConfig/appName');
-    const unsub = onValue(configRef, (snapshot) => {
-      if (snapshot.val()) setAppName(snapshot.val());
-    });
-    return () => unsub();
-  }, []);
+  // Filter based on user role - owner-only items completely hidden for admin
+  const filteredItems = navItems.filter(
+    (item) => adminUser && item.roles.includes(adminUser.role)
+  );
 
-  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
-    dashboard: true,
-    financial: true,
-    'api-management': false,
-    'services-content': false,
-    'digital-wallet': false,
-    users: false,
-    support: false,
-    'content-legal': false,
-    settings: false,
-  });
-
-  const badges = useMemo(() => {
-    const pendingDeposits = depositRequests.filter(d => d.status === 'pending').length;
-    const pendingWithdrawals = withdrawRequests.filter(w => w.status === 'pending').length;
-    const pendingKYC = kycPendingUsers.filter(u => u.kycStatus === 'submitted').length;
-    const pendingOrders = orders.filter(o => o.status === 'pending').length;
-
-    return {
-      deposit: pendingDeposits,
-      withdraw: pendingWithdrawals,
-      kyc: pendingKYC,
-      orders: pendingOrders,
-    };
-  }, [depositRequests, withdrawRequests, kycPendingUsers, orders]);
-
-  const toggleSection = (sectionId: string) => {
-    setExpandedSections(prev => ({ ...prev, [sectionId]: !prev[sectionId] }));
-  };
+  const adminItems = filteredItems.filter((item) => item.roles.includes('admin'));
+  const ownerOnlyItems = filteredItems.filter((item) => !item.roles.includes('admin'));
 
   const handleLogout = async () => {
     try {
@@ -263,32 +115,33 @@ export default function Sidebar() {
   const toggleTheme = () => {
     const newTheme = theme === 'dark' ? 'light' : 'dark';
     setTheme(newTheme);
+    // Also update zustand store for consistency
     useAdminStore.getState().setTheme(newTheme as 'light' | 'dark');
   };
 
-  // Filter sections based on role
-  const filteredSections = useMemo(() => {
-    if (!adminUser) return [];
-    return navSections.map(section => ({
-      ...section,
-      items: section.items.filter(item => item.roles.includes(adminUser.role)),
-    })).filter(section => section.items.length > 0);
-  }, [adminUser]);
-
-  // Compute section badge counts
-  const sectionBadges = useMemo(() => {
-    const counts: Record<string, number> = {};
-    filteredSections.forEach(section => {
-      let count = 0;
-      section.items.forEach(item => {
-        if (item.badge && badges[item.badge as keyof typeof badges]) {
-          count += badges[item.badge as keyof typeof badges];
-        }
-      });
-      counts[section.id] = count;
-    });
-    return counts;
-  }, [filteredSections, badges]);
+  const NavButton = ({ item }: { item: NavItem }) => {
+    const isActive = activePanel === item.id;
+    const Icon = item.icon;
+    return (
+      <button
+        onClick={() => setActivePanel(item.id)}
+        className={cn(
+          'w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-200',
+          isActive
+            ? 'bg-purple-600/20 text-purple-400 dark:text-purple-300 border border-purple-500/30'
+            : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+        )}
+      >
+        <Icon className={cn('w-5 h-5 shrink-0', isActive && 'text-purple-500')} />
+        <span className="flex-1 text-right">{item.label}</span>
+        {item.badge && item.badge > 0 && (
+          <Badge className="bg-red-500 text-white text-xs h-5 min-w-5 flex items-center justify-center">
+            {item.badge}
+          </Badge>
+        )}
+      </button>
+    );
+  };
 
   return (
     <>
@@ -299,7 +152,7 @@ export default function Sidebar() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/30 backdrop-blur-sm z-40 lg:hidden"
+            className="fixed inset-0 bg-black/50 z-40 lg:hidden"
             onClick={() => setSidebarOpen(false)}
           />
         )}
@@ -308,22 +161,16 @@ export default function Sidebar() {
       {/* Sidebar */}
       <aside
         className={cn(
-          'fixed top-0 right-0 h-full w-[280px] z-50 flex flex-col transition-transform duration-300 ease-in-out',
-          'glass-sidebar',
+          'fixed top-0 right-0 h-full w-72 z-50 flex flex-col transition-transform duration-300 ease-in-out',
+          'bg-background border-l border-border shadow-xl',
           sidebarOpen ? 'translate-x-0' : 'translate-x-full lg:translate-x-0'
         )}
-        style={{
-          background: 'linear-gradient(180deg, rgba(92, 26, 27, 0.08) 0%, rgba(61, 15, 16, 0.04) 50%, rgba(26, 10, 14, 0.06) 100%)',
-          backdropFilter: 'blur(20px) saturate(180%)',
-          WebkitBackdropFilter: 'blur(20px) saturate(180%)',
-          borderLeft: '1px solid rgba(92, 26, 27, 0.12)',
-        }}
       >
         {/* Header */}
-        <div className="p-5 pb-4">
-          <div className="flex items-center justify-between mb-4">
+        <div className="p-4 border-b border-border admin-gradient">
+          <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-11 h-11 rounded-2xl bg-gradient-to-br from-[#5C1A1B] to-[#3D0F10] flex items-center justify-center overflow-hidden shadow-lg shadow-[#5C1A1B]/20">
+              <div className="w-10 h-10 rounded-xl bg-purple-600/30 border border-purple-500/40 flex items-center justify-center overflow-hidden">
                 <img
                   src={APP_ICON_BASE64}
                   alt="الإدارة"
@@ -331,185 +178,69 @@ export default function Sidebar() {
                   onError={(e) => {
                     const target = e.target as HTMLImageElement;
                     target.style.display = 'none';
+                    if (target.parentElement) {
+                      target.parentElement.innerHTML = '<svg class="w-5 h-5 text-purple-300" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>';
+                    }
                   }}
                 />
               </div>
               <div>
-                <h2 className="text-base font-bold text-foreground">{appName}</h2>
-                <p className="text-xs text-muted-foreground">{adminUser?.displayName}</p>
+                <h2 className="text-sm font-bold text-white">الإدارة</h2>
+                <p className="text-xs text-purple-300/70">{adminUser?.displayName}</p>
               </div>
             </div>
             <button
               onClick={() => setSidebarOpen(false)}
-              className="lg:hidden p-2 rounded-xl hover:bg-muted/50 transition-colors"
+              className="lg:hidden text-white/70 hover:text-white p-1"
             >
-              <X className="w-5 h-5 text-muted-foreground" />
+              <X className="w-5 h-5" />
             </button>
           </div>
-
-          {/* Role badge */}
           {adminUser && (
-            <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-[#5C1A1B]/10 border border-[#5C1A1B]/15">
-              <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-              <span className="text-xs font-medium text-[#8B2252] dark:text-[#D4547A]">
+            <div className="mt-2 flex items-center gap-2">
+              <Badge className="bg-purple-600/50 text-purple-100 border-purple-500/50 text-xs">
                 {adminUser.role === 'owner' ? 'المالك' : 'مدير'}
-              </span>
-              <span className="text-xs text-muted-foreground mr-auto">متصل</span>
+              </Badge>
             </div>
           )}
         </div>
 
-        {/* Nav sections */}
-        <div className="flex-1 overflow-y-auto scrollbar-thin px-3 pb-4 space-y-1">
-          {filteredSections.map((section) => {
-            const isExpanded = expandedSections[section.id];
-            const isDashboard = section.id === 'dashboard';
-            const SectionIcon = section.icon;
-            const sectionBadgeCount = sectionBadges[section.id] || 0;
-            const hasActiveItem = section.items.some(item => item.id === activePanel);
+        {/* Nav items */}
+        <div className="flex-1 overflow-y-auto scrollbar-thin p-3 space-y-1">
+          {adminItems.map((item) => (
+            <NavButton key={item.id} item={item} />
+          ))}
 
-            if (isDashboard) {
-              // Dashboard is always shown as a single item
-              return (
-                <div key={section.id}>
-                  {section.items.map(item => {
-                    const Icon = item.icon;
-                    const isActive = activePanel === item.id;
-                    return (
-                      <button
-                        key={item.id}
-                        onClick={() => setActivePanel(item.id)}
-                        className={cn(
-                          'w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl text-sm font-medium transition-all duration-200 active:scale-[0.98]',
-                          isActive
-                            ? 'bg-gradient-to-l from-[#5C1A1B] to-[#3D0F10] text-white shadow-lg shadow-[#5C1A1B]/25'
-                            : 'text-foreground hover:bg-[#5C1A1B]/5'
-                        )}
-                      >
-                        <Icon className={cn('w-5 h-5 shrink-0')} />
-                        <span className="flex-1 text-right">{item.label}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              );
-            }
-
-            return (
-              <div key={section.id} className="rounded-xl overflow-hidden">
-                {/* Section Header */}
-                <button
-                  onClick={() => toggleSection(section.id)}
-                  className={cn(
-                    'w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wide transition-all duration-200',
-                    hasActiveItem
-                      ? 'bg-[#5C1A1B]/8 text-[#5C1A1B] dark:text-[#D4547A]'
-                      : 'text-muted-foreground hover:text-foreground hover:bg-muted/30'
-                  )}
-                >
-                  <SectionIcon className={cn(
-                    'w-4 h-4 shrink-0',
-                    hasActiveItem && 'text-[#5C1A1B] dark:text-[#D4547A]'
-                  )} />
-                  <span className="flex-1 text-right">{section.label}</span>
-                  {sectionBadgeCount > 0 && (
-                    <motion.span
-                      initial={{ scale: 0 }}
-                      animate={{ scale: 1 }}
-                      className="min-w-[20px] h-[20px] flex items-center justify-center rounded-full bg-gradient-to-l from-[#5C1A1B] to-[#3D0F10] text-white text-[10px] font-bold px-1.5 shadow-sm"
-                    >
-                      {sectionBadgeCount}
-                    </motion.span>
-                  )}
-                  <motion.div
-                    animate={{ rotate: isExpanded ? 180 : 0 }}
-                    transition={{ duration: 0.2 }}
-                  >
-                    <ChevronDown className="w-3.5 h-3.5" />
-                  </motion.div>
-                </button>
-
-                {/* Section Items */}
-                <AnimatePresence initial={false}>
-                  {isExpanded && (
-                    <motion.div
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: 'auto', opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
-                      className="overflow-hidden"
-                    >
-                      <div className="space-y-0.5 pr-3 py-1">
-                        {section.items.map((item, index) => {
-                          const Icon = item.icon;
-                          const isActive = activePanel === item.id;
-                          const badgeCount = item.badge ? badges[item.badge as keyof typeof badges] || 0 : 0;
-                          return (
-                            <motion.button
-                              key={item.id}
-                              initial={{ opacity: 0, x: 10 }}
-                              animate={{ opacity: 1, x: 0 }}
-                              transition={{ delay: index * 0.03, duration: 0.2 }}
-                              onClick={() => setActivePanel(item.id)}
-                              className={cn(
-                                'w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-[13px] font-medium transition-all duration-200 active:scale-[0.98]',
-                                isActive
-                                  ? 'bg-[#5C1A1B]/10 text-[#5C1A1B] dark:text-[#D4547A] border border-[#5C1A1B]/15 shadow-sm'
-                                  : 'text-muted-foreground hover:bg-[#5C1A1B]/5 hover:text-foreground'
-                              )}
-                            >
-                              <Icon className={cn(
-                                'w-4 h-4 shrink-0',
-                                isActive && 'text-[#5C1A1B] dark:text-[#D4547A]'
-                              )} />
-                              <span className="flex-1 text-right">{item.label}</span>
-                              {badgeCount > 0 && (
-                                <motion.span
-                                  initial={{ scale: 0 }}
-                                  animate={{ scale: 1 }}
-                                  className="min-w-[18px] h-[18px] flex items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-bold px-1"
-                                >
-                                  {badgeCount}
-                                </motion.span>
-                              )}
-                            </motion.button>
-                          );
-                        })}
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
+          {ownerOnlyItems.length > 0 && (
+            <>
+              <div className="flex items-center gap-2 px-4 py-2 mt-4 mb-1">
+                <div className="h-px flex-1 bg-border" />
+                <span className="text-xs text-muted-foreground font-medium">صلاحيات المالك فقط</span>
+                <div className="h-px flex-1 bg-border" />
               </div>
-            );
-          })}
+              {ownerOnlyItems.map((item) => (
+                <NavButton key={item.id} item={item} />
+              ))}
+            </>
+          )}
         </div>
 
         {/* Footer */}
-        <div className="p-3 border-t border-[#5C1A1B]/10">
-          {/* Theme toggle */}
+        <div className="p-3 border-t border-border space-y-2">
           <button
             onClick={toggleTheme}
-            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-muted-foreground hover:bg-[#5C1A1B]/5 transition-all active:scale-[0.98]"
+            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-all"
           >
             {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
             <span>{theme === 'dark' ? 'الوضع الفاتح' : 'الوضع الداكن'}</span>
           </button>
-
-          {/* Logout */}
           <button
             onClick={handleLogout}
-            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-red-500 hover:bg-red-500/10 transition-all active:scale-[0.98]"
+            className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-red-500 hover:bg-red-500/10 transition-all"
           >
             <LogOut className="w-5 h-5" />
             <span>تسجيل الخروج</span>
           </button>
-
-          {/* QTBM DEV Credit */}
-          <div className="mt-3 pt-3 border-t border-border/30 text-center">
-            <p className="text-[10px] text-muted-foreground/60 leading-relaxed">
-              تم التطوير بواسطة: مؤسسة QTBM DEV
-            </p>
-          </div>
         </div>
       </aside>
     </>

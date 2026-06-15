@@ -1,167 +1,82 @@
 'use client';
 
-import { useEffect, useState, Suspense, lazy } from 'react';
+import { useEffect, useState } from 'react';
 import { onAuthStateChanged } from 'firebase/auth';
 import { ref, get, onValue } from 'firebase/database';
 import { auth, database } from '@/lib/firebase';
 import { useAdminStore } from '@/lib/store';
-import { useSupabaseSync } from '@/lib/use-supabase-sync';
 import LoginScreen from '@/components/admin/login-screen';
 import Sidebar from '@/components/admin/sidebar';
-import { Menu } from 'lucide-react';
+import Dashboard from '@/components/admin/dashboard';
+import UsersPanel from '@/components/admin/users-panel';
+import OrdersPanel from '@/components/admin/orders-panel';
+import DepositPanel from '@/components/admin/deposit-panel';
+import WithdrawPanel from '@/components/admin/withdraw-panel';
+import KYCPanel from '@/components/admin/kyc-panel';
+import InstantRechargePanel from '@/components/admin/instant-recharge-panel';
+import PackagesPanel from '@/components/admin/packages-panel';
+import ExchangeRatesPanel from '@/components/admin/exchange-rates-panel';
+import GiftCodesPanel from '@/components/admin/gift-codes-panel';
+import PromoCodesPanel from '@/components/admin/promo-codes-panel';
+import BannersPanel from '@/components/admin/banners-panel';
+import BanksPanel from '@/components/admin/banks-panel';
+import SupportChatPanel from '@/components/admin/support-chat-panel';
+import SocialLinksPanel from '@/components/admin/social-links-panel';
+import LegalContentPanel from '@/components/admin/legal-content-panel';
+import SectionsPanel from '@/components/admin/sections-panel';
+import VisibilityPanel from '@/components/admin/visibility-panel';
+import NotificationsPanel from '@/components/admin/notifications-panel';
+import SettingsPanel from '@/components/admin/settings-panel';
+import ActivityLogPanel from '@/components/admin/activity-log-panel';
+import BackupPanel from '@/components/admin/backup-panel';
+import CommissionsPanel from '@/components/admin/commissions-panel';
+import PushNotificationsPanel from '@/components/admin/push-notifications-panel';
+import CardColorsPanel from '@/components/admin/card-colors-panel';
+import EscrowPanel from '@/components/admin/escrow-panel';
+import SupportTicketsPanel from '@/components/admin/support-tickets-panel';
+import ChatMonitorPanel from '@/components/admin/chat-monitor-panel';
+import G2BulkPanel from '@/components/admin/g2bulk-panel';
+import { Menu, ShieldCheck } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { APP_ICON_BASE64 } from '@/lib/app-icon';
 
-// Lazy loaded panel components
-const Dashboard = lazy(() => import('@/components/admin/dashboard'));
-const UsersPanel = lazy(() => import('@/components/admin/users-panel'));
-const OrdersPanel = lazy(() => import('@/components/admin/orders-panel'));
-const DepositPanel = lazy(() => import('@/components/admin/deposit-panel'));
-const WithdrawPanel = lazy(() => import('@/components/admin/withdraw-panel'));
-const KYCPanel = lazy(() => import('@/components/admin/kyc-panel'));
-const ProvidersPanel = lazy(() => import('@/components/admin/providers-panel'));
-const ApiProvidersPanel = lazy(() => import('@/components/admin/api-providers-panel'));
-const WalletServicesPanel = lazy(() => import('@/components/admin/wallet-services-panel'));
-const InstantRechargePanel = lazy(() => import('@/components/admin/instant-recharge-panel'));
-const PackagesPanel = lazy(() => import('@/components/admin/packages-panel'));
-const ExchangeRatesPanel = lazy(() => import('@/components/admin/exchange-rates-panel'));
-const GiftCodesPanel = lazy(() => import('@/components/admin/gift-codes-panel'));
-const PromoCodesPanel = lazy(() => import('@/components/admin/promo-codes-panel'));
-const BannersPanel = lazy(() => import('@/components/admin/banners-panel'));
-const BanksPanel = lazy(() => import('@/components/admin/banks-panel'));
-const SupportTicketsPanel = lazy(() => import('@/components/admin/support-tickets-panel'));
-const SupportLiveChatPanel = lazy(() => import('@/components/admin/support-livechat-panel'));
-const LimitsPanel = lazy(() => import('@/components/admin/limits-panel'));
-const SocialLinksPanel = lazy(() => import('@/components/admin/social-links-panel'));
-const LegalContentPanel = lazy(() => import('@/components/admin/legal-content-panel'));
-const SectionsPanel = lazy(() => import('@/components/admin/sections-panel'));
-const VisibilityPanel = lazy(() => import('@/components/admin/visibility-panel'));
-const ApiSettingsPanel = lazy(() => import('@/components/admin/api-settings-panel'));
-const NotificationsPanel = lazy(() => import('@/components/admin/notifications-panel'));
-const SettingsPanel = lazy(() => import('@/components/admin/settings-panel'));
-const ActivityLogPanel = lazy(() => import('@/components/admin/activity-log-panel'));
-const BackupPanel = lazy(() => import('@/components/admin/backup-panel'));
-const CommissionsPanel = lazy(() => import('@/components/admin/commissions-panel'));
-const InvestmentsPanel = lazy(() => import('@/components/admin/investments-panel'));
-const UserGiftCodesPanel = lazy(() => import('@/components/admin/user-gift-codes-panel'));
-const PushNotificationsPanel = lazy(() => import('@/components/admin/push-notifications-panel'));
-const CardColorsPanel = lazy(() => import('@/components/admin/card-colors-panel'));
-const BulkCodesPanel = lazy(() => import('@/components/admin/bulk-codes-panel'));
-const CurrencyCardsPanel = lazy(() => import('@/components/admin/currency-cards-panel'));
-const ServiceAnalyticsPanel = lazy(() => import('@/components/admin/service-analytics-panel'));
-const MaintenancePanel = lazy(() => import('@/components/admin/maintenance-panel'));
-const AboutPanel = lazy(() => import('@/components/admin/about-panel'));
-const EmployeesPanel = lazy(() => import('@/components/admin/employees-panel'));
-const BrandingPanel = lazy(() => import('@/components/admin/branding-panel'));
-const WalletAddressesPanel = lazy(() => import('@/components/admin/wallet-addresses-panel'));
-const OfficesPanel = lazy(() => import('@/components/admin/offices-panel'));
-const ApiSyncPanel = lazy(() => import('@/components/admin/api-sync-panel'));
-const TransfersPanel = lazy(() => import('@/components/admin/transfers-panel'));
-const EscrowPanel = lazy(() => import('@/components/admin/escrow-panel'));
-const BalanceLogPanel = lazy(() => import('@/components/admin/balance-log-panel'));
-const PriceCustomizationPanel = lazy(() => import('@/components/admin/price-customization-panel'));
-const CommissionConfigPanel = lazy(() => import('@/components/admin/commission-config-panel'));
-const SubSectionsPanel = lazy(() => import('@/components/admin/sub-sections-panel'));
-const UserReviewsPanel = lazy(() => import('@/components/admin/user-reviews-panel'));
-const MarketingContentPanel = lazy(() => import('@/components/admin/marketing-content-panel'));
-const BranchManagementPanel = lazy(() => import('@/components/admin/branch-management-panel'));
-const CustomReportsPanel = lazy(() => import('@/components/admin/custom-reports-panel'));
-const DataExportPanel = lazy(() => import('@/components/admin/data-export-panel'));
-const DirectChatPanel = lazy(() => import('@/components/admin/direct-chat-panel'));
-
 const panelMap: Record<string, React.ComponentType> = {
-  // Dashboard
   dashboard: Dashboard,
-  // Financial Operations
-  deposit: DepositPanel,
-  deposits: DepositPanel,
-  withdraw: WithdrawPanel,
-  withdrawals: WithdrawPanel,
-  orders: OrdersPanel,
-  transfers: TransfersPanel,
-  escrow: EscrowPanel,
-  commissions: CommissionsPanel,
-  investments: InvestmentsPanel,
-  // API Management
-  'api-providers': ApiProvidersPanel,
-  'api-settings': ApiSettingsPanel,
-  'api-sync': ApiSyncPanel,
-  'balance-log': BalanceLogPanel,
-  'price-customization': PriceCustomizationPanel,
-  'commission-config': CommissionConfigPanel,
-  // Services & Content
-  sections: SectionsPanel,
-  'sub-sections': SubSectionsPanel,
-  providers: ProvidersPanel,
-  packages: PackagesPanel,
-  'instant-recharge': InstantRechargePanel,
-  visibility: VisibilityPanel,
-  banners: BannersPanel,
-  'bulk-codes': BulkCodesPanel,
-  // Digital Wallet
-  'wallet-services': WalletServicesPanel,
-  'wallet-addresses': WalletAddressesPanel,
-  'exchange-rates': ExchangeRatesPanel,
-  banks: BanksPanel,
-  'currency-cards': CurrencyCardsPanel,
-  'card-colors': CardColorsPanel,
-  // Users
   users: UsersPanel,
+  orders: OrdersPanel,
+  escrow: EscrowPanel,
+  deposit: DepositPanel,
+  withdraw: WithdrawPanel,
   kyc: KYCPanel,
+  'instant-recharge': InstantRechargePanel,
+  packages: PackagesPanel,
+  'exchange-rates': ExchangeRatesPanel,
   'gift-codes': GiftCodesPanel,
-  'user-gift-codes': UserGiftCodesPanel,
-  offices: OfficesPanel,
-  // Support
-  'support-tickets': SupportTicketsPanel,
-  'support-livechat': SupportLiveChatPanel,
-  'direct-chat': DirectChatPanel,
-  'social-links': SocialLinksPanel,
-  'user-reviews': UserReviewsPanel,
-  // Content & Legal
-  'legal-content': LegalContentPanel,
   'promo-codes': PromoCodesPanel,
+  banners: BannersPanel,
+  banks: BanksPanel,
+  'support-chat': SupportChatPanel,
+  'support-tickets': SupportTicketsPanel,
+  'chat-monitor': ChatMonitorPanel,
+  'social-links': SocialLinksPanel,
+  'legal-content': LegalContentPanel,
+  sections: SectionsPanel,
+  visibility: VisibilityPanel,
   notifications: NotificationsPanel,
-  'push-notifications': PushNotificationsPanel,
-  'marketing-content': MarketingContentPanel,
-  // Settings
   settings: SettingsPanel,
-  branding: BrandingPanel,
-  employees: EmployeesPanel,
-  limits: LimitsPanel,
-  'branch-management': BranchManagementPanel,
-  'service-analytics': ServiceAnalyticsPanel,
   'activity-log': ActivityLogPanel,
-  'custom-reports': CustomReportsPanel,
-  'data-export': DataExportPanel,
-  maintenance: MaintenancePanel,
   backup: BackupPanel,
-  about: AboutPanel,
+  commissions: CommissionsPanel,
+  'push-notifications': PushNotificationsPanel,
+  'card-colors': CardColorsPanel,
+  g2bulk: G2BulkPanel,
 };
 
-// Loading spinner for Suspense fallback
-function PanelLoader() {
-  return (
-    <div className="flex items-center justify-center min-h-[60vh]">
-      <div className="text-center">
-        <div className="w-8 h-8 border-2 border-[#5C1A1B] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-        <p className="text-muted-foreground text-sm">جاري التحميل...</p>
-      </div>
-    </div>
-  );
-}
-
 export default function AdminApp() {
-  const {
-    isAuthenticated, adminUser, activePanel,
-    setAdminUser, logout, setSidebarOpen,
-  } = useAdminStore();
-
-  // Supabase Realtime sync (replaces Firebase onValue listeners)
-  useSupabaseSync();
+  const { isAuthenticated, adminUser, activePanel, setAdminUser, logout, setSidebarOpen } = useAdminStore();
   const [initializing, setInitializing] = useState(true);
   const [newNotifications, setNewNotifications] = useState(0);
 
-  // Auth state listener
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
@@ -198,7 +113,7 @@ export default function AdminApp() {
     return () => unsubscribe();
   }, []);
 
-  // Listen for admin notifications
+  // Listen for admin notifications (order/deposit/withdraw)
   useEffect(() => {
     if (!isAuthenticated) return;
     const notifRef = ref(database, 'adminNotifications');
@@ -221,6 +136,7 @@ export default function AdminApp() {
 
     const initPushNotifications = async () => {
       try {
+        // Check if running in Capacitor native environment
         const win = window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } };
         const isNative = win.Capacitor && win.Capacitor.isNativePlatform && win.Capacitor.isNativePlatform();
 
@@ -237,6 +153,7 @@ export default function AdminApp() {
 
           PushNotifications.addListener('registration', async (token) => {
             console.log('Admin push registration success:', token.value);
+            // Save FCM token to Firebase for admin
             try {
               const { ref, set: firebaseSet } = await import('firebase/database');
               await firebaseSet(ref(database, `users/${adminUser.uid}/fcmToken`), token.value);
@@ -251,11 +168,13 @@ export default function AdminApp() {
 
           PushNotifications.addListener('pushNotificationReceived', (notification) => {
             console.log('Admin push notification received:', notification);
+            // Play notification sound
             try {
               const audio = new Audio('/sounds/notification.wav');
               audio.volume = 0.5;
               audio.play().catch(() => {});
             } catch {}
+            // Vibrate
             if (navigator.vibrate) {
               navigator.vibrate(100);
             }
@@ -265,6 +184,7 @@ export default function AdminApp() {
             console.log('Admin push notification action:', action);
           });
         } else {
+          // Web/PWA Firebase Messaging
           try {
             const { getToken, onMessage } = await import('firebase/messaging');
             const { getMessaging, isSupported } = await import('firebase/messaging');
@@ -309,62 +229,14 @@ export default function AdminApp() {
     return () => clearTimeout(timer);
   }, [isAuthenticated, adminUser]);
 
-  // Android back button handler
-  useEffect(() => {
-    if (!isAuthenticated) return;
-
-    let backPressedCount = 0;
-    let listener: any = null;
-
-    const setupBackButton = async () => {
-      try {
-        const win = window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } };
-        const isNative = win.Capacitor && win.Capacitor.isNativePlatform && win.Capacitor.isNativePlatform();
-        if (!isNative) return;
-
-        const { App } = await import('@capacitor/app');
-        listener = await App.addListener('backButton', () => {
-          const state = useAdminStore.getState();
-
-          if (state.sidebarOpen) { state.setSidebarOpen(false); return; }
-
-          if (state.activePanel !== 'dashboard') {
-            state.setActivePanel('dashboard');
-            return;
-          }
-
-          if (backPressedCount === 0) {
-            backPressedCount = 1;
-            setTimeout(() => { backPressedCount = 0; }, 2000);
-          } else if (backPressedCount === 1) {
-            App.exitApp();
-          }
-        });
-      } catch (e) {
-        // Not running in Capacitor native - ignore
-      }
-    };
-
-    setupBackButton();
-
-    return () => {
-      if (listener && typeof listener.then === 'function') {
-        listener.then((l: any) => l?.remove?.()).catch(() => {});
-      } else if (listener?.remove) {
-        listener.remove();
-      }
-    };
-  }, [isAuthenticated]);
-
   if (initializing) {
     return (
-      <div className="min-h-screen flex items-center justify-center ios-bg">
+      <div className="min-h-screen flex items-center justify-center admin-gradient">
         <motion.div initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} className="text-center">
-          <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-to-br from-[#5C1A1B] to-[#3D0F10] flex items-center justify-center overflow-hidden shadow-xl shadow-[#5C1A1B]/20">
+          <div className="w-16 h-16 mx-auto mb-4 rounded-2xl bg-purple-600/20 border border-purple-500/30 flex items-center justify-center overflow-hidden">
             <img src={APP_ICON_BASE64} alt="" className="w-10 h-10 object-contain" />
           </div>
-          <div className="w-8 h-8 border-2 border-[#5C1A1B] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
-          <p className="text-muted-foreground text-sm">جاري التحقق...</p>
+          <p className="text-purple-300/70 text-sm">جاري التحقق...</p>
         </motion.div>
       </div>
     );
@@ -374,54 +246,51 @@ export default function AdminApp() {
     return <LoginScreen />;
   }
 
-  // Owner-only panels
-  const ownerOnlyPanels = ['sections', 'visibility', 'api-settings', 'activity-log', 'backup', 'maintenance', 'branding', 'employees', 'card-colors'];
+  // If admin tries to access owner-only panel, redirect to dashboard
+  const ownerOnlyPanels = ['card-colors', 'sections', 'visibility', 'api-settings', 'activity-log', 'backup'];
   const effectivePanel = (adminUser.role !== 'owner' && ownerOnlyPanels.includes(activePanel)) ? 'dashboard' : activePanel;
   const ActivePanelComponent = panelMap[effectivePanel] || Dashboard;
 
   return (
-    <div className="min-h-screen ios-bg">
+    <div className="min-h-screen bg-[#F5F5F5] dark:bg-[#0F0F0F]">
       <Sidebar />
 
-      <div className="lg:mr-[280px] min-h-screen">
-        {/* iOS-style Header */}
-        <header className="sticky top-0 z-30 glass-header">
-          <div className="flex items-center justify-between px-4 h-12">
+      <div className="lg:mr-72 min-h-screen">
+        <header className="sticky top-0 z-30 bg-background/80 backdrop-blur-xl border-b border-border">
+          <div className="flex items-center justify-between px-4 h-14">
             <div className="flex items-center gap-3">
               <button
                 onClick={() => setSidebarOpen(true)}
-                className="lg:hidden p-2 rounded-xl hover:bg-muted/50 transition-colors active:scale-[0.98]"
+                className="lg:hidden p-2 rounded-lg hover:bg-muted transition-colors"
               >
-                <Menu className="w-5 h-5 text-foreground" />
+                <Menu className="w-5 h-5" />
               </button>
-              <div className="hidden lg:flex items-center gap-2">
-                <div className="w-2 h-2 rounded-full bg-green-500 pulse-dot" />
-                <span className="text-xs text-muted-foreground">
+              <div className="hidden lg:block">
+                <p className="text-sm font-medium text-muted-foreground">
                   {adminUser.role === 'owner' ? 'المالك' : 'المدير'}: {adminUser.displayName}
-                </span>
+                </p>
               </div>
             </div>
             <div className="flex items-center gap-2">
               {newNotifications > 0 && (
-                <span className="text-[10px] bg-red-500 text-white px-2 py-0.5 rounded-full font-bold">{newNotifications} جديد</span>
+                <span className="text-xs bg-red-500 text-white px-2 py-0.5 rounded-full">{newNotifications} جديد</span>
               )}
+              <div className="w-2 h-2 rounded-full bg-green-500 pulse-dot" />
+              <span className="text-xs text-muted-foreground">متصل</span>
             </div>
           </div>
         </header>
 
-        {/* Main Content */}
         <main className="p-4 lg:p-6">
           <AnimatePresence mode="wait">
             <motion.div
               key={effectivePanel}
-              initial={{ opacity: 0, y: 8 }}
+              initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
+              exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.2 }}
             >
-              <Suspense fallback={<PanelLoader />}>
-                <ActivePanelComponent />
-              </Suspense>
+              <ActivePanelComponent />
             </motion.div>
           </AnimatePresence>
         </main>

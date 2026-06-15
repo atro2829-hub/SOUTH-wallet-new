@@ -1,7 +1,7 @@
 /**
- * Supabase Client for South Wallet - PRIMARY DATA SOURCE
+ * Supabase Client for South Admin App
  *
- * Supabase handles: ALL data (users, transactions, orders, sections, providers, etc.)
+ * Supabase handles: sections, providers, products, orders, tickets, chats
  * Firebase handles: Auth only (authentication, FCM push notifications, Storage)
  */
 
@@ -23,149 +23,8 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
 });
 
 // =====================================================
-// TYPE DEFINITIONS
+// TYPE DEFINITIONS - Matching Supabase schema
 // =====================================================
-
-export interface DbUser {
-  id: string;
-  firebase_uid: string | null;
-  email: string | null;
-  phone: string | null;
-  first_name: string;
-  second_name: string;
-  third_name: string;
-  family_name: string;
-  display_name: string;
-  balance_yer: number;
-  balance_sar: number;
-  balance_usd: number;
-  card_type: string;
-  card_number: string;
-  national_id: string;
-  governorate: string;
-  avatar_url: string;
-  role: 'user' | 'admin' | 'owner' | 'agent';
-  kyc_status: 'pending' | 'submitted' | 'verified' | 'rejected';
-  is_blocked: boolean;
-  is_active: boolean;
-  id_front_url: string;
-  id_back_url: string;
-  id_selfie_url: string;
-  id_verified_at: string | null;
-  id_rejection_reason: string;
-  fcm_token: string;
-  theme: 'light' | 'dark' | 'system';
-  language: string;
-  pin_code: string;
-  login_attempts: number;
-  last_login_at: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface DbTransaction {
-  id: string;
-  user_id: string;
-  from_user_id: string | null;
-  to_user_id: string | null;
-  amount: number;
-  currency: 'YER' | 'SAR' | 'USD';
-  fee: number;
-  fee_currency: string;
-  type: 'transfer' | 'deposit' | 'withdraw' | 'order' | 'recharge' | 'exchange' | 'gift' | 'promo' | 'commission' | 'refund' | 'investment';
-  status: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled' | 'refunded';
-  description: string;
-  reference_number: string;
-  receipt_data: Record<string, unknown>;
-  sender_name: string;
-  sender_phone: string;
-  receiver_name: string;
-  receiver_phone: string;
-  receiver_card_number: string;
-  api_provider_id: string;
-  api_order_id: string;
-  created_at: string;
-  updated_at: string;
-  completed_at: string | null;
-}
-
-export interface DbOrder {
-  id: string;
-  user_id: string;
-  provider_id: string;
-  provider_name: string;
-  package_id: string;
-  package_name: string;
-  category_id: string;
-  category_name: string;
-  customer_input: string;
-  amount: number;
-  currency: 'YER' | 'SAR' | 'USD';
-  cost_price: number;
-  cost_currency: string;
-  commission_amount: number;
-  commission_type: string;
-  execution_type: 'manual' | 'auto' | 'api';
-  status: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled' | 'refunded';
-  api_provider_id: string;
-  api_product_id: string;
-  api_order_id: string;
-  api_response: Record<string, unknown>;
-  result_code: string;
-  result_message: string;
-  result_pin_code: string;
-  transaction_id: string | null;
-  processed_by: string | null;
-  processed_at: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface DbDepositRequest {
-  id: string;
-  user_id: string;
-  amount: number;
-  currency: 'YER' | 'SAR' | 'USD';
-  method: 'bank_transfer' | 'crypto' | 'cash' | 'card' | 'agent';
-  bank_name: string;
-  bank_account: string;
-  sender_name: string;
-  transfer_receipt_url: string;
-  crypto_network: string;
-  crypto_wallet_address: string;
-  crypto_tx_hash: string;
-  status: 'pending' | 'approved' | 'rejected' | 'cancelled';
-  rejection_reason: string;
-  admin_notes: string;
-  reviewed_by: string | null;
-  reviewed_at: string | null;
-  transaction_id: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface DbWithdrawRequest {
-  id: string;
-  user_id: string;
-  amount: number;
-  currency: 'YER' | 'SAR' | 'USD';
-  method: 'bank_transfer' | 'crypto' | 'cash' | 'agent';
-  bank_name: string;
-  bank_account: string;
-  bank_iban: string;
-  crypto_network: string;
-  crypto_wallet_address: string;
-  status: 'pending' | 'approved' | 'processing' | 'completed' | 'rejected' | 'cancelled';
-  rejection_reason: string;
-  admin_notes: string;
-  reviewed_by: string | null;
-  reviewed_at: string | null;
-  processed_by: string | null;
-  processed_at: string | null;
-  transaction_id: string | null;
-  created_at: string;
-  updated_at: string;
-}
 
 export interface DbSection {
   id: string;
@@ -214,8 +73,10 @@ export interface DbServiceProvider {
   color: string;
   image_url: string;
   input_label: string;
-  input_type: 'text' | 'tel' | 'number' | 'email';
+  input_type: string;
   input_prefix: string;
+  input_validation: string;
+  input_placeholder: string;
   is_active: boolean;
   is_visible: boolean;
   sort_order: number;
@@ -223,27 +84,6 @@ export interface DbServiceProvider {
   api_provider_id: string;
   api_product_id: string;
   execution_type: 'manual' | 'auto' | 'api';
-  created_at: string;
-  updated_at: string;
-}
-
-export interface DbProductPackage {
-  id: string;
-  provider_id: string;
-  name: string;
-  name_en: string;
-  description: string;
-  price_usd: number;
-  price_yer: number;
-  price_sar: number;
-  cost_price: number;
-  cost_currency: string;
-  commission_amount: number;
-  commission_type: string;
-  execution_type: 'manual' | 'auto' | 'api';
-  api_product_id: string;
-  is_active: boolean;
-  sort_order: number;
   created_at: string;
   updated_at: string;
 }
@@ -260,436 +100,327 @@ export interface DbApiProvider {
   is_active: boolean;
   balance: number;
   balance_currency: string;
-  last_balance_check: string | null;
+  last_balance_check: string;
   default_commission: number;
   commission_type: 'percentage' | 'fixed';
   sync_categories: boolean;
   sync_products: boolean;
-  last_sync_at: string | null;
+  last_sync_at: string;
   config: Record<string, unknown>;
   created_at: string;
   updated_at: string;
 }
 
-export interface DbApiCategory {
-  id: string;
-  api_provider_id: string;
-  api_category_id: string;
-  title: string;
-  title_en: string;
-  description: string;
-  image_url: string;
-  product_count: number;
-  is_active: boolean;
-  is_synced: boolean;
-  last_synced_at: string | null;
-  section_id: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface DbExchangeRate {
-  id: string;
-  usd_to_yer: number;
-  usd_to_sar: number;
-  sar_to_yer: number;
-  source: string;
-  is_active: boolean;
-  updated_by: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface DbBanner {
-  id: string;
-  title: string;
-  description: string;
-  image_url: string;
-  position: 'login' | 'home' | 'services' | 'wallet' | 'all';
-  link_type: 'none' | 'url' | 'screen' | 'provider' | 'promo';
-  link_target: string;
-  sort_order: number;
-  is_active: boolean;
-  start_date: string | null;
-  end_date: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface DbNotification {
+export interface DbSupportTicket {
   id: string;
   user_id: string;
-  title: string;
-  body: string;
-  type: string;
+  subject: string;
+  category: 'general' | 'technical' | 'financial' | 'complaint' | 'suggestion';
+  priority: 'low' | 'medium' | 'high' | 'urgent';
+  status: 'open' | 'in_progress' | 'waiting_user' | 'resolved' | 'closed';
+  assigned_to: string | null;
+  created_at: string;
+  updated_at: string;
+  resolved_at: string | null;
+}
+
+export interface DbSupportMessage {
+  id: string;
+  ticket_id: string;
+  sender_id: string | null;
+  sender_type: 'user' | 'admin' | 'system';
+  message: string;
+  attachments: unknown[];
   is_read: boolean;
-  navigation_target: string;
-  navigation_params: Record<string, unknown>;
-  data: Record<string, unknown>;
   created_at: string;
 }
 
-export interface DbWalletAddress {
+export interface DbEscrowChat {
   id: string;
-  network: 'TRC20' | 'ERC20' | 'BEP20' | 'BTC' | 'ETH' | 'SOL' | 'OTHER';
-  network_name: string;
-  address: string;
-  label: string;
-  qr_code_url: string;
-  is_active: boolean;
-  currency: string;
+  escrow_id: string;
+  buyer_id: string | null;
+  buyer_name: string | null;
+  seller_id: string | null;
+  seller_name: string | null;
   created_at: string;
   updated_at: string;
 }
 
-export interface DbFeatureFlag {
-  flag_key: string;
-  is_enabled: boolean;
-  description: string;
-  updated_at: string;
-}
-
-export interface DbBottomNav {
-  tab_id: string;
-  label: string;
-  icon: string;
-  is_visible: boolean;
-  sort_order: number;
-}
-
-export interface DbMaintenance {
+export interface DbEscrowChatMessage {
   id: string;
-  is_active: boolean;
+  chat_id: string;
+  sender_id: string;
+  sender_name: string;
+  sender_role: 'seller' | 'buyer' | 'admin';
   message: string;
-  estimated_time: string;
-  activated_at: string | null;
+  message_type: 'text' | 'image' | 'file' | 'system';
+  attachment_url: string | null;
+  created_at: string;
+  is_read: boolean;
 }
 
-export interface DbKillSwitch {
+export interface DbDirectChat {
   id: string;
-  is_active: boolean;
+  participant1_id: string;
+  participant1_name: string;
+  participant2_id: string;
+  participant2_name: string;
+  last_message: string | null;
+  last_message_at: string | null;
+  created_at: string;
+}
+
+export interface DbDirectChatMessage {
+  id: string;
+  chat_id: string;
+  sender_id: string;
+  sender_name: string;
   message: string;
-  activated_at: string | null;
-  activated_by: string | null;
-  deactivate_at: string | null;
-  duration_minutes: number;
+  message_type: 'text' | 'image' | 'file' | 'system';
+  attachment_url: string | null;
+  is_read: boolean;
+  created_at: string;
 }
 
-export interface DbBranding {
+export interface DbSupportLivechat {
   id: string;
-  app_name: string;
-  app_name_en: string;
-  logo_url: string;
-  logo_dark_url: string;
-  favicon_url: string;
-  primary_color: string;
-  secondary_color: string;
-  accent_color: string;
-  splash_background: string;
+  user_id: string;
+  admin_id: string | null;
+  status: 'waiting' | 'active' | 'closed';
+  last_message: string;
+  last_message_at: string | null;
+  unread_user: number;
+  unread_admin: number;
+  created_at: string;
   updated_at: string;
 }
 
-export interface DbAppConfig {
-  key: string;
-  value: Record<string, unknown>;
-  description: string;
-  updated_at: string;
-}
-
-// Helper: Check if Supabase is configured
-export function isSupabaseConfigured(): boolean {
-  return !!supabaseUrl && supabaseUrl.includes('.supabase.co');
+export interface DbLivechatMessage {
+  id: string;
+  chat_id: string;
+  sender_id: string;
+  sender_type: 'user' | 'admin' | 'system';
+  message: string;
+  message_type: 'text' | 'image' | 'file' | 'system';
+  attachments: unknown[];
+  is_read: boolean;
+  created_at: string;
 }
 
 // =====================================================
-// SUPABASE SERVICE FUNCTIONS
+// ADMIN API FUNCTIONS
 // =====================================================
 
-export const supabaseService = {
-  // --- Users ---
-  async getUserById(id: string) {
-    const { data, error } = await supabase.from('users').select('*').eq('id', id).single();
-    if (error) throw error;
-    return data as DbUser;
-  },
+// --- Sections ---
 
-  async getUserByFirebaseUid(firebaseUid: string) {
-    const { data, error } = await supabase.from('users').select('*').eq('firebase_uid', firebaseUid).single();
-    if (error && error.code !== 'PGRST116') throw error;
-    return data as DbUser | null;
-  },
+export async function getSections(): Promise<DbSection[]> {
+  const { data, error } = await supabase
+    .from('sections')
+    .select('*')
+    .order('sort_order', { ascending: true });
+  if (error) { console.error('Error fetching sections:', error); return []; }
+  return data || [];
+}
 
-  async createUser(user: Partial<DbUser> & { id: string }) {
-    const { data, error } = await supabase.from('users').insert(user).select().single();
-    if (error) throw error;
-    return data as DbUser;
-  },
+export async function upsertSection(section: Partial<DbSection> & { id: string }): Promise<boolean> {
+  const { error } = await supabase
+    .from('sections')
+    .upsert({ ...section, updated_at: new Date().toISOString() }, { onConflict: 'id' });
+  if (error) { console.error('Error upserting section:', error); return false; }
+  return true;
+}
 
-  async updateUser(id: string, updates: Partial<DbUser>) {
-    const { data, error } = await supabase.from('users').update(updates).eq('id', id).select().single();
-    if (error) throw error;
-    return data as DbUser;
-  },
+export async function deleteSection(id: string): Promise<boolean> {
+  const { error } = await supabase.from('sections').delete().eq('id', id);
+  if (error) { console.error('Error deleting section:', error); return false; }
+  return true;
+}
 
-  // --- Transactions ---
-  async getTransactions(userId: string, limit = 50) {
-    const { data, error } = await supabase
-      .from('transactions')
-      .select('*')
-      .or(`user_id.eq.${userId},from_user_id.eq.${userId},to_user_id.eq.${userId}`)
-      .order('created_at', { ascending: false })
-      .limit(limit);
-    if (error) throw error;
-    return data as DbTransaction[];
-  },
+export async function reorderSections(orderedIds: string[]): Promise<boolean> {
+  const updates = orderedIds.map((id, index) =>
+    supabase.from('sections').update({ sort_order: index, updated_at: new Date().toISOString() }).eq('id', id)
+  );
+  const results = await Promise.all(updates);
+  const hasError = results.some(r => r.error);
+  if (hasError) { console.error('Error reordering sections'); return false; }
+  return true;
+}
 
-  async createTransaction(tx: Omit<DbTransaction, 'id' | 'created_at' | 'updated_at'>) {
-    const { data, error } = await supabase.from('transactions').insert(tx).select().single();
-    if (error) throw error;
-    return data as DbTransaction;
-  },
+export async function toggleSectionVisibility(id: string, isVisible: boolean): Promise<boolean> {
+  const { error } = await supabase
+    .from('sections')
+    .update({ is_visible: isVisible, updated_at: new Date().toISOString() })
+    .eq('id', id);
+  if (error) { console.error('Error toggling section visibility:', error); return false; }
+  return true;
+}
 
-  // --- Orders ---
-  async getOrders(userId: string, limit = 50) {
-    const { data, error } = await supabase
-      .from('orders')
-      .select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false })
-      .limit(limit);
-    if (error) throw error;
-    return data as DbOrder[];
-  },
+// --- Support Tickets ---
 
-  async createOrder(order: Omit<DbOrder, 'id' | 'created_at' | 'updated_at'>) {
-    const { data, error } = await supabase.from('orders').insert(order).select().single();
-    if (error) throw error;
-    return data as DbOrder;
-  },
+export async function getSupportTickets(): Promise<(DbSupportTicket & { user_name?: string })[]> {
+  const { data, error } = await supabase
+    .from('support_tickets')
+    .select('*, users!support_tickets_user_id_fkey(display_name, firebase_uid)')
+    .order('created_at', { ascending: false });
+  if (error) { console.error('Error fetching tickets:', error); return []; }
+  return (data || []).map((t: any) => ({
+    ...t,
+    user_name: t.users?.display_name || 'مستخدم',
+    user_firebase_uid: t.users?.firebase_uid || '',
+  }));
+}
 
-  // --- Deposit Requests ---
-  async getDepositRequests(userId: string) {
-    const { data, error } = await supabase.from('deposit_requests').select('*').eq('user_id', userId).order('created_at', { ascending: false });
-    if (error) throw error;
-    return data as DbDepositRequest[];
-  },
+export async function getSupportMessages(ticketId: string): Promise<DbSupportMessage[]> {
+  const { data, error } = await supabase
+    .from('support_messages')
+    .select('*')
+    .eq('ticket_id', ticketId)
+    .order('created_at', { ascending: true });
+  if (error) { console.error('Error fetching messages:', error); return []; }
+  return data || [];
+}
 
-  async createDepositRequest(req: Omit<DbDepositRequest, 'id' | 'created_at' | 'updated_at'>) {
-    const { data, error } = await supabase.from('deposit_requests').insert(req).select().single();
-    if (error) throw error;
-    return data as DbDepositRequest;
-  },
+export async function sendSupportMessage(
+  ticketId: string,
+  senderId: string | null,
+  message: string,
+  senderType: 'admin' | 'system' = 'admin'
+): Promise<DbSupportMessage | null> {
+  const { data, error } = await supabase
+    .from('support_messages')
+    .insert({
+      ticket_id: ticketId,
+      sender_id: senderId,
+      sender_type: senderType,
+      message,
+    })
+    .select()
+    .single();
+  if (error) { console.error('Error sending message:', error); return null; }
+  // Update ticket timestamp
+  await supabase
+    .from('support_tickets')
+    .update({ updated_at: new Date().toISOString() })
+    .eq('id', ticketId);
+  return data;
+}
 
-  // --- Withdraw Requests ---
-  async getWithdrawRequests(userId: string) {
-    const { data, error } = await supabase.from('withdraw_requests').select('*').eq('user_id', userId).order('created_at', { ascending: false });
-    if (error) throw error;
-    return data as DbWithdrawRequest[];
-  },
+export async function updateTicketStatus(
+  ticketId: string,
+  status: DbSupportTicket['status'],
+  assignedTo?: string
+): Promise<boolean> {
+  const updates: Record<string, unknown> = {
+    status,
+    updated_at: new Date().toISOString(),
+  };
+  if (assignedTo !== undefined) updates.assigned_to = assignedTo;
+  if (status === 'resolved' || status === 'closed') updates.resolved_at = new Date().toISOString();
 
-  async createWithdrawRequest(req: Omit<DbWithdrawRequest, 'id' | 'created_at' | 'updated_at'>) {
-    const { data, error } = await supabase.from('withdraw_requests').insert(req).select().single();
-    if (error) throw error;
-    return data as DbWithdrawRequest;
-  },
+  const { error } = await supabase.from('support_tickets').update(updates).eq('id', ticketId);
+  if (error) { console.error('Error updating ticket status:', error); return false; }
+  return true;
+}
 
-  // --- Sections ---
-  async getSections() {
-    const { data, error } = await supabase.from('sections').select('*').eq('is_active', true).order('sort_order');
-    if (error) throw error;
-    return data as DbSection[];
-  },
+// --- Escrow Chats ---
 
-  // --- Sub Sections ---
-  async getSubSections(sectionId: string) {
-    const { data, error } = await supabase.from('sub_sections').select('*').eq('section_id', sectionId).eq('is_active', true).order('sort_order');
-    if (error) throw error;
-    return data as DbSubSection[];
-  },
+export async function getEscrowChats(): Promise<DbEscrowChat[]> {
+  const { data, error } = await supabase
+    .from('escrow_chats')
+    .select('*')
+    .order('updated_at', { ascending: false });
+  if (error) { console.error('Error fetching escrow chats:', error); return []; }
+  return data || [];
+}
 
-  // --- Service Providers ---
-  async getServiceProviders(sectionId?: string) {
-    let query = supabase.from('service_providers').select('*').eq('is_active', true).order('sort_order');
-    if (sectionId) query = query.eq('section_id', sectionId);
-    const { data, error } = await query;
-    if (error) throw error;
-    return data as DbServiceProvider[];
-  },
+export async function getEscrowChatMessages(chatId: string): Promise<DbEscrowChatMessage[]> {
+  const { data, error } = await supabase
+    .from('escrow_chat_messages')
+    .select('*')
+    .eq('chat_id', chatId)
+    .order('created_at', { ascending: true });
+  if (error) { console.error('Error fetching escrow chat messages:', error); return []; }
+  return data || [];
+}
 
-  // --- Product Packages ---
-  async getProductPackages(providerId: string) {
-    const { data, error } = await supabase.from('product_packages').select('*').eq('provider_id', providerId).eq('is_active', true).order('sort_order');
-    if (error) throw error;
-    return data as DbProductPackage[];
-  },
+export async function sendEscrowChatMessage(
+  chatId: string,
+  senderId: string,
+  senderName: string,
+  message: string,
+  senderRole: 'admin' = 'admin'
+): Promise<DbEscrowChatMessage | null> {
+  const { data, error } = await supabase
+    .from('escrow_chat_messages')
+    .insert({
+      chat_id: chatId,
+      sender_id: senderId,
+      sender_name: senderName,
+      sender_role: senderRole,
+      message,
+      message_type: 'text',
+    })
+    .select()
+    .single();
+  if (error) { console.error('Error sending escrow message:', error); return null; }
+  return data;
+}
 
-  // --- API Providers ---
-  async getApiProviders() {
-    const { data, error } = await supabase.from('api_providers').select('*').eq('is_active', true);
-    if (error) throw error;
-    return data as DbApiProvider[];
-  },
+// --- Direct Chats (Monitor) ---
 
-  // --- API Categories ---
-  async getApiCategories(providerId: string) {
-    const { data, error } = await supabase.from('api_categories').select('*').eq('api_provider_id', providerId).eq('is_active', true);
-    if (error) throw error;
-    return data as DbApiCategory[];
-  },
+export async function getDirectChats(): Promise<DbDirectChat[]> {
+  const { data, error } = await supabase
+    .from('direct_chats')
+    .select('*')
+    .order('last_message_at', { ascending: false, nullsFirst: false });
+  if (error) { console.error('Error fetching direct chats:', error); return []; }
+  return data || [];
+}
 
-  // --- Exchange Rates ---
-  async getExchangeRates() {
-    const { data, error } = await supabase.from('exchange_rates').select('*').eq('is_active', true).order('created_at', { ascending: false }).limit(1);
-    if (error) throw error;
-    return data[0] as DbExchangeRate | null;
-  },
+export async function getDirectChatMessages(chatId: string): Promise<DbDirectChatMessage[]> {
+  const { data, error } = await supabase
+    .from('direct_chat_messages')
+    .select('*')
+    .eq('chat_id', chatId)
+    .order('created_at', { ascending: true });
+  if (error) { console.error('Error fetching direct chat messages:', error); return []; }
+  return data || [];
+}
 
-  // --- Banners ---
-  async getBanners(position?: string) {
-    let query = supabase.from('banners').select('*').eq('is_active', true).order('sort_order');
-    if (position) query = query.eq('position', position);
-    const { data, error } = await query;
-    if (error) throw error;
-    return data as DbBanner[];
-  },
+// --- API Providers ---
 
-  // --- Notifications ---
-  async getNotifications(userId: string) {
-    const { data, error } = await supabase.from('notifications').select('*').eq('user_id', userId).order('created_at', { ascending: false });
-    if (error) throw error;
-    return data as DbNotification[];
-  },
+export async function getApiProviders(): Promise<DbApiProvider[]> {
+  const { data, error } = await supabase
+    .from('api_providers')
+    .select('*')
+    .order('created_at', { ascending: false });
+  if (error) { console.error('Error fetching API providers:', error); return []; }
+  return data || [];
+}
 
-  async markNotificationRead(id: string) {
-    const { error } = await supabase.from('notifications').update({ is_read: true }).eq('id', id);
-    if (error) throw error;
-  },
+// --- G2Bulk Settings (stored in admin_settings table or Firebase) ---
+// G2Bulk still uses Firebase for settings since there's no dedicated Supabase table
 
-  // --- Wallet Addresses ---
-  async getWalletAddresses() {
-    const { data, error } = await supabase.from('wallet_addresses').select('*').eq('is_active', true);
-    if (error) throw error;
-    return data as DbWalletAddress[];
-  },
+export async function getG2BulkSettingsFromSupabase(): Promise<{
+  apiKey: string;
+  enabled: boolean;
+  autoSync: boolean;
+  lastSync: string;
+  markupPercent: number;
+} | null> {
+  const { data, error } = await supabase
+    .from('admin_settings')
+    .select('value')
+    .eq('key', 'g2bulk')
+    .single();
+  if (error || !data) return null;
+  return data.value as any;
+}
 
-  // --- Feature Flags ---
-  async getFeatureFlags() {
-    const { data, error } = await supabase.from('feature_flags').select('*');
-    if (error) throw error;
-    return data as DbFeatureFlag[];
-  },
-
-  // --- Bottom Nav ---
-  async getBottomNav() {
-    const { data, error } = await supabase.from('bottom_nav').select('*').eq('is_visible', true).order('sort_order');
-    if (error) throw error;
-    return data as DbBottomNav[];
-  },
-
-  // --- Maintenance ---
-  async getMaintenance() {
-    const { data, error } = await supabase.from('maintenance').select('*').eq('id', 'main').single();
-    if (error && error.code !== 'PGRST116') throw error;
-    return data as DbMaintenance | null;
-  },
-
-  // --- Kill Switch ---
-  async getKillSwitch() {
-    const { data, error } = await supabase.from('kill_switch').select('*').eq('id', 'main').single();
-    if (error && error.code !== 'PGRST116') throw error;
-    return data as DbKillSwitch | null;
-  },
-
-  // --- Branding ---
-  async getBranding() {
-    const { data, error } = await supabase.from('branding').select('*').eq('id', 'default').single();
-    if (error && error.code !== 'PGRST116') throw error;
-    return data as DbBranding | null;
-  },
-
-  // --- App Config ---
-  async getAppConfig(key: string) {
-    const { data, error } = await supabase.from('app_config').select('*').eq('key', key).single();
-    if (error && error.code !== 'PGRST116') throw error;
-    return data as DbAppConfig | null;
-  },
-
-  // --- Wallet Services ---
-  async getWalletServices() {
-    const { data, error } = await supabase.from('wallet_services').select('*').eq('is_active', true).order('sort_order');
-    if (error) throw error;
-    return data as DbWalletAddress[];
-  },
-
-  // --- Visibility ---
-  async getVisibility(targetType: string) {
-    const { data, error } = await supabase.from('visibility').select('*').eq('target_type', targetType);
-    if (error) throw error;
-    return data;
-  },
-
-  // --- Card Colors ---
-  async getCardColors() {
-    const { data, error } = await supabase.from('card_colors').select('*');
-    if (error) throw error;
-    return data;
-  },
-
-  // --- Legal Content ---
-  async getLegalContent(id: string) {
-    const { data, error } = await supabase.from('legal_content').select('*').eq('id', id).single();
-    if (error) throw error;
-    return data;
-  },
-
-  // --- Social Links ---
-  async getSocialLinks() {
-    const { data, error } = await supabase.from('social_links').select('*').eq('is_active', true).order('sort_order');
-    if (error) throw error;
-    return data;
-  },
-
-  // --- KYC Documents ---
-  async submitKycDocument(doc: { user_id: string; document_type: string; document_url: string }) {
-    const { data, error } = await supabase.from('kyc_documents').insert(doc).select().single();
-    if (error) throw error;
-    return data;
-  },
-
-  // --- Support Tickets ---
-  async createSupportTicket(ticket: { user_id: string; subject: string; category?: string }) {
-    const { data, error } = await supabase.from('support_tickets').insert(ticket).select().single();
-    if (error) throw error;
-    return data;
-  },
-
-  // --- Balance Update via RPC (safe, atomic) ---
-  async updateBalance(userId: string, currency: string, amount: number, operation: 'add' | 'subtract' = 'add') {
-    const { data, error } = await supabase.rpc('update_user_balance', {
-      p_user_id: userId,
-      p_currency: currency,
-      p_amount: amount,
-      p_operation: operation,
-    });
-    if (error) throw error;
-    return data as number;
-  },
-
-  // --- Currency Conversion via RPC ---
-  async convertCurrency(amount: number, fromCurrency: string, toCurrency: string) {
-    const { data, error } = await supabase.rpc('convert_currency', {
-      p_amount: amount,
-      p_from_currency: fromCurrency,
-      p_to_currency: toCurrency,
-    });
-    if (error) throw error;
-    return data as number;
-  },
-
-  // --- Dashboard Stats via RPC ---
-  async getDashboardStats() {
-    const { data, error } = await supabase.rpc('get_dashboard_stats');
-    if (error) throw error;
-    return data;
-  },
-};
+export async function saveG2BulkSettingsToSupabase(settings: Record<string, unknown>): Promise<boolean> {
+  const { error } = await supabase
+    .from('admin_settings')
+    .upsert({ key: 'g2bulk', value: settings }, { onConflict: 'key' });
+  if (error) { console.error('Error saving G2Bulk settings:', error); return false; }
+  return true;
+}

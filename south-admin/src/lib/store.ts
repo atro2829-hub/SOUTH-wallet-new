@@ -55,37 +55,19 @@ interface AdminState {
   allUsers: any[];
   setAllUsers: (users: any[]) => void;
 
-  // Escrow transactions
-  escrowTransactions: any[];
-  setEscrowTransactions: (data: any[]) => void;
-
-  // Branches
-  branches: any[];
-  setBranches: (data: any[]) => void;
-
-  // User reviews
-  userReviews: any[];
-  setUserReviews: (data: any[]) => void;
-
-  // Marketing content
-  marketingContent: any[];
-  setMarketingContent: (data: any[]) => void;
-
-  // Price overrides
-  priceOverrides: any[];
-  setPriceOverrides: (data: any[]) => void;
-
-  // Commission config
-  commissionConfig: any[];
-  setCommissionConfig: (data: any[]) => void;
-
-  // Data exports
-  dataExports: any[];
-  setDataExports: (data: any[]) => void;
-
   // Data loaded flags
   dataLoaded: boolean;
   setDataLoaded: (loaded: boolean) => void;
+
+  // Supabase data
+  supabaseSections: any[];
+  setSupabaseSections: (sections: any[]) => void;
+
+  supabaseTickets: any[];
+  setSupabaseTickets: (tickets: any[]) => void;
+
+  supabaseEscrowChats: any[];
+  setSupabaseEscrowChats: (chats: any[]) => void;
 }
 
 export const useAdminStore = create<AdminState>()(
@@ -109,14 +91,10 @@ export const useAdminStore = create<AdminState>()(
           kycPendingUsers: [],
           orders: [],
           allUsers: [],
-          escrowTransactions: [],
-          branches: [],
-          userReviews: [],
-          marketingContent: [],
-          priceOverrides: [],
-          commissionConfig: [],
-          dataExports: [],
           dataLoaded: false,
+          supabaseSections: [],
+          supabaseTickets: [],
+          supabaseEscrowChats: [],
         }),
 
       // Theme
@@ -160,37 +138,19 @@ export const useAdminStore = create<AdminState>()(
       allUsers: [],
       setAllUsers: (users) => set({ allUsers: users }),
 
-      // Escrow transactions
-      escrowTransactions: [],
-      setEscrowTransactions: (escrowTransactions) => set({ escrowTransactions }),
-
-      // Branches
-      branches: [],
-      setBranches: (branches) => set({ branches }),
-
-      // User reviews
-      userReviews: [],
-      setUserReviews: (userReviews) => set({ userReviews }),
-
-      // Marketing content
-      marketingContent: [],
-      setMarketingContent: (marketingContent) => set({ marketingContent }),
-
-      // Price overrides
-      priceOverrides: [],
-      setPriceOverrides: (priceOverrides) => set({ priceOverrides }),
-
-      // Commission config
-      commissionConfig: [],
-      setCommissionConfig: (commissionConfig) => set({ commissionConfig }),
-
-      // Data exports
-      dataExports: [],
-      setDataExports: (dataExports) => set({ dataExports }),
-
       // Data loaded flags
       dataLoaded: false,
       setDataLoaded: (loaded) => set({ dataLoaded: loaded }),
+
+      // Supabase data
+      supabaseSections: [],
+      setSupabaseSections: (sections) => set({ supabaseSections: sections }),
+
+      supabaseTickets: [],
+      setSupabaseTickets: (tickets) => set({ supabaseTickets: tickets }),
+
+      supabaseEscrowChats: [],
+      setSupabaseEscrowChats: (chats) => set({ supabaseEscrowChats: chats }),
     }),
     {
       name: 'south-admin-store',
