@@ -143,28 +143,30 @@ export async function processQueue(): Promise<{ processed: number; failed: numbe
 }
 
 async function executeTransaction(tx: QueuedTransaction): Promise<{ success: boolean; data?: unknown }> {
-  const apiMap: Record<string, string> = {
-    transfer: '/api/transfer',
-    recharge: '/api/transfer',
-    bill: '/api/transfer',
-    order: '/api/transfer',
-    payment: '/api/transfer',
-  };
-
-  const endpoint = apiMap[tx.type] || '/api/transfer';
-
+  // All transactions now go directly through Supabase - no API routes needed
   try {
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(tx.data),
-    });
-
-    if (response.ok) {
-      const data = await response.json();
-      return { success: true, data };
-    } else {
-      return { success: false };
+    const { supabase } = await import('@/lib/supabase');
+    
+    // Process based on transaction type using Supabase directly
+    switch (tx.type) {
+      case 'transfer': {
+        const { data, error } = await supabase.from('transactions').insert(tx.data).select().single();
+        if (error) return { success: false };
+        return { success: true, data };
+      }
+      case 'recharge':
+      case 'bill':
+      case 'order':
+      case 'payment': {
+        const { data, error } = await supabase.from('transactions').insert(tx.data).select().single();
+        if (error) return { success: false };
+        return { success: true, data };
+      }
+      default: {
+        const { data, error } = await supabase.from('transactions').insert(tx.data).select().single();
+        if (error) return { success: false };
+        return { success: true, data };
+      }
     }
   } catch {
     return { success: false };

@@ -75,18 +75,25 @@ jobs:
       - name: Install npm dependencies
         run: npm ci --legacy-peer-deps
 
-      - name: Remove API routes (incompatible with static export)
-        run: |
-          rm -rf src/app/api/admin src/app/api/auth src/app/api/notifications \
-            src/app/api/products src/app/api/seed src/app/api/seed-banners \
-            src/app/api/send-push src/app/api/transactions src/app/api/transfer \
-            src/app/api/user src/app/api/__tests__ src/app/api/route.ts || true
+      - name: Remove ALL API routes (incompatible with static export)
+        run: rm -rf src/app/api || true
 
       - name: Build Next.js static export
         run: npm run build
         env:
           NODE_OPTIONS: --max-old-space-size=4096
           NEXT_TELEMETRY_DISABLED: 1
+          NEXT_PUBLIC_SUPABASE_URL: https://kifmxseonkdsxuanznny.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtpZm14c2Vvbmtkc3h1YW56bm55Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE0Njk3NzAsImV4cCI6MjA5NzA0NTc3MH0.4KbBtMruP_xrPiHe_XtcoHG7NVQhlflhUUkJFWgQxkM
+          NEXT_PUBLIC_G2BULK_API_KEY: 4882984fe50f9038432b21e5fb37ecbf38a029c40a45c73f27da374ac933bd45
+          NEXT_PUBLIC_G2BULK_BASE_URL: https://api.g2bulk.com
+          NEXT_PUBLIC_FIREBASE_API_KEY: AIzaSyBY9UTcryFEoq8VA1zD7OVnku-fjLxw-p4
+          NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: southern-portfolio.firebaseapp.com
+          NEXT_PUBLIC_FIREBASE_DATABASE_URL: https://southern-portfolio-default-rtdb.firebaseio.com
+          NEXT_PUBLIC_FIREBASE_PROJECT_ID: southern-portfolio
+          NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: southern-portfolio.firebasestorage.app
+          NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID: 501045825605
+          NEXT_PUBLIC_FIREBASE_APP_ID: 1:501045825605:android:a0b11c5db57c9831d3932c
 
       - name: Sync Capacitor Android
         run: npx cap sync android
