@@ -79,6 +79,7 @@ db/*.db
 
 # Keystore files (security)
 *.keystore
+!south-wallet.keystore
 
 # Agent context
 agent-ctx/
