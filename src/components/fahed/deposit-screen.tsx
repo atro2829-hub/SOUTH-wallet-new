@@ -30,10 +30,10 @@ import {
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useAppStore } from '@/lib/store';
-import { formatNumber, currencySymbols, currencyBadgeColors, generateReference, compressBase64Image, defaultExchangeRates } from '@/lib/utils';
+import { formatNumber, generateReference, compressBase64Image, defaultExchangeRates } from '@/lib/utils';
 import { playTransactionSound } from '@/lib/transaction-sounds';
-import { database } from '@/lib/firebase';
-import { ref, get, set, update, runTransaction } from 'firebase/database';
+import { supabase, supabaseService } from '@/lib/supabase';
+import { getWalletAddresses, generateWalletQRData, type WalletAddress } from '@/lib/wallet-addresses';
 
 type Tab = 'deposit' | 'withdraw';
 type DepositMethod = 'bank_transfer' | 'cash' | 'card' | 'crypto';
@@ -98,13 +98,13 @@ function maskAccountNumber(accNum: string): string {
 export default function DepositScreen() {
   const { theme } = useTheme();
   const isDark = theme === 'dark';
-  const { user, depositRequests, addDepositRequest, withdrawRequests, addWithdrawRequest, applyPromoCode, fbWalletAddresses } = useAppStore();
+  const { user, depositRequests, addDepositRequest, withdrawRequests, addWithdrawRequest, applyPromoCode } = useAppStore();
 
   const [activeTab, setActiveTab] = useState<Tab>('deposit');
 
   // Deposit form
   const [depositAmount, setDepositAmount] = useState('');
-  const [depositCurrency, setDepositCurrency] = useState<'YER' | 'SAR' | 'USD'>('YER');
+  const [depositCurrency] = useState<'USD'>('USD');
   const [depositMethod, setDepositMethod] = useState<DepositMethod>('bank_transfer');
   const [receiptImage, setReceiptImage] = useState('');
   const [cardCode, setCardCode] = useState('');
@@ -120,9 +120,12 @@ export default function DepositScreen() {
   const [selectedCryptoNetwork, setSelectedCryptoNetwork] = useState('');
   const [cryptoTxHash, setCryptoTxHash] = useState('');
 
+  // Wallet addresses from Supabase
+  const [walletAddresses, setWalletAddresses] = useState<WalletAddress[]>([]);
+
   // Withdraw form
   const [withdrawAmount, setWithdrawAmount] = useState('');
-  const [withdrawCurrency, setWithdrawCurrency] = useState<'YER' | 'SAR' | 'USD'>('YER');
+  const [withdrawCurrency] = useState<'USD'>('USD');
   const [withdrawMethod, setWithdrawMethod] = useState<WithdrawMethod>('bank_transfer');
   const [bankAccountNumber, setBankAccountNumber] = useState('');
   const [bankName, setBankName] = useState('');
@@ -137,15 +140,15 @@ export default function DepositScreen() {
 
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Banks from Firebase
+  // Banks from Supabase
   const [banks, setBanks] = useState<BankInfo[]>([]);
   const [banksLoading, setBanksLoading] = useState(true);
 
-  // Crypto currencies from Firebase
+  // Crypto currencies derived from wallet addresses
   const [cryptoCurrencies, setCryptoCurrencies] = useState<CryptoCurrency[]>([]);
   const [cryptoLoading, setCryptoLoading] = useState(true);
 
-  // Exchange rates from Firebase
+  // Exchange rates from Supabase
   const [exchangeRates, setExchangeRates] = useState(defaultExchangeRates);
 
   // Copy feedback
@@ -157,48 +160,25 @@ export default function DepositScreen() {
   const [cardError, setCardError] = useState('');
   const [cardSuccess, setCardSuccess] = useState(false);
 
-  // Fetch banks, crypto currencies, and exchange rates from Firebase on mount
+  // Fetch banks, crypto currencies (wallet addresses), and exchange rates from Supabase on mount
   useEffect(() => {
     const fetchBanks = async () => {
       try {
-        const banksRef = ref(database, 'adminSettings/banks');
-        const snapshot = await get(banksRef);
-        if (snapshot.exists()) {
-          const data = snapshot.val();
-          const banksList: BankInfo[] = [];
-          if (Array.isArray(data)) {
-            data.forEach((item: Record<string, any>, index: number) => {
-              if (item && (item.bankName || item.name)) {
-                banksList.push({
-                  id: String(index),
-                  bankName: item.bankName || item.name || '',
-                  accountName: item.accountName || item.accountHolder || '',
-                  accountNumber: item.accountNumber || '',
-                  color: item.color || '#5C1A1B',
-                  icon: item.icon || '',
-                  isActive: item.isActive !== false,
-                });
-              }
-            });
-          } else if (typeof data === 'object') {
-            Object.entries(data).forEach(([key, item]: [string, Record<string, any>]) => {
-              if (item && (item.bankName || item.name)) {
-                banksList.push({
-                  id: key,
-                  bankName: item.bankName || item.name || '',
-                  accountName: item.accountName || item.accountHolder || '',
-                  accountNumber: item.accountNumber || '',
-                  color: item.color || '#5C1A1B',
-                  icon: item.icon || '',
-                  isActive: item.isActive !== false,
-                });
-              }
-            });
-          }
-          // Only show active banks
-          setBanks(banksList.filter(b => b.isActive));
-        } else {
+        const { data, error } = await supabase.from('banks').select('*').eq('is_active', true);
+        if (error) {
+          console.error('Error fetching banks:', error);
           setBanks([]);
+        } else {
+          const banksList: BankInfo[] = (data || []).map((item: Record<string, any>) => ({
+            id: item.id || '',
+            bankName: item.bank_name || item.bankName || item.name || '',
+            accountName: item.account_name || item.accountName || item.account_holder || '',
+            accountNumber: item.account_number || item.accountNumber || '',
+            color: item.color || '#5C1A1B',
+            icon: item.icon || '',
+            isActive: item.is_active ?? true,
+          }));
+          setBanks(banksList.filter(b => b.isActive));
         }
       } catch (error) {
         console.error('Error fetching banks:', error);
@@ -209,124 +189,102 @@ export default function DepositScreen() {
 
     const fetchCryptoCurrencies = async () => {
       try {
-        const cryptoList: CryptoCurrency[] = [];
-        const seenIds = new Set<string>();
+        // Fetch wallet addresses from Supabase via wallet-addresses service
+        const addresses = await getWalletAddresses();
+        setWalletAddresses(addresses);
 
-        // Helper to normalize networks from Firebase data
-        const normalizeNetworks = (item: Record<string, any>): CryptoNetwork[] | undefined => {
-          if (item.networks && Array.isArray(item.networks) && item.networks.length > 0) {
-            return item.networks.map((n: Record<string, any>) => ({
-              networkName: n.networkName || '',
-              walletAddress: n.walletAddress || '',
-              isActive: n.isActive !== false,
-            }));
-          }
-          // Convert legacy single network/walletAddress
-          if (item.network || item.walletAddress || item.address) {
-            return [{
-              networkName: item.network || '',
-              walletAddress: item.walletAddress || item.address || '',
-              isActive: true,
-            }];
-          }
-          return undefined;
-        };
+        // Build crypto currencies list from wallet addresses
+        const cryptoMap = new Map<string, CryptoCurrency>();
 
-        // First, try reading from adminSettings/currencyCards (admin panel source)
-        try {
-          const cardsRef = ref(database, 'adminSettings/currencyCards');
-          const cardsSnapshot = await get(cardsRef);
-          if (cardsSnapshot.exists()) {
-            const cardsData = cardsSnapshot.val();
-            if (typeof cardsData === 'object') {
-              Object.entries(cardsData).forEach(([key, item]: [string, Record<string, any>]) => {
-                if (item && item.isCrypto && item.isActive !== false) {
-                  const networks = normalizeNetworks(item);
-                  const id = item.id || key;
-                  if (!seenIds.has(id)) {
-                    seenIds.add(id);
-                    cryptoList.push({
-                      id,
-                      name: item.name || '',
-                      symbol: item.symbol || '',
-                      code: item.code || '',
-                      network: item.network || (networks && networks[0]?.networkName) || '',
-                      address: item.walletAddress || (networks && networks[0]?.walletAddress) || '',
-                      icon: item.icon || '',
-                      color: item.color || '#26A17B',
-                      isActive: item.isActive !== false,
-                      minDeposit: item.minDeposit || 10,
-                      minWithdraw: item.minWithdraw || 20,
-                      networks,
-                    });
-                  }
-                }
+        for (const addr of addresses) {
+          const key = `${addr.currency}-${addr.network}`;
+          if (!cryptoMap.has(key)) {
+            const networkColor = addr.color || '#26A17B';
+            cryptoMap.set(key, {
+              id: key,
+              name: `${addr.currency} (${addr.network})`,
+              symbol: addr.currency,
+              network: addr.network,
+              address: addr.address,
+              icon: addr.icon,
+              color: networkColor,
+              isActive: addr.active,
+              minDeposit: addr.minDeposit || 10,
+              minWithdraw: 20,
+              networks: [{
+                networkName: addr.network,
+                walletAddress: addr.address,
+                isActive: addr.active,
+              }],
+            });
+          } else {
+            // Add additional network to existing crypto
+            const existing = cryptoMap.get(key)!;
+            if (!existing.networks) existing.networks = [];
+            existing.networks.push({
+              networkName: addr.network,
+              walletAddress: addr.address,
+              isActive: addr.active,
+            });
+          }
+        }
+
+        // Also group by currency for multi-network currencies
+        const currencyCryptoMap = new Map<string, CryptoCurrency>();
+        for (const addr of addresses) {
+          const currKey = addr.currency;
+          if (!currencyCryptoMap.has(currKey)) {
+            currencyCryptoMap.set(currKey, {
+              id: currKey,
+              name: addr.currency,
+              symbol: addr.currency,
+              network: addr.network,
+              address: addr.address,
+              icon: addr.icon,
+              color: addr.color || '#26A17B',
+              isActive: addr.active,
+              minDeposit: addr.minDeposit || 10,
+              minWithdraw: 20,
+              networks: [{
+                networkName: addr.network,
+                walletAddress: addr.address,
+                isActive: addr.active,
+              }],
+            });
+          } else {
+            const existing = currencyCryptoMap.get(currKey)!;
+            if (!existing.networks) existing.networks = [];
+            // Avoid duplicates
+            const alreadyExists = existing.networks.some(n => n.networkName === addr.network);
+            if (!alreadyExists) {
+              existing.networks.push({
+                networkName: addr.network,
+                walletAddress: addr.address,
+                isActive: addr.active,
               });
             }
           }
-        } catch (error) {
-          console.error('Error fetching currencyCards:', error);
         }
 
-        // Also read from adminSettings/cryptoCurrencies (legacy source) and merge
-        try {
-          const cryptoRef = ref(database, 'adminSettings/cryptoCurrencies');
-          const snapshot = await get(cryptoRef);
-          if (snapshot.exists()) {
-            const data = snapshot.val();
-            const processItems = (items: Record<string, any>, getKey: (idx: number) => string) => {
-              Object.entries(items).forEach(([key, item]: [string, Record<string, any>]) => {
-                if (item && item.name && item.isActive !== false) {
-                  const id = item.id || getKey(parseInt(key) || 0);
-                  if (!seenIds.has(id)) {
-                    seenIds.add(id);
-                    const networks = normalizeNetworks(item);
-                    cryptoList.push({
-                      id,
-                      name: item.name || '',
-                      symbol: item.symbol || '',
-                      network: item.network || '',
-                      address: item.address || '',
-                      icon: item.icon || '',
-                      color: item.color || '#26A17B',
-                      isActive: item.isActive !== false,
-                      minDeposit: item.minDeposit || 10,
-                      minWithdraw: item.minWithdraw || 20,
-                      networks,
-                    });
-                  }
-                }
-              });
-            };
-            if (Array.isArray(data)) {
-              processItems(Object.fromEntries(data.entries()), (i) => String(i));
-            } else if (typeof data === 'object') {
-              processItems(data, (i) => String(i));
-            }
-          }
-        } catch (error) {
-          console.error('Error fetching cryptoCurrencies:', error);
-        }
-
-        // Only show active cryptos
-        setCryptoCurrencies(cryptoList.filter(c => c.isActive));
+        // Use currency-grouped list for display
+        const cryptoList = Array.from(currencyCryptoMap.values()).filter(c => c.isActive);
+        setCryptoCurrencies(cryptoList);
       } catch (error) {
         console.error('Error fetching crypto currencies:', error);
         setCryptoCurrencies([]);
+        setWalletAddresses([]);
       }
       setCryptoLoading(false);
     };
 
     const fetchExchangeRates = async () => {
       try {
-        const ratesRef = ref(database, 'adminSettings/exchangeRates');
-        const snapshot = await get(ratesRef);
-        if (snapshot.exists()) {
-          const data = snapshot.val();
+        const rate = await supabaseService.getExchangeRates();
+        if (rate) {
           setExchangeRates({
-            YER: data.YER ?? defaultExchangeRates.YER,
-            SAR: data.SAR ?? defaultExchangeRates.SAR,
-            USD: data.USD ?? defaultExchangeRates.USD,
+            YER: rate.usd_to_yer ?? defaultExchangeRates.YER,
+            SAR: rate.usd_to_sar ?? defaultExchangeRates.SAR,
+            USD: 1,
           });
         }
       } catch (error) {
@@ -411,7 +369,7 @@ export default function DepositScreen() {
     }
   };
 
-  // Validate and redeem recharge card code against Firebase bulkCodes
+  // Validate and redeem recharge card code against Supabase bulk_codes
   const handleRedeemCardCode = async () => {
     if (!user || !cardCode.trim()) return;
 
@@ -420,72 +378,74 @@ export default function DepositScreen() {
     setIsSubmitting(true);
 
     try {
-      // Search through all products in bulkCodes
-      const bulkCodesRef = ref(database, 'adminSettings/bulkCodes');
-      const snapshot = await get(bulkCodesRef);
+      // Search for the code in bulk_codes table
+      const { data: codeData, error: codeError } = await supabase
+        .from('bulk_codes')
+        .select('*')
+        .eq('code', cardCode.trim())
+        .eq('status', 'active')
+        .single();
 
-      if (!snapshot.exists()) {
+      if (codeError || !codeData) {
         setCardError('كود الشحن غير صالح أو مستخدم مسبقاً');
         setIsSubmitting(false);
         return;
       }
 
-      const bulkData = snapshot.val();
-      let foundCode: { productId: string; codeKey: string; codeData: Record<string, any> } | null = null;
-
-      // Iterate over products
-      for (const [productId, productData] of Object.entries(bulkData as Record<string, any>)) {
-        if (!productData || !productData.codes) continue;
-
-        // Iterate over codes in this product
-        for (const [codeKey, codeData] of Object.entries(productData.codes as Record<string, any>)) {
-          if (codeData && codeData.code === cardCode.trim()) {
-            foundCode = { productId, codeKey, codeData };
-            break;
-          }
-        }
-        if (foundCode) break;
-      }
-
-      if (!foundCode) {
-        setCardError('كود الشحن غير صالح أو مستخدم مسبقاً');
-        setIsSubmitting(false);
-        return;
-      }
-
-      if (foundCode.codeData.used || foundCode.codeData.status === 'used') {
+      if (codeData.used || codeData.status === 'used') {
         setCardError('كود الشحن غير صالح أو مستخدم مسبقاً');
         setIsSubmitting(false);
         return;
       }
 
       // Mark the code as used
-      const codeRef = ref(database, `adminSettings/bulkCodes/${foundCode.productId}/codes/${foundCode.codeKey}`);
-      await update(codeRef, {
-        used: true,
-        usedBy: user.id,
-        usedAt: new Date().toISOString(),
-        status: 'used',
-      });
+      const { error: updateCodeError } = await supabase
+        .from('bulk_codes')
+        .update({
+          used: true,
+          used_by: user.id,
+          used_at: new Date().toISOString(),
+          status: 'used',
+        })
+        .eq('id', codeData.id);
 
-      // Credit the user's balance
-      const cardAmount = foundCode.codeData.amount || foundCode.codeData.value || 0;
-      const cardCurrency = foundCode.codeData.currency || 'YER';
-      const balanceKey = `balance${cardCurrency}`;
+      if (updateCodeError) {
+        console.error('Error marking code as used:', updateCodeError);
+        setCardError('حدث خطأ أثناء تحديث الكود');
+        setIsSubmitting(false);
+        return;
+      }
+
+      // Credit the user's balance via Supabase
+      const cardAmount = codeData.amount || codeData.value || 0;
+      const cardCurrency = codeData.currency || 'USD';
+      const balanceKey = `balance${cardCurrency}` as keyof typeof user;
 
       if (cardAmount > 0 && user.id) {
-        // Use runTransaction to avoid race conditions on balance
-        const txResult = await runTransaction(ref(database, `users/${user.id}/${balanceKey}`), (currentVal) => {
-          return (currentVal || 0) + cardAmount;
-        });
+        // Get current balance and update
+        const { data: userData, error: userError } = await supabase
+          .from('users')
+          .select(`balance_${cardCurrency.toLowerCase()}`)
+          .eq('id', user.id)
+          .single();
 
-        // Update local store
-        const storeUser = useAppStore.getState().user;
-        if (storeUser && txResult.snapshot.val() !== null) {
-          useAppStore.getState().setUser({
-            ...storeUser,
-            [balanceKey]: txResult.snapshot.val(),
-          });
+        if (!userError && userData) {
+          const currentVal = userData[`balance_${cardCurrency.toLowerCase()}`] || 0;
+          const newBalance = currentVal + cardAmount;
+
+          await supabase
+            .from('users')
+            .update({ [`balance_${cardCurrency.toLowerCase()}`]: newBalance, updated_at: new Date().toISOString() })
+            .eq('id', user.id);
+
+          // Update local store
+          const storeUser = useAppStore.getState().user;
+          if (storeUser) {
+            useAppStore.getState().setUser({
+              ...storeUser,
+              [balanceKey]: newBalance,
+            });
+          }
         }
       }
 
@@ -546,9 +506,28 @@ export default function DepositScreen() {
         request.notes = `إيداع ${selectedCrypto?.symbol || ''} - شبكة: ${activeNetworkName} - العنوان: ${depositAddress} - Hash: ${cryptoTxHash.trim()}`;
       }
 
-      // Save to Firebase
-      const depositRef = ref(database, `depositRequests/${requestId}`);
-      await set(depositRef, request);
+      // Save to Supabase
+      await supabaseService.createDepositRequest({
+        id: requestId,
+        user_id: user.id,
+        amount: depositAmountNum + promoDiscount,
+        currency: depositCurrency,
+        method: depositMethod,
+        bank_name: depositMethod === 'bank_transfer' ? (banks.find(b => b.id === selectedBankId)?.bankName || '') : '',
+        bank_account: '',
+        sender_name: user.name,
+        transfer_receipt_url: depositMethod === 'bank_transfer' ? receiptImage : '',
+        crypto_network: depositMethod === 'crypto' ? (request.cryptoNetwork || '') : '',
+        crypto_wallet_address: depositMethod === 'crypto' ? (request.cryptoDepositAddress || '') : '',
+        crypto_tx_hash: depositMethod === 'crypto' ? (request.cryptoTxHash || '') : '',
+        status: 'pending',
+        rejection_reason: '',
+        admin_notes: request.notes || '',
+        reviewed_by: null,
+        reviewed_at: null,
+        transaction_id: null,
+        updated_at: new Date().toISOString(),
+      });
 
       // Send notification to admin about new deposit
       try {
@@ -620,9 +599,28 @@ export default function DepositScreen() {
         request.notes = `سحب ${selectedCrypto?.symbol || ''} - شبكة: ${activeNetworkName} - محفظة: ${cryptoWalletAddress.trim()}`;
       }
 
-      // Save to Firebase
-      const withdrawRef = ref(database, `withdrawRequests/${requestId}`);
-      await set(withdrawRef, request);
+      // Save to Supabase
+      await supabaseService.createWithdrawRequest({
+        id: requestId,
+        user_id: user.id,
+        amount: withdrawAmountNum,
+        currency: withdrawCurrency,
+        method: withdrawMethod,
+        bank_name: withdrawMethod === 'bank_transfer' ? bankName : '',
+        bank_account: withdrawMethod === 'bank_transfer' ? bankAccountNumber : '',
+        bank_iban: '',
+        crypto_network: withdrawMethod === 'crypto' ? (request.cryptoNetwork || '') : '',
+        crypto_wallet_address: withdrawMethod === 'crypto' ? (request.cryptoWalletAddress || '') : '',
+        status: 'pending',
+        rejection_reason: '',
+        admin_notes: request.notes || '',
+        reviewed_by: null,
+        reviewed_at: null,
+        processed_by: null,
+        processed_at: null,
+        transaction_id: null,
+        updated_at: new Date().toISOString(),
+      });
 
       // Send notification to admin about new withdraw request
       try {
@@ -686,6 +684,15 @@ export default function DepositScreen() {
   const selectedDepositNetworkData = selectedCryptoNetworks.find(n => n.networkName === selectedCryptoNetwork);
   // Get the currently selected network data for withdraw
   const selectedWithdrawNetworkData = selectedWithdrawCryptoNetworks.find(n => n.networkName === selectedWithdrawCryptoNetwork);
+
+  // Get the WalletAddress object for QR code generation
+  const getSelectedWalletAddress = useCallback((): WalletAddress | null => {
+    if (!selectedDepositNetworkData) return null;
+    return walletAddresses.find(wa =>
+      wa.address === selectedDepositNetworkData.walletAddress &&
+      wa.network === selectedDepositNetworkData.networkName
+    ) || null;
+  }, [selectedDepositNetworkData, walletAddresses]);
 
   // Get selected bank for display
   const selectedBank = banks.find(b => b.id === selectedBankId);
@@ -835,36 +842,8 @@ export default function DepositScreen() {
                     dir="ltr"
                   />
                   <span className="text-sm font-medium" style={{ color: isDark ? '#888' : '#AAA' }}>
-                    {currencySymbols[depositCurrency]}
+                    USD
                   </span>
-                </div>
-              </div>
-
-              {/* Currency Selector */}
-              <div
-                className="rounded-2xl p-4"
-                style={{
-                  background: isDark ? 'rgba(30,30,30,0.6)' : 'rgba(255,255,255,0.7)',
-                  backdropFilter: 'blur(20px)',
-                  border: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'}`,
-                }}
-              >
-                <label className="text-xs font-medium block mb-2" style={{ color: isDark ? '#AAA' : '#666' }}>العملة</label>
-                <div className="flex gap-2">
-                  {(['YER', 'SAR', 'USD'] as const).map((curr) => (
-                    <button
-                      key={curr}
-                      onClick={() => setDepositCurrency(curr)}
-                      className="flex-1 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all"
-                      style={{
-                        background: depositCurrency === curr ? currencyBadgeColors[curr] : (isDark ? '#1A1A1A' : '#F5F5F5'),
-                        color: depositCurrency === curr ? '#FFF' : (isDark ? '#AAA' : '#666'),
-                        boxShadow: depositCurrency === curr ? `0 2px 8px ${currencyBadgeColors[curr]}44` : 'none',
-                      }}
-                    >
-                      {curr}
-                    </button>
-                  ))}
                 </div>
               </div>
 
@@ -1066,61 +1045,67 @@ export default function DepositScreen() {
                     <span className="text-xs font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>إيداع عملات رقمية</span>
                   </div>
 
-                  {/* Wallet Addresses from Admin Settings */}
-                  {Object.entries(fbWalletAddresses || {}).filter(([, a]: [string, any]) => a.isActive !== false).length > 0 && (
+                  {/* Wallet Addresses from Supabase */}
+                  {walletAddresses.length > 0 && (
                     <div className="mb-4">
                       <label className="text-xs font-medium block mb-2" style={{ color: isDark ? '#AAA' : '#666' }}>عناوين الإيداع</label>
-                      <div className="space-y-2">
-                        {Object.entries(fbWalletAddresses || {})
-                          .filter(([, a]: [string, any]) => a.isActive !== false)
-                          .map(([id, addr]: [string, any]) => (
-                            <div
-                              key={id}
-                              className="p-3 rounded-xl"
-                              style={{
-                                background: isDark ? '#1A1A1A' : '#F8F8F8',
-                                border: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'}`,
-                              }}
-                            >
-                              <div className="flex items-center justify-between mb-2">
-                                <div className="flex items-center gap-2">
-                                  <span className="text-xs font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>{addr.label}</span>
-                                  <span className="text-[9px] px-1.5 py-0.5 rounded-full font-medium" style={{ background: '#5C1A1B15', color: '#5C1A1B' }}>
-                                    {addr.network}
-                                  </span>
-                                  <span className="text-[9px] px-1.5 py-0.5 rounded-full font-medium" style={{ background: '#26A17B15', color: '#26A17B' }}>
-                                    {addr.currency}
-                                  </span>
-                                </div>
-                              </div>
+                      <div className="space-y-3">
+                        {walletAddresses.filter(a => a.active).map((addr) => (
+                          <div
+                            key={addr.id}
+                            className="p-3 rounded-xl"
+                            style={{
+                              background: isDark ? '#1A1A1A' : '#F8F8F8',
+                              border: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'}`,
+                            }}
+                          >
+                            <div className="flex items-center justify-between mb-2">
                               <div className="flex items-center gap-2">
-                                <code className="text-[10px] flex-1 truncate px-2 py-1 rounded-lg" style={{ background: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)' }} dir="ltr">
-                                  {addr.address}
-                                </code>
-                                <button
-                                  onClick={async () => {
-                                    try {
-                                      await navigator.clipboard.writeText(addr.address);
-                                    } catch {}
-                                  }}
-                                  className="shrink-0 p-1.5 rounded-lg active:scale-95 transition-transform"
-                                  style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}
-                                >
-                                  <Copy size={14} strokeWidth={1.5} color={isDark ? '#AAA' : '#666'} />
-                                </button>
+                                <span className="text-xs font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>{addr.label}</span>
+                                <span className="text-[9px] px-1.5 py-0.5 rounded-full font-medium" style={{ background: '#5C1A1B15', color: '#5C1A1B' }}>
+                                  {addr.network}
+                                </span>
+                                <span className="text-[9px] px-1.5 py-0.5 rounded-full font-medium" style={{ background: '#26A17B15', color: '#26A17B' }}>
+                                  {addr.currency}
+                                </span>
                               </div>
-                              {(addr.minDeposit > 0 || addr.maxDeposit > 0) && (
-                                <p className="text-[9px] mt-1.5" style={{ color: isDark ? '#555' : '#999' }}>
-                                  {addr.minDeposit > 0 && `الحد الأدنى: ${addr.minDeposit} ${addr.currency}`}
-                                  {addr.minDeposit > 0 && addr.maxDeposit > 0 && ' | '}
-                                  {addr.maxDeposit > 0 && `الحد الأقصى: ${addr.maxDeposit} ${addr.currency}`}
-                                </p>
-                              )}
-                              {addr.notes && (
-                                <p className="text-[9px] mt-1" style={{ color: isDark ? '#444' : '#BBB' }}>{addr.notes}</p>
-                              )}
                             </div>
-                          ))}
+                            <div className="flex items-center gap-2">
+                              <code className="text-[10px] flex-1 truncate px-2 py-1 rounded-lg" style={{ background: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)' }} dir="ltr">
+                                {addr.address}
+                              </code>
+                              <button
+                                onClick={async () => {
+                                  try {
+                                    await navigator.clipboard.writeText(addr.address);
+                                  } catch {}
+                                }}
+                                className="shrink-0 p-1.5 rounded-lg active:scale-95 transition-transform"
+                                style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}
+                              >
+                                <Copy size={14} strokeWidth={1.5} color={isDark ? '#AAA' : '#666'} />
+                              </button>
+                            </div>
+                            {addr.minDeposit > 0 && (
+                              <p className="text-[9px] mt-1.5" style={{ color: isDark ? '#555' : '#999' }}>
+                                الحد الأدنى: ${addr.minDeposit} USD
+                              </p>
+                            )}
+                            {/* QR Code for wallet address */}
+                            <div className="flex justify-center my-3">
+                              <QRCodeSVG
+                                value={generateWalletQRData(addr)}
+                                size={180}
+                                bgColor={isDark ? '#1e1b4b' : '#ffffff'}
+                                fgColor={isDark ? '#ffffff' : '#000000'}
+                                level="M"
+                              />
+                            </div>
+                            {addr.instructionsAr && (
+                              <p className="text-[9px] mt-1" style={{ color: isDark ? '#444' : '#BBB' }}>{addr.instructionsAr}</p>
+                            )}
+                          </div>
+                        ))}
                       </div>
                     </div>
                   )}
@@ -1129,7 +1114,7 @@ export default function DepositScreen() {
                     <div className="flex items-center justify-center py-6">
                       <div className="w-6 h-6 border-2 border-green-500/30 border-t-green-500 rounded-full animate-spin" />
                     </div>
-                  ) : cryptoCurrencies.length === 0 ? (
+                  ) : cryptoCurrencies.length === 0 && walletAddresses.length === 0 ? (
                     <div className="flex flex-col items-center py-6">
                       <Coins size={24} strokeWidth={1.5} color={isDark ? '#333' : '#DDD'} />
                       <p className="text-xs mt-2" style={{ color: isDark ? '#555' : '#AAA' }}>لا توجد عملات رقمية متاحة حالياً</p>
@@ -1231,6 +1216,13 @@ export default function DepositScreen() {
                             const displayNetwork = selectedCryptoNetwork || (selectedCryptoNetworks.length === 1 ? selectedCryptoNetworks[0].networkName : '');
                             const displayNetData = selectedCryptoNetworks.find(n => n.networkName === displayNetwork);
                             if (!displayNetData || !displayNetData.walletAddress) return null;
+
+                            // Find the WalletAddress object for QR generation
+                            const walletAddr = walletAddresses.find(wa =>
+                              wa.address === displayNetData.walletAddress &&
+                              wa.network === displayNetData.networkName
+                            );
+
                             return (
                               <div className="rounded-xl p-3" style={{ background: isDark ? '#1A1A1A' : '#F8F8F8', borderRight: `3px solid ${selectedCrypto.color}` }}>
                                 <div className="flex items-center gap-2 mb-2">
@@ -1255,17 +1247,15 @@ export default function DepositScreen() {
                                     )}
                                   </button>
                                 </div>
-                                {/* QR Code using QRCodeSVG */}
-                                <div className="mt-2 flex justify-center">
-                                  <div className="w-36 h-36 rounded-xl flex items-center justify-center p-2" style={{ background: '#FFFFFF' }}>
-                                    <QRCodeSVG
-                                      value={displayNetData.walletAddress}
-                                      size={128}
-                                      level="M"
-                                      bgColor="#FFFFFF"
-                                      fgColor="#000000"
-                                    />
-                                  </div>
+                                {/* QR Code using QRCodeSVG with generateWalletQRData */}
+                                <div className="flex justify-center my-3">
+                                  <QRCodeSVG
+                                    value={walletAddr ? generateWalletQRData(walletAddr) : displayNetData.walletAddress}
+                                    size={180}
+                                    bgColor={isDark ? '#1e1b4b' : '#ffffff'}
+                                    fgColor={isDark ? '#ffffff' : '#000000'}
+                                    level="M"
+                                  />
                                 </div>
                               </div>
                             );
@@ -1276,7 +1266,7 @@ export default function DepositScreen() {
                             <div className="flex items-center gap-1.5">
                               <Info size={10} color={selectedCrypto.color} />
                               <span className="text-[10px]" style={{ color: isDark ? '#666' : '#AAA' }}>
-                                الحد الأدنى للإيداع: {selectedCrypto.minDeposit} {selectedCrypto.symbol}
+                                الحد الأدنى للإيداع: ${selectedCrypto.minDeposit} USD
                               </span>
                             </div>
                           )}
@@ -1305,7 +1295,7 @@ export default function DepositScreen() {
                             <span className="text-[10px]" style={{ color: isDark ? '#AAA' : '#666' }}>
                               {selectedCryptoNetworks.length > 1
                                 ? 'تأكد من إرسال العملات على الشبكة المحددة فقط. الإرسال على شبكة خاطئة قد يؤدي لفقدان أموالك.'
-                                : `تأكد من إرسال العملات على شبكة ${selectedCryptoNetworks[0]?.networkName || selectedCrypto.network} فقط. الإرسال على شبكة خاطئة قد يؤدي لفقدان أموالك.`}
+                                : `تأكد من إرسال ${selectedCrypto.symbol} على شبكة ${selectedCrypto.network} فقط. الإرسال على شبكة خاطئة قد يؤدي لفقدان أموالك.`}
                             </span>
                           </div>
                         </motion.div>
@@ -1447,7 +1437,7 @@ export default function DepositScreen() {
                   {promoApplied && (
                     <div className="flex items-center gap-1.5 mt-2">
                       <Tag size={10} color="#10B981" />
-                      <span className="text-[10px]" style={{ color: '#10B981' }}>خصم {formatNumber(promoDiscount)} {currencySymbols[depositCurrency]}</span>
+                      <span className="text-[10px]" style={{ color: '#10B981' }}>خصم ${formatNumber(promoDiscount)} USD</span>
                     </div>
                   )}
                 </div>
@@ -1466,7 +1456,7 @@ export default function DepositScreen() {
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-white/50 text-[10px]">الرصيد بعد الإيداع</p>
-                      <p className="text-white text-xl font-bold">{formatNumber(balanceAfterDeposit)} {currencySymbols[depositCurrency]}</p>
+                      <p className="text-white text-xl font-bold">${formatNumber(balanceAfterDeposit)} USD</p>
                     </div>
                     <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'rgba(255,255,255,0.15)' }}>
                       <Wallet size={18} color="#FFF" strokeWidth={1.5} />
@@ -1533,41 +1523,14 @@ export default function DepositScreen() {
                     dir="ltr"
                   />
                   <span className="text-sm font-medium" style={{ color: isDark ? '#888' : '#AAA' }}>
-                    {currencySymbols[withdrawCurrency]}
+                    USD
                   </span>
                 </div>
                 <div className="flex items-center gap-1 mt-1">
                   <Info size={10} color={isDark ? '#666' : '#AAA'} />
                   <span className="text-[10px]" style={{ color: isDark ? '#666' : '#AAA' }}>
-                    الرصيد المتاح: {formatNumber(withdrawBalance)} {currencySymbols[withdrawCurrency]}
+                    الرصيد المتاح: ${formatNumber(withdrawBalance)} USD
                   </span>
-                </div>
-              </div>
-
-              {/* Currency Selector */}
-              <div
-                className="rounded-2xl p-4"
-                style={{
-                  background: isDark ? 'rgba(30,30,30,0.6)' : 'rgba(255,255,255,0.7)',
-                  backdropFilter: 'blur(20px)',
-                  border: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'}`,
-                }}
-              >
-                <label className="text-xs font-medium block mb-2" style={{ color: isDark ? '#AAA' : '#666' }}>العملة</label>
-                <div className="flex gap-2">
-                  {(['YER', 'SAR', 'USD'] as const).map((curr) => (
-                    <button
-                      key={curr}
-                      onClick={() => setWithdrawCurrency(curr)}
-                      className="flex-1 py-2.5 rounded-xl text-xs font-bold transition-all"
-                      style={{
-                        background: withdrawCurrency === curr ? currencyBadgeColors[curr] : (isDark ? '#1A1A1A' : '#F5F5F5'),
-                        color: withdrawCurrency === curr ? '#FFF' : (isDark ? '#AAA' : '#666'),
-                      }}
-                    >
-                      {curr}
-                    </button>
-                  ))}
                 </div>
               </div>
 
@@ -1874,7 +1837,7 @@ export default function DepositScreen() {
                                   <div className="flex items-center gap-1.5">
                                     <Info size={10} color={selectedWithdrawCrypto.color} />
                                     <span className="text-[10px]" style={{ color: isDark ? '#666' : '#AAA' }}>
-                                      الحد الأدنى للسحب: {selectedWithdrawCrypto.minWithdraw} {selectedWithdrawCrypto.symbol}
+                                      الحد الأدنى للسحب: ${selectedWithdrawCrypto.minWithdraw} USD
                                     </span>
                                   </div>
                                 )}
@@ -1910,7 +1873,7 @@ export default function DepositScreen() {
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="text-white/50 text-[10px]">الرصيد بعد السحب</p>
-                      <p className="text-white text-xl font-bold">{formatNumber(Math.max(0, balanceAfterWithdraw))} {currencySymbols[withdrawCurrency]}</p>
+                      <p className="text-white text-xl font-bold">${formatNumber(Math.max(0, balanceAfterWithdraw))} USD</p>
                       {balanceAfterWithdraw < 0 && (
                         <p className="text-[10px] mt-1" style={{ color: '#FCA5A5' }}>المبلغ يتجاوز الرصيد المتاح</p>
                       )}
@@ -1997,10 +1960,10 @@ export default function DepositScreen() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           <p className="text-sm font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
-                            {formatNumber(req.amount)} {currencySymbols[req.currency]}
+                            ${formatNumber(req.amount)} USD
                           </p>
-                          <span className="text-[9px] px-1.5 py-0.5 rounded font-bold text-white" style={{ background: currencyBadgeColors[req.currency] }}>
-                            {req.currency}
+                          <span className="text-[9px] px-1.5 py-0.5 rounded font-bold text-white" style={{ background: '#5C1A1B' }}>
+                            USD
                           </span>
                         </div>
                         <p className="text-[10px]" style={{ color: isDark ? '#666' : '#AAA' }}>{methodLabel(req.method)}</p>
@@ -2055,10 +2018,10 @@ export default function DepositScreen() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           <p className="text-sm font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
-                            {formatNumber(req.amount)} {currencySymbols[req.currency]}
+                            ${formatNumber(req.amount)} USD
                           </p>
-                          <span className="text-[9px] px-1.5 py-0.5 rounded font-bold text-white" style={{ background: currencyBadgeColors[req.currency] }}>
-                            {req.currency}
+                          <span className="text-[9px] px-1.5 py-0.5 rounded font-bold text-white" style={{ background: '#5C1A1B' }}>
+                            USD
                           </span>
                         </div>
                         <p className="text-[10px]" style={{ color: isDark ? '#666' : '#AAA' }}>{methodLabel(req.method)}</p>

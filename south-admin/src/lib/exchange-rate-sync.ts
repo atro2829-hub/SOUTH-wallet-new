@@ -1,11 +1,10 @@
 /**
  * Exchange Rate Sync Utility
  * Fetches rates from yemenrates.com API via Supabase proxy
- * and updates Firebase Realtime Database
+ * and updates Supabase database
  */
 
-import { get, update, ref, set } from 'firebase/database';
-import { database } from './firebase';
+import { supabase } from './supabase';
 
 const EXCHANGE_RATE_API_BASE = 'https://cygrlhmnmckoefefnsjc.supabase.co/functions/v1/public-api/latest';
 
@@ -69,7 +68,7 @@ async function fetchApiRates(currency: string, city: string = 'aden'): Promise<A
 }
 
 /**
- * Fetch all rates (USD and SAR) from the API and update Firebase
+ * Fetch all rates (USD and SAR) from the API and update Supabase
  */
 export async function syncExchangeRatesFromApi(): Promise<SimplifiedRates> {
   // Fetch both USD and SAR rates in parallel
@@ -110,21 +109,42 @@ export async function syncExchangeRatesFromApi(): Promise<SimplifiedRates> {
     commission: 2, // Default commission, will be preserved from existing
   };
 
-  // Get existing commission from Firebase
+  // Get existing commission from Supabase
   try {
-    const snapshot = await get(ref(database, 'adminSettings/exchangeRates/commission'));
-    if (snapshot.exists() && typeof snapshot.val() === 'number') {
-      exchangeData.commission = snapshot.val();
+    const { data: existingRate } = await supabase
+      .from('exchange_rates')
+      .select('usd_to_yer, sar_to_yer')
+      .eq('is_active', true)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (existingRate) {
+      // Preserve existing commission by checking app_config
+      const { data: configData } = await supabase
+        .from('app_config')
+        .select('value')
+        .eq('key', 'exchange_commission')
+        .single();
+
+      if (configData?.value && typeof configData.value.commission === 'number') {
+        exchangeData.commission = configData.value.commission;
+      }
     }
   } catch {
-    // Keep default
+    // Keep default commission
   }
 
   // Get manual overrides from admin settings
   try {
-    const snapshot = await get(ref(database, 'adminSettings/apiSettings/manualOverrides'));
-    if (snapshot.exists()) {
-      const overrides = snapshot.val();
+    const { data: overrideData } = await supabase
+      .from('app_config')
+      .select('value')
+      .eq('key', 'manual_rate_overrides')
+      .single();
+
+    if (overrideData?.value) {
+      const overrides = overrideData.value;
       if (overrides.YER_USD && overrides.YER_USD > 0) exchangeData.YER_USD = overrides.YER_USD;
       if (overrides.YER_SAR && overrides.YER_SAR > 0) exchangeData.YER_SAR = overrides.YER_SAR;
     }
@@ -132,16 +152,34 @@ export async function syncExchangeRatesFromApi(): Promise<SimplifiedRates> {
     // No overrides
   }
 
-  // Update Firebase
-  await set(ref(database, 'adminSettings/exchangeRates'), exchangeData);
+  // Update Supabase exchange_rates table
+  // First, deactivate existing rates
+  await supabase
+    .from('exchange_rates')
+    .update({ is_active: false })
+    .eq('is_active', true);
 
-  // Also update the legacy path for compatibility
-  await set(ref(database, 'settings/exchangeRates'), {
-    YER: 1,
-    SAR: sarSell,
-    USD: usdSell,
-    commission: exchangeData.commission,
-  });
+  // Insert new rate
+  await supabase
+    .from('exchange_rates')
+    .insert({
+      usd_to_yer: exchangeData.YER_USD,
+      usd_to_sar: (1 / exchangeData.YER_SAR * exchangeData.YER_USD), // derived
+      sar_to_yer: exchangeData.YER_SAR,
+      source: exchangeData.source,
+      is_active: true,
+      updated_by: null,
+    });
+
+  // Also update app_config with the full exchange data for admin reference
+  await supabase
+    .from('app_config')
+    .upsert({
+      key: 'exchange_rate_data',
+      value: exchangeData,
+      description: 'Current exchange rate data including buy/sell rates',
+      updated_at: now,
+    }, { onConflict: 'key' });
 
   return {
     YER: 1,
@@ -155,27 +193,57 @@ export async function syncExchangeRatesFromApi(): Promise<SimplifiedRates> {
 }
 
 /**
- * Get exchange rates from Firebase (local read, no API call)
+ * Get exchange rates from Supabase (local read, no API call)
  */
 export async function getExchangeRatesFromFirebase(): Promise<SimplifiedRates> {
-  const snapshot = await get(ref(database, 'adminSettings/exchangeRates'));
-  if (snapshot.exists()) {
-    const data = snapshot.val();
-    return {
-      YER: 1,
-      SAR: data.YER_SAR || 410,
-      USD: data.YER_USD || 1550,
-      commission: data.commission || 2,
-      lastSynced: data.lastSynced || new Date().toISOString(),
-      buyRates: {
-        USD: data.USD_buy || data.YER_USD || 1550,
-        SAR: data.SAR_buy || data.YER_SAR || 410,
-      },
-      sellRates: {
-        USD: data.USD_sell || data.YER_USD || 1550,
-        SAR: data.SAR_sell || data.YER_SAR || 410,
-      },
-    };
+  try {
+    const { data, error } = await supabase
+      .from('exchange_rates')
+      .select('*')
+      .eq('is_active', true)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (!error && data) {
+      // Also try to get extended data from app_config
+      let buyUsd = data.usd_to_yer;
+      let buySar = data.sar_to_yer;
+      let sellUsd = data.usd_to_yer;
+      let sellSar = data.sar_to_yer;
+      let commission = 2;
+
+      try {
+        const { data: configData } = await supabase
+          .from('app_config')
+          .select('value')
+          .eq('key', 'exchange_rate_data')
+          .single();
+
+        if (configData?.value) {
+          const ext = configData.value;
+          buyUsd = ext.USD_buy || ext.YER_USD || buyUsd;
+          buySar = ext.SAR_buy || ext.YER_SAR || buySar;
+          sellUsd = ext.USD_sell || ext.YER_USD || sellUsd;
+          sellSar = ext.SAR_sell || ext.YER_SAR || sellSar;
+          commission = ext.commission || commission;
+        }
+      } catch {
+        // Use basic rates
+      }
+
+      return {
+        YER: 1,
+        SAR: data.sar_to_yer || 410,
+        USD: data.usd_to_yer || 1550,
+        commission,
+        lastSynced: data.updated_at || new Date().toISOString(),
+        buyRates: { USD: buyUsd, SAR: buySar },
+        sellRates: { USD: sellUsd, SAR: sellSar },
+      };
+    }
+  } catch {
+    // Fall through to defaults
   }
 
   // Default fallback

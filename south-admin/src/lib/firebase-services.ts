@@ -1,21 +1,19 @@
 /**
- * Firebase Services Layer for South Wallet
+ * Firebase Services Layer for South Wallet Admin
  *
- * Centralized service for reading ALL dynamic data from Firebase RTDB.
- * The user app reads: sections, providers, wallet services, API providers,
- * packages, and visibility settings from Firebase.
- * 
- * Firebase structure:
- *   sections/{sectionId} - Main sections with sub-sections
- *   providers/{providerId} - Service providers (synced from admin)
- *   walletServices/{serviceId} - Wallet services with packages
- *   adminSettings/apiProviders/{id} - API providers with categories/products
- *   adminSettings/visibility/ - Visibility settings
- *   adminSettings/featureFlags/ - Feature toggles
+ * MIGRATED: All data reads now go through Supabase instead of Firebase RTDB.
+ * Firebase is only used for Auth (authentication, FCM push notifications, Storage).
+ *
+ * This module provides Supabase-based data access for:
+ *   - Sections (categories)
+ *   - Providers (service providers)
+ *   - Wallet services
+ *   - API providers
+ *   - Visibility settings
+ *   - Feature flags
  */
 
-import { database } from '@/lib/firebase';
-import { ref, onValue, get } from 'firebase/database';
+import { supabase } from '@/lib/supabase';
 
 // ─── Types ─────────────────────────────────────────────────────────────
 
@@ -166,271 +164,296 @@ export interface FirebaseApiProduct {
   commissionType?: 'percentage' | 'fixed';
 }
 
-// ─── Section Listeners ─────────────────────────────────────────────────
+// ─── Section Listeners (Supabase) ──────────────────────────────────────
 
 /**
- * Listen to sections from Firebase in real-time
+ * Listen to sections from Supabase with realtime updates
  */
 export function listenToSections(
   callback: (sections: FirebaseSection[]) => void,
   onError?: (error: Error) => void
 ): () => void {
-  const sectionsRef = ref(database, 'sections');
-  const unsub = onValue(sectionsRef, (snapshot) => {
-    if (snapshot.exists()) {
-      const data = snapshot.val();
-      const sections: FirebaseSection[] = Object.entries(data)
-        .map(([key, val]: [string, any]) => ({
-          id: key,
-          name: val.name || '',
-          icon: val.icon || '',
-          color: val.color || '#5C1A1B',
-          sortOrder: val.sortOrder || 0,
-          isActive: val.isActive !== false,
-          parentId: val.parentId || undefined,
-          type: val.type || 'main',
-          subSections: val.subSections || undefined,
-          providerIds: val.providerIds || undefined,
-          apiProviderId: val.apiProviderId || undefined,
-        }))
-        .filter(s => s.isActive)
-        .sort((a, b) => a.sortOrder - b.sortOrder);
-      callback(sections);
-    } else {
-      callback([]);
-    }
-  }, (error) => {
-    console.error('Firebase sections error:', error);
-    onError?.(error);
-  });
-  return unsub;
+  // Initial fetch
+  fetchSectionsOnce().then(callback).catch(onError);
+
+  // Subscribe to realtime changes
+  const channel = supabase
+    .channel('sections-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'sections' }, () => {
+      fetchSectionsOnce().then(callback).catch(onError);
+    })
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
 }
 
 /**
- * Listen to providers from Firebase in real-time
+ * Listen to providers from Supabase with realtime updates
  */
 export function listenToProviders(
   callback: (providers: FirebaseProvider[]) => void,
   onError?: (error: Error) => void
 ): () => void {
-  const providersRef = ref(database, 'providers');
-  const unsub = onValue(providersRef, (snapshot) => {
-    if (snapshot.exists()) {
-      const data = snapshot.val();
-      const providers: FirebaseProvider[] = Object.entries(data)
-        .map(([key, val]: [string, any]) => ({
-          id: key,
-          name: val.name || '',
-          color: val.color || '#5C1A1B',
-          icon: val.icon || '',
-          categoryId: val.categoryId || '',
-          sectionId: val.sectionId || undefined,
-          subSectionId: val.subSectionId || undefined,
-          inputLabel: val.inputLabel || 'معرف العميل',
-          inputType: val.inputType || 'text',
-          inputPrefix: val.inputPrefix || undefined,
-          isActive: val.isActive !== false,
-          sortOrder: val.sortOrder || 0,
-          apiProviderId: val.apiProviderId || undefined,
-          apiProductId: val.apiProductId || undefined,
-          costPrice: val.costPrice || undefined,
-          commission: val.commission || undefined,
-          commissionType: val.commissionType || undefined,
-          executionType: val.executionType || 'manual',
-        }))
-        .filter(p => p.isActive)
-        .sort((a, b) => a.sortOrder - b.sortOrder);
-      callback(providers);
-    } else {
-      callback([]);
-    }
-  }, (error) => {
-    console.error('Firebase providers error:', error);
-    onError?.(error);
-  });
-  return unsub;
+  // Initial fetch
+  fetchProvidersOnce().then(callback).catch(onError);
+
+  // Subscribe to realtime changes
+  const channel = supabase
+    .channel('providers-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'service_providers' }, () => {
+      fetchProvidersOnce().then(callback).catch(onError);
+    })
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
 }
 
 /**
- * Listen to wallet services from Firebase in real-time
+ * Listen to wallet services from Supabase with realtime updates
  */
 export function listenToWalletServices(
   callback: (services: FirebaseWalletService[]) => void,
   onError?: (error: Error) => void
 ): () => void {
-  const servicesRef = ref(database, 'walletServices');
-  const unsub = onValue(servicesRef, (snapshot) => {
-    if (snapshot.exists()) {
-      const data = snapshot.val();
-      const services: FirebaseWalletService[] = Object.entries(data)
-        .map(([key, val]: [string, any]) => ({
-          id: key,
-          name: val.name || '',
-          description: val.description || '',
-          icon: val.icon || '',
-          color: val.color || '#5C1A1B',
-          categoryId: val.categoryId || 'wallet-services',
-          sectionId: val.sectionId || undefined,
-          subSectionId: val.subSectionId || undefined,
-          inputLabel: val.inputLabel || 'معرف العميل',
-          inputType: val.inputType || 'text',
-          inputPrefix: val.inputPrefix || '',
-          isActive: val.isActive !== false,
-          sortOrder: val.sortOrder || 0,
-          packages: val.packages || undefined,
-          createdAt: val.createdAt || '',
-          updatedAt: val.updatedAt || '',
-        }))
-        .filter(s => s.isActive)
-        .sort((a, b) => a.sortOrder - b.sortOrder);
-      callback(services);
-    } else {
-      callback([]);
+  // Initial fetch from wallet_services table
+  const fetchWalletServices = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('wallet_services')
+        .select('*')
+        .eq('is_active', true)
+        .order('sort_order');
+
+      if (error) throw error;
+      return (data || []).map(mapDbWalletServiceToFirebase);
+    } catch {
+      return [];
     }
-  }, (error) => {
-    console.error('Firebase wallet services error:', error);
-    onError?.(error);
-  });
-  return unsub;
+  };
+
+  fetchWalletServices().then(callback).catch(onError);
+
+  const channel = supabase
+    .channel('wallet-services-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'wallet_services' }, () => {
+      fetchWalletServices().then(callback).catch(onError);
+    })
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
 }
 
 /**
- * Listen to API providers from Firebase in real-time
+ * Listen to API providers from Supabase with realtime updates
  */
 export function listenToApiProviders(
   callback: (providers: FirebaseApiProvider[]) => void,
   onError?: (error: Error) => void
 ): () => void {
-  const apiProvidersRef = ref(database, 'adminSettings/apiProviders');
-  const unsub = onValue(apiProvidersRef, (snapshot) => {
-    if (snapshot.exists()) {
-      const data = snapshot.val();
-      const providers: FirebaseApiProvider[] = Object.entries(data)
-        .filter(([, p]: [string, any]) => p.isActive !== false)
-        .map(([key, p]: [string, any]) => ({
-          id: key || p.id || '',
-          name: p.name || '',
-          baseUrl: p.baseUrl || '',
-          apiKey: p.apiKey || '',
-          apiSecret: p.apiSecret || '',
-          authHeader: p.authHeader || 'X-API-Key',
-          method: p.method || 'GET',
-          headers: p.headers || {},
-          bodyTemplate: p.bodyTemplate || '',
-          responseFormat: p.responseFormat || 'json',
-          fieldMappings: p.fieldMappings || undefined,
-          isActive: p.isActive !== false,
-          syncEnabled: p.syncEnabled !== false,
-          lastSync: p.lastSync || '',
-          createdAt: p.createdAt || '',
-          sectionId: p.sectionId || '',
-          sectionName: p.sectionName || '',
-          sectionIcon: p.sectionIcon || '',
-          commission: p.commission || 0,
-          commissionType: p.commissionType || 'percentage',
-          balance: p.balance || 0,
-          balanceCurrency: p.balanceCurrency || 'USD',
-          lastBalanceCheck: p.lastBalanceCheck || '',
-          categories: p.categories || {},
-        }));
-      callback(providers);
-    } else {
-      callback([]);
+  const fetchApiProviders = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('api_providers')
+        .select('*')
+        .eq('is_active', true);
+
+      if (error) throw error;
+      return (data || []).map(mapDbApiProviderToFirebase);
+    } catch {
+      return [];
     }
-  }, (error) => {
-    console.error('Firebase API providers error:', error);
-    onError?.(error);
-  });
-  return unsub;
+  };
+
+  fetchApiProviders().then(callback).catch(onError);
+
+  const channel = supabase
+    .channel('api-providers-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'api_providers' }, () => {
+      fetchApiProviders().then(callback).catch(onError);
+    })
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
 }
 
 /**
- * Listen to visibility settings
+ * Listen to visibility settings from Supabase
  */
 export function listenToVisibility(
   callback: (sections: Record<string, boolean>, providers: Record<string, boolean>) => void,
   onError?: (error: Error) => void
 ): () => void {
-  const visRef = ref(database, 'adminSettings/visibility');
-  const unsub = onValue(visRef, (snapshot) => {
-    if (snapshot.exists()) {
-      const data = snapshot.val();
-      callback(data.sections || {}, data.providers || {});
-    } else {
+  const fetchVisibility = async () => {
+    try {
+      // Build visibility from sections and providers is_active/is_visible flags
+      const { data: sections } = await supabase
+        .from('sections')
+        .select('id, is_visible');
+      
+      const { data: providers } = await supabase
+        .from('service_providers')
+        .select('id, is_visible');
+
+      const sectionVisibility: Record<string, boolean> = {};
+      (sections || []).forEach((s: any) => {
+        sectionVisibility[s.id] = s.is_visible ?? true;
+      });
+
+      const providerVisibility: Record<string, boolean> = {};
+      (providers || []).forEach((p: any) => {
+        providerVisibility[p.id] = p.is_visible ?? true;
+      });
+
+      callback(sectionVisibility, providerVisibility);
+    } catch {
       callback({}, {});
     }
-  }, (error) => {
-    console.error('Firebase visibility error:', error);
-    onError?.(error);
-  });
-  return unsub;
+  };
+
+  fetchVisibility().catch(onError);
+
+  const channel = supabase
+    .channel('visibility-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'sections' }, () => {
+      fetchVisibility().catch(onError);
+    })
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'service_providers' }, () => {
+      fetchVisibility().catch(onError);
+    })
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
 }
 
 /**
- * One-time fetch of sections (for initial load)
+ * One-time fetch of sections from Supabase
  */
 export async function fetchSectionsOnce(): Promise<FirebaseSection[]> {
   try {
-    const snapshot = await get(ref(database, 'sections'));
-    if (snapshot.exists()) {
-      const data = snapshot.val();
-      return Object.entries(data)
-        .map(([key, val]: [string, any]) => ({
-          id: key,
-          name: val.name || '',
-          icon: val.icon || '',
-          color: val.color || '#5C1A1B',
-          sortOrder: val.sortOrder || 0,
-          isActive: val.isActive !== false,
-          parentId: val.parentId || undefined,
-          type: val.type || 'main',
-          subSections: val.subSections || undefined,
-          providerIds: val.providerIds || undefined,
-          apiProviderId: val.apiProviderId || undefined,
-        }))
-        .filter(s => s.isActive)
-        .sort((a, b) => a.sortOrder - b.sortOrder);
-    }
-    return [];
+    const { data, error } = await supabase
+      .from('sections')
+      .select('*')
+      .order('sort_order');
+
+    if (error) throw error;
+    return (data || []).map(mapDbSectionToFirebase).filter(s => s.isActive);
   } catch {
     return [];
   }
 }
 
 /**
- * One-time fetch of providers
+ * One-time fetch of providers from Supabase
  */
 export async function fetchProvidersOnce(): Promise<FirebaseProvider[]> {
   try {
-    const snapshot = await get(ref(database, 'providers'));
-    if (snapshot.exists()) {
-      const data = snapshot.val();
-      return Object.entries(data)
-        .map(([key, val]: [string, any]) => ({
-          id: key,
-          name: val.name || '',
-          color: val.color || '#5C1A1B',
-          icon: val.icon || '',
-          categoryId: val.categoryId || '',
-          sectionId: val.sectionId || undefined,
-          subSectionId: val.subSectionId || undefined,
-          inputLabel: val.inputLabel || 'معرف العميل',
-          inputType: val.inputType || 'text',
-          inputPrefix: val.inputPrefix || undefined,
-          isActive: val.isActive !== false,
-          sortOrder: val.sortOrder || 0,
-          apiProviderId: val.apiProviderId || undefined,
-          apiProductId: val.apiProductId || undefined,
-          costPrice: val.costPrice || undefined,
-          commission: val.commission || undefined,
-          commissionType: val.commissionType || undefined,
-          executionType: val.executionType || 'manual',
-        }))
-        .filter(p => p.isActive)
-        .sort((a, b) => a.sortOrder - b.sortOrder);
-    }
-    return [];
+    const { data, error } = await supabase
+      .from('service_providers')
+      .select('*')
+      .eq('is_active', true)
+      .order('sort_order');
+
+    if (error) throw error;
+    return (data || []).map(mapDbProviderToFirebase);
   } catch {
     return [];
   }
+}
+
+// ─── Mapping Functions ─────────────────────────────────────────────────
+
+function mapDbSectionToFirebase(db: any): FirebaseSection {
+  return {
+    id: db.id,
+    name: db.name || '',
+    icon: db.icon || '',
+    color: db.color || '#5C1A1B',
+    sortOrder: db.sort_order || 0,
+    isActive: db.is_active !== false,
+    parentId: undefined,
+    type: 'main',
+    apiProviderId: db.api_provider_id || undefined,
+  };
+}
+
+function mapDbProviderToFirebase(db: any): FirebaseProvider {
+  return {
+    id: db.id,
+    name: db.name || '',
+    color: db.color || '#5C1A1B',
+    icon: db.icon || '',
+    categoryId: db.section_id || '',
+    sectionId: db.section_id || undefined,
+    subSectionId: db.sub_section_id || undefined,
+    inputLabel: db.input_label || 'معرف العميل',
+    inputType: (db.input_type as any) || 'text',
+    inputPrefix: db.input_prefix || undefined,
+    isActive: db.is_active !== false,
+    sortOrder: db.sort_order || 0,
+    apiProviderId: db.api_provider_id || undefined,
+    apiProductId: db.api_product_id || undefined,
+    costPrice: db.cost_price || undefined,
+    commission: db.commission_amount || undefined,
+    commissionType: (db.commission_type as any) || undefined,
+    executionType: (db.execution_type as any) || 'manual',
+  };
+}
+
+function mapDbWalletServiceToFirebase(db: any): FirebaseWalletService {
+  return {
+    id: db.id,
+    name: db.name || '',
+    description: db.description || '',
+    icon: db.icon || '',
+    color: db.color || '#5C1A1B',
+    categoryId: db.section_id || 'wallet-services',
+    sectionId: db.section_id || undefined,
+    subSectionId: db.sub_section_id || undefined,
+    inputLabel: db.input_label || 'معرف العميل',
+    inputType: db.input_type || 'text',
+    inputPrefix: db.input_prefix || '',
+    isActive: db.is_active !== false,
+    sortOrder: db.sort_order || 0,
+    createdAt: db.created_at || '',
+    updatedAt: db.updated_at || '',
+  };
+}
+
+function mapDbApiProviderToFirebase(db: any): FirebaseApiProvider {
+  const config = db.config || {};
+  return {
+    id: db.id,
+    name: db.name || '',
+    baseUrl: db.api_url || '',
+    apiKey: db.api_key || '',
+    apiSecret: config.apiSecret || '',
+    authHeader: db.auth_header || 'X-API-Key',
+    method: config.method || 'GET',
+    headers: config.headers || {},
+    bodyTemplate: config.bodyTemplate || '',
+    responseFormat: config.responseFormat || 'json',
+    fieldMappings: config.fieldMappings || undefined,
+    isActive: db.is_active !== false,
+    syncEnabled: db.sync_categories !== false || db.sync_products !== false,
+    lastSync: db.last_sync_at || '',
+    createdAt: db.created_at || '',
+    sectionId: config.sectionId || '',
+    sectionName: config.sectionName || '',
+    sectionIcon: config.sectionIcon || '',
+    commission: db.default_commission || 0,
+    commissionType: (db.commission_type as any) || 'percentage',
+    balance: db.balance || 0,
+    balanceCurrency: db.balance_currency || 'USD',
+    lastBalanceCheck: db.last_balance_check || '',
+  };
 }

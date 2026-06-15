@@ -1,5 +1,10 @@
-import { database } from '@/lib/firebase';
-import { ref, set, update, get } from 'firebase/database';
+/**
+ * Notifications Service - محفظة الجنوب
+ * Uses Supabase for in-app notification storage
+ * Uses Firebase FCM for push notifications (kept as-is)
+ */
+
+import { supabase } from './supabase';
 import { sendFCMDirect } from '@/lib/fcm-sender';
 
 export interface NotificationPayload {
@@ -12,7 +17,6 @@ export interface NotificationPayload {
 
 /**
  * Send FCM push notification directly to FCM tokens using the FCM HTTP v1 API.
- * This bypasses the /api/send-push route which doesn't work in static exports (Capacitor APKs).
  */
 async function sendFCMPush(tokens: string[], title: string, body: string, type: string, data?: Record<string, any>): Promise<void> {
   if (!tokens || tokens.length === 0) return;
@@ -25,33 +29,35 @@ async function sendFCMPush(tokens: string[], title: string, body: string, type: 
 }
 
 /**
- * Get FCM token for a user from Firebase RTDB
+ * Get FCM token for a user from Supabase
  */
 async function getUserFCMToken(userId: string): Promise<string | null> {
   try {
-    const tokenSnapshot = await get(ref(database, `users/${userId}/fcmToken`));
-    return tokenSnapshot.exists() ? tokenSnapshot.val() : null;
+    const { data, error } = await supabase
+      .from('users')
+      .select('fcm_token')
+      .eq('id', userId)
+      .single();
+
+    if (error || !data) return null;
+    return data.fcm_token || null;
   } catch {
     return null;
   }
 }
 
 /**
- * Get FCM tokens for all users
+ * Get FCM tokens for all users from Supabase
  */
 async function getAllUserFCMTokens(): Promise<string[]> {
   try {
-    const usersSnapshot = await get(ref(database, 'users'));
-    if (!usersSnapshot.exists()) return [];
+    const { data, error } = await supabase
+      .from('users')
+      .select('fcm_token')
+      .not('fcm_token', 'is', null);
 
-    const users = usersSnapshot.val();
-    const tokens: string[] = [];
-    Object.values(users).forEach((userData: any) => {
-      if (userData.fcmToken) {
-        tokens.push(userData.fcmToken);
-      }
-    });
-    return tokens;
+    if (error || !data) return [];
+    return data.map((u: any) => u.fcm_token).filter(Boolean);
   } catch {
     return [];
   }
@@ -61,19 +67,21 @@ async function getAllUserFCMTokens(): Promise<string[]> {
  * Send a notification to a specific user (in-app + FCM push)
  */
 export async function sendNotificationToUser(userId: string, notification: NotificationPayload): Promise<void> {
-  const notifId = `notif_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  const notifData = {
-    id: notifId,
-    title: notification.title,
-    body: notification.body,
-    type: notification.type,
-    isRead: false,
-    createdAt: new Date().toISOString(),
-    data: notification.data || null,
-  };
+  // 1. Save to Supabase (in-app notification)
+  const { error } = await supabase
+    .from('notifications')
+    .insert({
+      user_id: userId,
+      title: notification.title,
+      body: notification.body,
+      type: notification.type,
+      is_read: false,
+      data: notification.data || null,
+    });
 
-  // 1. Save to Firebase RTDB (in-app notification)
-  await set(ref(database, `notifications/${userId}/${notifId}`), notifData);
+  if (error) {
+    console.error('Error saving notification to Supabase:', error);
+  }
 
   // 2. Send FCM push notification (works when app is closed)
   const fcmToken = await getUserFCMToken(userId);
@@ -86,37 +94,34 @@ export async function sendNotificationToUser(userId: string, notification: Notif
  * Send a notification to all users (in-app + FCM push)
  */
 export async function sendNotificationToAll(notification: NotificationPayload): Promise<void> {
-  const notifId = `notif_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  // 1. Get all users from Supabase
+  const { data: users, error } = await supabase
+    .from('users')
+    .select('id, fcm_token')
+    .eq('is_active', true);
 
-  // Get all users
-  const usersSnapshot = await get(ref(database, 'users'));
-  if (!usersSnapshot.exists()) return;
+  if (error || !users || users.length === 0) return;
 
-  const users = usersSnapshot.val();
-  const updates: Record<string, any> = {};
-  const tokens: string[] = [];
+  // 2. Save in-app notification for each user via Supabase
+  const notifInserts = users.map((user: any) => ({
+    user_id: user.id,
+    title: notification.title,
+    body: notification.body,
+    type: notification.type,
+    is_read: false,
+    data: notification.data || null,
+  }));
 
-  Object.entries(users).forEach(([uid, userData]: [string, any]) => {
-    updates[`notifications/${uid}/${notifId}`] = {
-      id: notifId,
-      title: notification.title,
-      body: notification.body,
-      type: notification.type,
-      isRead: false,
-      createdAt: new Date().toISOString(),
-      data: notification.data || null,
-    };
+  const { error: insertError } = await supabase
+    .from('notifications')
+    .insert(notifInserts);
 
-    // Collect FCM tokens
-    if (userData.fcmToken) {
-      tokens.push(userData.fcmToken);
-    }
-  });
+  if (insertError) {
+    console.error('Error saving notifications to Supabase:', insertError);
+  }
 
-  // 1. Save to Firebase RTDB (in-app notifications)
-  await update(ref(database), updates);
-
-  // 2. Send FCM push notifications (works when app is closed)
+  // 3. Send FCM push notifications
+  const tokens = users.map((u: any) => u.fcm_token).filter(Boolean);
   for (let i = 0; i < tokens.length; i += 500) {
     const batch = tokens.slice(i, i + 500);
     await sendFCMPush(batch, notification.title, notification.body, notification.type, notification.data);
@@ -124,21 +129,18 @@ export async function sendNotificationToAll(notification: NotificationPayload): 
 }
 
 /**
- * Get FCM tokens for all admin users (role = admin or owner)
+ * Get FCM tokens for all admin users (role = admin or owner) from Supabase
  */
 async function getAdminFCMTokens(): Promise<string[]> {
   try {
-    const usersSnapshot = await get(ref(database, 'users'));
-    if (!usersSnapshot.exists()) return [];
+    const { data, error } = await supabase
+      .from('users')
+      .select('fcm_token')
+      .in('role', ['admin', 'owner'])
+      .not('fcm_token', 'is', null);
 
-    const users = usersSnapshot.val();
-    const tokens: string[] = [];
-    Object.values(users).forEach((userData: any) => {
-      if ((userData.role === 'admin' || userData.role === 'owner') && userData.fcmToken) {
-        tokens.push(userData.fcmToken);
-      }
-    });
-    return tokens;
+    if (error || !data) return [];
+    return data.map((u: any) => u.fcm_token).filter(Boolean);
   } catch {
     return [];
   }
@@ -148,21 +150,28 @@ async function getAdminFCMTokens(): Promise<string[]> {
  * Send a notification to admin (for admin/owner app) — in-app + FCM push
  */
 export async function sendNotificationToAdmin(notification: NotificationPayload & { category?: string }): Promise<void> {
-  const notifId = `admin_notif_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-  const notifData = {
-    id: notifId,
-    title: notification.title,
-    body: notification.body,
-    type: notification.type,
-    category: notification.category || 'general',
-    isRead: false,
-    createdAt: new Date().toISOString(),
-    sentAt: new Date().toISOString(),
-    data: notification.data || null,
-  };
+  // 1. Save to Supabase admin_notifications or app_config for admin panel
+  // Use the notifications table with a special admin user or app_config
+  const { error } = await supabase
+    .from('app_config')
+    .upsert({
+      key: `admin_notif_${Date.now()}`,
+      value: {
+        title: notification.title,
+        body: notification.body,
+        type: notification.type,
+        category: notification.category || 'general',
+        is_read: false,
+        created_at: new Date().toISOString(),
+        data: notification.data || null,
+      },
+      description: 'Admin notification',
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'key' });
 
-  // 1. Save to Firebase RTDB (in-app notification for admin panel)
-  await set(ref(database, `adminNotifications/${notifId}`), notifData);
+  if (error) {
+    console.error('Error saving admin notification:', error);
+  }
 
   // 2. Send FCM push notification to all admin/owner devices
   try {

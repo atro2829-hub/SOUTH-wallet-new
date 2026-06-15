@@ -4,8 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowRight, Search, Gamepad2, Loader2, CheckCircle, AlertTriangle, ChevronDown, ChevronUp, Globe, ShoppingCart, Star, Users } from 'lucide-react';
 import { useStore } from '@/lib/store';
-import { ref, push, set, update, get } from 'firebase/database';
-import { database } from '@/lib/firebase';
+import { supabase, supabaseService } from '@/lib/supabase';
 import { getApiProvider, getCachedProviderData, type ApiGame, type ApiGameCatalogue, type ApiGameFields, type ApiGameServer } from '@/lib/api-providers';
 import { subscribeToCategories, type DynamicCategory } from '@/lib/categories';
 import { checkPlayerId, getGameCatalogue, getGameFields, getGameServers, placeGameOrder, checkGameOrderStatus } from '@/lib/api-providers';
@@ -27,29 +26,30 @@ export function GamesScreen() {
   const [purchasing, setPurchasing] = useState(false);
   const [orderResult, setOrderResult] = useState<any>(null);
 
-  // Load games from active API provider
+  // Load games from active API provider (Supabase)
   useEffect(() => {
     const loadGames = async () => {
       // Find the category with api-games screenType
-      const gamesCategory = categories.find(c => c.screenType === 'api-games');
+      const gamesCategory = categories.find((c: any) => c.screenType === 'api-games');
       const pId = gamesCategory?.apiProviderId;
 
       if (!pId) {
-        // Try to find any enabled provider that supports games
-        const snapshot = await get(ref(database, 'apiProviders'));
-        if (snapshot.exists()) {
-          const providers = Object.entries(snapshot.val()).map(([id, val]: [string, any]) => ({ id, ...val }));
+        // Try to find any enabled provider that supports games from Supabase
+        try {
+          const providers = await getApiProviders();
           const gamesProvider = providers.find((p: any) => p.enabled && p.supportsGames);
           if (gamesProvider) {
             setProviderId(gamesProvider.id);
             const cache = await getCachedProviderData(gamesProvider.id);
-            setGames(Object.values(cache.games));
+            setGames(cache.games);
           }
+        } catch (error) {
+          console.error('Error loading games from Supabase:', error);
         }
       } else {
         setProviderId(pId);
         const cache = await getCachedProviderData(pId);
-        setGames(Object.values(cache.games));
+        setGames(cache.games);
       }
       setLoading(false);
     };
@@ -285,8 +285,8 @@ function GamePurchaseView({
       const markup = provider.markupPercent || 0;
       const finalPrice = selectedCatalogue.amount * (1 + markup / 100);
 
-      // Check balance
-      const userBalance = user.balances?.USD || 0;
+      // Check balance (USD only)
+      const userBalance = user.balanceUSD || 0;
       if (userBalance < finalPrice) {
         toast.error('رصيدك غير كافي');
         setPurchasing(false);
@@ -302,33 +302,41 @@ function GamePurchaseView({
       );
 
       if (result.success) {
-        // Deduct balance
-        await update(ref(database, `users/${user.id}`), {
-          'balances/USD': userBalance - finalPrice,
-        });
+        // Deduct balance via Supabase
+        await supabaseService.updateBalance(user.userId || user.id, 'USD', finalPrice, 'subtract');
 
-        // Save order
-        const orderRef = push(ref(database, `users/${user.id}/orders`));
-        await set(orderRef, {
-          type: 'game_topup',
-          gameCode: game.code,
-          gameName: game.name,
-          catalogueName: selectedCatalogue.name,
-          playerId,
-          serverId: serverId || '',
-          unitPrice: selectedCatalogue.amount,
-          finalPrice,
-          markup,
+        // Create order in Supabase
+        await supabaseService.createOrder({
+          user_id: user.userId || user.id,
+          provider_id: providerId,
+          provider_name: provider.name,
+          package_id: '',
+          package_name: selectedCatalogue.name,
+          category_id: '',
+          category_name: game.name,
+          customer_input: playerId,
+          amount: finalPrice,
+          currency: 'USD',
+          cost_price: selectedCatalogue.amount,
+          cost_currency: 'USD',
+          commission_amount: finalPrice - selectedCatalogue.amount,
+          commission_type: 'percentage',
+          execution_type: 'api',
           status: result.order.status === 'PENDING' ? 'pending' : 'processing',
-          providerOrderId: result.order.order_id,
-          createdAt: new Date().toISOString(),
+          api_provider_id: providerId,
+          api_product_id: '',
+          api_order_id: String(result.order.order_id),
+          api_response: result,
+          result_code: '',
+          result_message: result.message || '',
+          result_pin_code: '',
         });
 
         toast.success(result.message || 'تم إنشاء الطلب بنجاح');
 
         // If pending, start polling
         if (result.order.status === 'PENDING' && result.order.order_id) {
-          pollOrderStatus(result.order.order_id, game.code, provider, user.id);
+          pollOrderStatus(result.order.order_id, game.code, provider);
         }
       }
     } catch (error: any) {
@@ -337,7 +345,7 @@ function GamePurchaseView({
     setPurchasing(false);
   };
 
-  const pollOrderStatus = async (orderId: number, gameCode: string, provider: any, userId: string) => {
+  const pollOrderStatus = async (orderId: number, gameCode: string, provider: any) => {
     let attempts = 0;
     const maxAttempts = 12;
     const interval = setInterval(async () => {
@@ -427,7 +435,7 @@ function GamePurchaseView({
         )}
       </div>
 
-      {/* Catalogue Selection */}
+      {/* Catalogue Selection - USD prices */}
       <div className="glass-card rounded-2xl p-4 space-y-3">
         <h3 className="text-sm font-bold">اختر الباقة</h3>
         <div className="space-y-2">
@@ -454,7 +462,7 @@ function GamePurchaseView({
         </div>
       </div>
 
-      {/* Purchase Button */}
+      {/* Purchase Button - USD */}
       {selectedCatalogue && (
         <button
           onClick={handlePurchase}

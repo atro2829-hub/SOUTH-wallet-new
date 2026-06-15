@@ -2,11 +2,13 @@
  * API Provider Integration Module (Admin)
  * 
  * Handles testing API connections, executing orders via external APIs,
- * managing API provider configurations stored in Firebase RTDB,
+ * managing API provider configurations stored in Supabase,
  * and G2Bulk v1 API integration for the admin app.
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
+
+import { supabase } from './supabase';
 
 // ─── Types ─────────────────────────────────────────────────────────────
 
@@ -494,120 +496,154 @@ export function generateApiProviderId(): string {
   return `api-provider-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
 }
 
-// ─── Sync provider categories and products to Firebase ─────────────────
-// Now also writes to sections/ and providers/ paths for user app compatibility
+// ─── Sync provider categories and products to Supabase ─────────────────
+// Replaces the old syncProviderToFirebase function
 
-export async function syncProviderToFirebase(
-  config: ApiProviderConfig,
-  database: any,
-  refFn: (...args: any[]) => any,
-  updateFn: (...args: any[]) => Promise<any>
+/**
+ * Sync categories and products from API provider to Supabase.
+ * This function fetches all categories and their products from the API,
+ * then upserts them into Supabase api_categories and service_providers/product_packages tables.
+ */
+export async function syncProviderToSupabase(
+  config: ApiProviderConfig
 ): Promise<{ categoriesCount: number; productsCount: number }> {
+  // Fetch categories from the API
   const categories = await fetchProviderCategories(config);
   if (categories.length === 0) {
     return { categoriesCount: 0, productsCount: 0 };
   }
 
+  // Fetch all products from the API
   const allProducts = await fetchAllProviderProducts(config);
 
-  const updates: Record<string, any> = {};
   let totalProducts = 0;
 
-  // Determine the section ID for this provider
-  const sectionId = config.sectionId || 'service-providers';
-  const providerId = config.id;
-
-  // ─── Write categories to adminSettings/apiProviders/{id}/categories (existing) ───
+  // Upsert categories into Supabase
   for (const category of categories) {
-    const catKey = String(category.id);
     const catProducts = allProducts.filter(p => p.category_id === category.id);
     
-    // Use 'prod_' prefix to prevent Firebase from converting numeric keys to array indices
-    const productsMap: Record<string, any> = {};
+    await supabase
+      .from('api_categories')
+      .upsert({
+        api_provider_id: config.id,
+        api_category_id: String(category.id),
+        title: category.title,
+        title_en: category.slug || category.title,
+        description: '',
+        image_url: category.icon || '',
+        product_count: catProducts.length,
+        is_active: true,
+        is_synced: true,
+        last_synced_at: new Date().toISOString(),
+      }, { onConflict: 'api_provider_id,api_category_id' });
+
+    // Create service providers and product packages for each product
     for (const product of catProducts) {
-      productsMap[`prod_${product.id}`] = {
-        id: product.id,
-        title: product.title,
-        unit_price: product.unit_price,
-        stock: product.stock || 0,
-        icon: product.icon || '',
-        description: product.description || '',
-        category_id: product.category_id,
-        isActive: true,
-      };
+      // Create or find the service provider
+      const { data: existingProvider } = await supabase
+        .from('service_providers')
+        .select('id')
+        .eq('api_provider_id', config.id)
+        .eq('api_product_id', String(product.id))
+        .single();
+
+      let providerId = existingProvider?.id;
+
+      if (!providerId) {
+        // Create a new service provider entry
+        const sectionId = config.sectionId || 'service-providers';
+        const { data: newProvider } = await supabase
+          .from('service_providers')
+          .insert({
+            section_id: sectionId,
+            sub_section_id: config.id,
+            name: product.title,
+            name_en: product.title,
+            description: product.description || '',
+            icon: product.icon || category.icon || '',
+            color: '#9333EA',
+            input_label: 'معرف العميل',
+            input_type: 'text',
+            is_active: true,
+            is_visible: true,
+            sort_order: 0,
+            type: 'api',
+            api_provider_id: config.id,
+            api_product_id: String(product.id),
+            execution_type: 'api',
+          })
+          .select()
+          .single();
+        providerId = newProvider?.id;
+      }
+
+      if (providerId) {
+        // Upsert the product package
+        await supabase
+          .from('product_packages')
+          .upsert({
+            provider_id: providerId,
+            name: product.title,
+            name_en: product.title,
+            description: product.description || '',
+            price_usd: product.unit_price,
+            price_yer: 0,
+            price_sar: 0,
+            cost_price: product.unit_price,
+            cost_currency: 'USD',
+            commission_amount: 0,
+            commission_type: 'percentage',
+            execution_type: 'api',
+            api_product_id: String(product.id),
+            is_active: true,
+            sort_order: 0,
+          }, { onConflict: 'provider_id,api_product_id' });
+      }
+
       totalProducts++;
-    }
-
-    // Use 'cat_' prefix to prevent Firebase from converting numeric keys to array indices
-    updates[`adminSettings/apiProviders/${config.id}/categories/cat_${catKey}`] = {
-      id: category.id,
-      title: category.title,
-      icon: category.icon || '',
-      slug: category.slug || '',
-      products: productsMap,
-    };
-
-    // ─── Also create provider entry in providers/ for user app ───
-    const providerEntryId = `${providerId}-${catKey}`;
-    updates[`providers/${providerEntryId}`] = {
-      id: providerEntryId,
-      name: category.title,
-      color: '#9333EA',
-      icon: category.icon || '',
-      categoryId: catKey,
-      sectionId: sectionId,
-      subSectionId: providerId,
-      inputLabel: 'معرف العميل',
-      inputType: 'text',
-      isActive: true,
-      sortOrder: 0,
-      apiProviderId: providerId,
-      apiCategoryId: catKey,
-    };
-
-    // ─── Also create package entries in packages/ for each product ───
-    for (const product of catProducts) {
-      const pkgId = `${providerId}-prod-${product.id}`;
-      updates[`packages/${pkgId}`] = {
-        id: pkgId,
-        name: product.title,
-        price: product.unit_price,
-        currency: 'USD',
-        costPrice: product.unit_price,
-        commission: 0,
-        commissionType: 'percentage',
-        executionType: 'auto',
-        apiProviderId: providerId,
-        apiProductId: String(product.id),
-        providerId: providerEntryId,
-        categoryId: catKey,
-        sectionId: sectionId,
-        subSectionId: providerId,
-        icon: product.icon || '',
-        description: product.description || '',
-        isActive: true,
-        sortOrder: 0,
-      };
     }
   }
 
-  // ─── Create/update sub-section under the parent section in sections/ ───
-  updates[`sections/${sectionId}/subSections/${providerId}`] = {
-    id: providerId,
-    name: config.name,
-    icon: config.icon || '',
-    isActive: true,
-    parentId: sectionId,
-    sortOrder: 0,
-    apiProviderId: providerId,
-  };
+  // Also create a sub-section for this provider under its section
+  if (config.sectionId) {
+    await supabase
+      .from('sub_sections')
+      .upsert({
+        section_id: config.sectionId,
+        name: config.name,
+        name_en: config.sectionName || config.name,
+        icon: config.icon || config.sectionIcon || '',
+        color: '#9333EA',
+        is_active: true,
+        is_visible: true,
+        sort_order: 0,
+        type: 'api',
+        api_provider_id: config.id,
+      }, { onConflict: 'section_id,name' });
+  }
 
-  // Make sure the parent section has the provider reference
-  updates[`sections/${sectionId}/providerIds`] = null; // Will be rebuilt if needed
-
-  updates[`adminSettings/apiProviders/${config.id}/lastSync`] = new Date().toISOString();
-
-  await updateFn(refFn(database), updates);
+  // Update provider's last_sync_at
+  await supabase
+    .from('api_providers')
+    .update({ 
+      last_sync_at: new Date().toISOString(),
+      sync_categories: true,
+      sync_products: true,
+    })
+    .eq('id', config.id);
 
   return { categoriesCount: categories.length, productsCount: totalProducts };
+}
+
+/**
+ * Legacy function name for backwards compatibility.
+ * Now routes to Supabase instead of Firebase.
+ */
+export async function syncProviderToFirebase(
+  config: ApiProviderConfig,
+  _database?: any,
+  _refFn?: (...args: any[]) => any,
+  _updateFn?: (...args: any[]) => Promise<any>
+): Promise<{ categoriesCount: number; productsCount: number }> {
+  return syncProviderToSupabase(config);
 }

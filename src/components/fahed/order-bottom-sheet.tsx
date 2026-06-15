@@ -21,7 +21,7 @@ import { currencySymbols, currencyBadgeColors, generateReference } from '@/lib/u
 import { ref, push, set, get, update, runTransaction } from 'firebase/database';
 import { database } from '@/lib/firebase';
 import { useToast } from '@/components/fahed/toast-provider';
-import { allProducts } from '@/lib/products-data';
+// Products are now loaded from Supabase via store
 import { executeApiOrder, type ApiProviderConfig } from '@/lib/api-provider';
 
 export default function OrderBottomSheet() {
@@ -76,7 +76,6 @@ export default function OrderBottomSheet() {
 
   const providerPackages = [
     ...packages.filter((pkg) => pkg.providerId === selectedProvider.id && pkg.isActive),
-    ...allProducts.filter((pkg) => pkg.providerId === selectedProvider.id && pkg.isActive),
   ].filter((pkg, index, self) => index === self.findIndex(p => p.id === pkg.id));
 
   const selectedPackage = providerPackages.find((pkg) => pkg.id === selectedPackageId);

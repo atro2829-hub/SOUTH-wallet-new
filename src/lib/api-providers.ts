@@ -1,9 +1,8 @@
 // API Providers Service - محفظة الجنوب
 // Multi-provider support for game top-up, digital products, and services
-// Currently supports G2Bulk with extensible architecture for more providers
+// Uses Supabase for storage - NO Firebase
 
-import { get, ref, update, push, set, onValue, off } from 'firebase/database';
-import { database } from './firebase';
+import { supabase } from './supabase';
 
 // ===== Types =====
 
@@ -126,94 +125,80 @@ export interface ProviderBalance {
   currency?: string;
 }
 
-// ===== Provider CRUD =====
+// ===== Provider CRUD (Supabase) =====
 
 export async function getApiProviders(): Promise<ApiProvider[]> {
-  const snapshot = await get(ref(database, 'apiProviders'));
-  if (!snapshot.exists()) return [];
-  const data = snapshot.val();
-  return Object.entries(data).map(([id, val]: [string, any]) => ({
-    id,
-    ...val,
-  })) as ApiProvider[];
+  const { data, error } = await supabase
+    .from('api_providers')
+    .select('*')
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    console.error('Error fetching API providers:', error);
+    return [];
+  }
+
+  return (data || []).map(mapDbProviderToApiProvider);
 }
 
 export async function getApiProvider(providerId: string): Promise<ApiProvider | null> {
-  const snapshot = await get(ref(database, `apiProviders/${providerId}`));
-  if (!snapshot.exists()) return null;
-  return { id: providerId, ...snapshot.val() } as ApiProvider;
+  const { data, error } = await supabase
+    .from('api_providers')
+    .select('*')
+    .eq('id', providerId)
+    .single();
+
+  if (error) {
+    console.error('Error fetching API provider:', error);
+    return null;
+  }
+
+  return data ? mapDbProviderToApiProvider(data) : null;
 }
 
 export async function saveApiProvider(provider: Partial<ApiProvider> & { name: string }): Promise<string> {
-  const existingProviders = await getApiProviders();
-  // Check if a provider with same name exists
-  const existing = existingProviders.find(p => p.name === provider.name && p.id !== provider.id);
-  if (existing && !provider.id) {
-    // Update existing
-    const updates: Record<string, any> = {};
-    Object.entries(provider).forEach(([key, value]) => {
-      if (key !== 'id' && value !== undefined) {
-        updates[`apiProviders/${existing.id}/${key}`] = value;
-      }
-    });
-    updates[`apiProviders/${existing.id}/updatedAt`] = new Date().toISOString();
-    await update(ref(database), updates);
-    return existing.id;
-  }
+  const now = new Date().toISOString();
+  const dbData = mapApiProviderToDb(provider, now);
 
   if (provider.id) {
     // Update existing provider
-    const updates: Record<string, any> = {};
-    Object.entries(provider).forEach(([key, value]) => {
-      if (key !== 'id' && value !== undefined) {
-        updates[`apiProviders/${provider.id}/${key}`] = value;
-      }
-    });
-    updates[`apiProviders/${provider.id}/updatedAt`] = new Date().toISOString();
-    await update(ref(database), updates);
-    return provider.id;
+    const { data, error } = await supabase
+      .from('api_providers')
+      .update(dbData)
+      .eq('id', provider.id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data.id;
   } else {
     // Create new provider
-    const newRef = push(ref(database, 'apiProviders'));
-    const id = newRef.key!;
-    const now = new Date().toISOString();
-    await set(newRef, {
-      name: provider.name,
-      nameAr: provider.nameAr || provider.name,
-      type: provider.type || 'custom',
-      apiKey: provider.apiKey || '',
-      baseUrl: provider.baseUrl || '',
-      enabled: provider.enabled ?? true,
-      markupPercent: provider.markupPercent || 0,
-      supportsProducts: provider.supportsProducts ?? true,
-      supportsGames: provider.supportsGames ?? true,
-      lastSync: null,
-      balance: 0,
-      balanceCurrency: 'USD',
-      description: provider.description || '',
-      descriptionAr: provider.descriptionAr || '',
-      logo: provider.logo || '',
-      color: provider.color || '#8B1E3A',
-      authHeaderName: provider.authHeaderName || 'X-API-Key',
-      authHeaderPrefix: provider.authHeaderPrefix || '',
-      createdAt: now,
-      updatedAt: now,
-    });
-    return id;
+    const { data, error } = await supabase
+      .from('api_providers')
+      .insert(dbData)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data.id;
   }
 }
 
 export async function deleteApiProvider(providerId: string): Promise<void> {
-  await set(ref(database, `apiProviders/${providerId}`), null);
   // Also clean up cached data
-  await set(ref(database, `apiProviderCache/${providerId}`), null);
+  await supabase.from('api_categories').delete().eq('api_provider_id', providerId);
+
+  const { error } = await supabase.from('api_providers').delete().eq('id', providerId);
+  if (error) throw error;
 }
 
 export async function toggleApiProvider(providerId: string, enabled: boolean): Promise<void> {
-  await update(ref(database, `apiProviders/${providerId}`), {
-    enabled,
-    updatedAt: new Date().toISOString(),
-  });
+  const { error } = await supabase
+    .from('api_providers')
+    .update({ is_active: enabled, updated_at: new Date().toISOString() })
+    .eq('id', providerId);
+
+  if (error) throw error;
 }
 
 // ===== Generic API Request =====
@@ -280,13 +265,29 @@ export async function syncG2BulkCategories(provider: ApiProvider): Promise<ApiCa
     enabled: true,
   }));
 
-  // Cache to Firebase
-  const cacheUpdates: Record<string, any> = {};
-  categories.forEach((cat) => {
-    cacheUpdates[`apiProviderCache/${provider.id}/categories/${cat.id}`] = cat;
-  });
-  cacheUpdates[`apiProviders/${provider.id}/lastSync`] = new Date().toISOString();
-  await update(ref(database), cacheUpdates);
+  // Cache to Supabase
+  for (const cat of categories) {
+    await supabase
+      .from('api_categories')
+      .upsert({
+        api_provider_id: provider.id,
+        api_category_id: String(cat.id),
+        title: cat.title,
+        title_en: cat.title,
+        description: cat.description,
+        image_url: cat.image_url,
+        product_count: cat.product_count,
+        is_active: true,
+        is_synced: true,
+        last_synced_at: new Date().toISOString(),
+      }, { onConflict: 'api_provider_id,api_category_id' });
+  }
+
+  // Update last sync
+  await supabase
+    .from('api_providers')
+    .update({ last_sync_at: new Date().toISOString() })
+    .eq('id', provider.id);
 
   return categories;
 }
@@ -306,13 +307,41 @@ export async function syncG2BulkProducts(provider: ApiProvider): Promise<ApiProd
     enabled: true,
   }));
 
-  // Cache to Firebase
-  const cacheUpdates: Record<string, any> = {};
-  products.forEach((prod) => {
-    cacheUpdates[`apiProviderCache/${provider.id}/products/${prod.id}`] = prod;
-  });
-  cacheUpdates[`apiProviders/${provider.id}/lastSync`] = new Date().toISOString();
-  await update(ref(database), cacheUpdates);
+  // Cache to Supabase - using product_packages table
+  for (const prod of products) {
+    const { data: existingProvider } = await supabase
+      .from('service_providers')
+      .select('id')
+      .eq('api_product_id', String(prod.id))
+      .eq('api_provider_id', provider.id)
+      .single();
+
+    if (existingProvider) {
+      // Update packages for this provider
+      await supabase
+        .from('product_packages')
+        .upsert({
+          provider_id: existingProvider.id,
+          name: prod.title,
+          name_en: prod.title,
+          description: prod.description,
+          price_usd: prod.unit_price,
+          price_yer: 0, // USD only
+          price_sar: 0, // USD only
+          cost_price: prod.unit_price,
+          cost_currency: 'USD',
+          execution_type: 'api',
+          api_product_id: String(prod.id),
+          is_active: true,
+        }, { onConflict: 'provider_id,api_product_id' });
+    }
+  }
+
+  // Update last sync
+  await supabase
+    .from('api_providers')
+    .update({ last_sync_at: new Date().toISOString() })
+    .eq('id', provider.id);
 
   return products;
 }
@@ -328,13 +357,28 @@ export async function syncG2BulkGames(provider: ApiProvider): Promise<ApiGame[]>
     enabled: true,
   }));
 
-  // Cache to Firebase
-  const cacheUpdates: Record<string, any> = {};
-  games.forEach((game) => {
-    cacheUpdates[`apiProviderCache/${provider.id}/games/${game.code}`] = game;
-  });
-  cacheUpdates[`apiProviders/${provider.id}/lastSync`] = new Date().toISOString();
-  await update(ref(database), cacheUpdates);
+  // Cache to Supabase
+  for (const game of games) {
+    await supabase
+      .from('api_categories')
+      .upsert({
+        api_provider_id: provider.id,
+        api_category_id: `game_${game.code}`,
+        title: game.name,
+        title_en: game.name,
+        description: `Game: ${game.name}`,
+        image_url: game.image_url,
+        is_active: true,
+        is_synced: true,
+        last_synced_at: new Date().toISOString(),
+      }, { onConflict: 'api_provider_id,api_category_id' });
+  }
+
+  // Update last sync
+  await supabase
+    .from('api_providers')
+    .update({ last_sync_at: new Date().toISOString() })
+    .eq('id', provider.id);
 
   return games;
 }
@@ -371,7 +415,6 @@ export async function getGameServers(provider: ApiProvider, gameCode: string): P
     const data = await apiRequest<any>(provider, '/v1/games/servers', 'POST', { game: gameCode });
     return data.servers || {};
   } catch (error: any) {
-    // 403 means no servers required - not an error
     if (error.message?.includes('403') || error.message?.includes('does not require')) {
       return {};
     }
@@ -470,7 +513,7 @@ export async function getOrderHistory(
   return apiRequest<any>(provider, `/v1/orders?page=${page}&limit=${limit}`);
 }
 
-// ===== Cached Data Access =====
+// ===== Cached Data Access (Supabase) =====
 
 export function subscribeToProviderCache(
   providerId: string,
@@ -480,19 +523,20 @@ export function subscribeToProviderCache(
     games: ApiGame[];
   }) => void
 ): () => void {
-  const cacheRef = ref(database, `apiProviderCache/${providerId}`);
-  const unsub = onValue(cacheRef, (snapshot) => {
-    if (!snapshot.exists()) {
-      callback({ categories: [], products: [], games: [] });
-      return;
-    }
-    const data = snapshot.val();
-    const categories = data.categories ? Object.values(data.categories) as ApiCategory[] : [];
-    const products = data.products ? Object.values(data.products) as ApiProduct[] : [];
-    const games = data.games ? Object.values(data.games) as ApiGame[] : [];
-    callback({ categories, products, games });
-  });
-  return () => off(cacheRef);
+  // Initial load
+  getCachedProviderData(providerId).then(callback);
+
+  // Subscribe to realtime changes
+  const channel = supabase
+    .channel(`provider-cache-${providerId}`)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'api_categories', filter: `api_provider_id=eq.${providerId}` }, () => {
+      getCachedProviderData(providerId).then(callback);
+    })
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
 }
 
 export async function getCachedProviderData(providerId: string): Promise<{
@@ -500,14 +544,66 @@ export async function getCachedProviderData(providerId: string): Promise<{
   products: ApiProduct[];
   games: ApiGame[];
 }> {
-  const snapshot = await get(ref(database, `apiProviderCache/${providerId}`));
-  if (!snapshot.exists()) return { categories: [], products: [], games: [] };
-  const data = snapshot.val();
-  return {
-    categories: data.categories ? Object.values(data.categories) as ApiCategory[] : [],
-    products: data.products ? Object.values(data.products) as ApiProduct[] : [],
-    games: data.games ? Object.values(data.games) as ApiGame[] : [],
-  };
+  // Fetch categories from Supabase
+  const { data: catData } = await supabase
+    .from('api_categories')
+    .select('*')
+    .eq('api_provider_id', providerId)
+    .eq('is_active', true);
+
+  const categories: ApiCategory[] = (catData || [])
+    .filter(c => !c.api_category_id?.startsWith('game_'))
+    .map(c => ({
+      id: Number(c.api_category_id),
+      title: c.title || '',
+      description: c.description || '',
+      image_url: c.image_url || null,
+      product_count: c.product_count || 0,
+      provider_id: providerId,
+      enabled: c.is_active ?? true,
+    }));
+
+  const games: ApiGame[] = (catData || [])
+    .filter(c => c.api_category_id?.startsWith('game_'))
+    .map(c => ({
+      id: Number(c.api_category_id.replace('game_', '')),
+      code: c.api_category_id.replace('game_', ''),
+      name: c.title || '',
+      image_url: c.image_url || '',
+      provider_id: providerId,
+      enabled: c.is_active ?? true,
+    }));
+
+  // Fetch products from Supabase
+  const { data: providerData } = await supabase
+    .from('service_providers')
+    .select('id')
+    .eq('api_provider_id', providerId);
+
+  let products: ApiProduct[] = [];
+  if (providerData && providerData.length > 0) {
+    const providerIds = providerData.map(p => p.id);
+    const { data: pkgData } = await supabase
+      .from('product_packages')
+      .select('*')
+      .in('provider_id', providerIds)
+      .eq('is_active', true);
+
+    products = (pkgData || []).map(pkg => ({
+      id: Number(pkg.api_product_id || 0),
+      title: pkg.name || '',
+      description: pkg.description || '',
+      category_id: 0,
+      category_title: '',
+      unit_price: pkg.price_usd || 0,
+      image_url: null,
+      stock: 999,
+      provider_id: providerId,
+      enabled: true,
+    }));
+  }
+
+  return { categories, products, games };
 }
 
 // ===== Test Provider Connection =====
@@ -555,4 +651,57 @@ export async function initializeDefaultProviders(): Promise<void> {
       authHeaderPrefix: '',
     });
   }
+}
+
+// ===== Mapping Functions =====
+
+function mapDbProviderToApiProvider(db: any): ApiProvider {
+  const config = db.config || {};
+  return {
+    id: db.id,
+    name: db.name || '',
+    nameAr: db.name || '',
+    type: (db.name?.toLowerCase().includes('g2bulk') || db.api_url?.includes('g2bulk')) ? 'g2bulk' : 'custom',
+    apiKey: db.api_key || '',
+    baseUrl: db.api_url || '',
+    enabled: db.is_active ?? true,
+    markupPercent: db.default_commission || 0,
+    supportsProducts: db.sync_products ?? true,
+    supportsGames: db.sync_categories ?? true,
+    lastSync: db.last_sync_at || null,
+    balance: db.balance || 0,
+    balanceCurrency: db.balance_currency || 'USD',
+    description: db.description || '',
+    descriptionAr: db.description || '',
+    logo: db.website || '',
+    color: '#8B1E3A',
+    createdAt: db.created_at || '',
+    updatedAt: db.updated_at || '',
+    authHeaderName: db.auth_header || 'X-API-Key',
+    authHeaderPrefix: db.auth_type === 'bearer' ? 'Bearer ' : '',
+  };
+}
+
+function mapApiProviderToDb(provider: Partial<ApiProvider> & { name: string }, now: string): any {
+  return {
+    name: provider.nameAr || provider.name,
+    description: provider.descriptionAr || provider.description || '',
+    website: provider.logo || '',
+    api_url: provider.baseUrl || '',
+    api_key: provider.apiKey || '',
+    auth_header: provider.authHeaderName || 'X-API-Key',
+    auth_type: provider.authHeaderPrefix?.includes('Bearer') ? 'bearer' : 'header',
+    is_active: provider.enabled ?? true,
+    balance: provider.balance || 0,
+    balance_currency: provider.balanceCurrency || 'USD',
+    default_commission: provider.markupPercent || 0,
+    commission_type: 'percentage',
+    sync_categories: provider.supportsGames ?? true,
+    sync_products: provider.supportsProducts ?? true,
+    config: {
+      type: provider.type || 'custom',
+      color: provider.color || '#8B1E3A',
+    },
+    updated_at: now,
+  };
 }

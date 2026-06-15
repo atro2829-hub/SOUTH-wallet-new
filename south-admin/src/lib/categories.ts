@@ -1,8 +1,7 @@
 // Categories Service - محفظة الجنوب
-// Dynamic sections/categories loaded from Firebase - NO hardcoded data
+// Dynamic sections/categories loaded from Supabase - NO Firebase, NO hardcoded data
 
-import { get, ref, onValue, off, update, push, set, remove } from 'firebase/database';
-import { database } from './firebase';
+import { supabase } from './supabase';
 
 export interface DynamicCategory {
   id: string;
@@ -15,7 +14,7 @@ export interface DynamicCategory {
   order: number;
   isVisible: boolean;
   screenType: 'api-products' | 'api-games' | 'manual' | 'link' | 'exchange' | 'usdt' | 'telecom' | 'investment' | 'escrow';
-  apiProviderId: string; // reference to apiProviders
+  apiProviderId: string; // reference to api_providers
   description: string;
   descriptionAr: string;
   image: string; // optional image URL
@@ -28,110 +27,107 @@ export interface DynamicCategory {
 // ===== CRUD =====
 
 export async function getCategories(): Promise<DynamicCategory[]> {
-  const snapshot = await get(ref(database, 'categories'));
-  if (!snapshot.exists()) return [];
-  const data = snapshot.val();
-  return Object.entries(data)
-    .map(([id, val]: [string, any]) => ({ id, ...val } as DynamicCategory))
-    .sort((a, b) => (a.order || 0) - (b.order || 0));
+  const { data, error } = await supabase
+    .from('sections')
+    .select('*')
+    .order('sort_order', { ascending: true });
+
+  if (error) {
+    console.error('Error fetching categories:', error);
+    return [];
+  }
+
+  return (data || []).map(mapSectionToCategory).filter(c => c.isVisible);
+}
+
+export async function getAllCategories(): Promise<DynamicCategory[]> {
+  const { data, error } = await supabase
+    .from('sections')
+    .select('*')
+    .order('sort_order', { ascending: true });
+
+  if (error) {
+    console.error('Error fetching all categories:', error);
+    return [];
+  }
+
+  return (data || []).map(mapSectionToCategory);
 }
 
 export async function saveCategory(cat: Partial<DynamicCategory> & { name: string }): Promise<string> {
   const now = new Date().toISOString();
+  const sectionData = mapCategoryToSection(cat, now);
 
   if (cat.id) {
-    const updates: Record<string, any> = {};
-    Object.entries(cat).forEach(([key, value]) => {
-      if (key !== 'id' && value !== undefined) {
-        updates[`categories/${cat.id}/${key}`] = value;
-      }
-    });
-    updates[`categories/${cat.id}/updatedAt`] = now;
-    // Sync visibility
-    updates[`adminSettings/visibility/sections/${cat.id}`] = cat.isVisible ?? true;
-    await update(ref(database), updates);
-    return cat.id;
+    // Update existing
+    const { data, error } = await supabase
+      .from('sections')
+      .update(sectionData)
+      .eq('id', cat.id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data.id;
   } else {
-    const newRef = push(ref(database, 'categories'));
-    const id = newRef.key!;
-    const existing = await getCategories();
-    await set(newRef, {
-      name: cat.name,
-      nameAr: cat.nameAr || cat.name,
-      nameEn: cat.nameEn || cat.name,
-      icon: cat.icon || '📋',
-      iconType: cat.iconType || 'emoji',
-      color: cat.color || 'bg-primary',
-      order: cat.order ?? existing.length,
-      isVisible: cat.isVisible ?? true,
-      screenType: cat.screenType || 'manual',
-      apiProviderId: cat.apiProviderId || '',
-      description: cat.description || '',
-      descriptionAr: cat.descriptionAr || '',
-      image: cat.image || '',
-      showInHome: cat.showInHome ?? true,
-      showInServices: cat.showInServices ?? true,
-      createdAt: now,
-      updatedAt: now,
-    });
-    // Sync visibility
-    await update(ref(database), {
-      [`adminSettings/visibility/sections/${id}`]: cat.isVisible ?? true,
-    });
-    return id;
+    // Create new
+    const { data, error } = await supabase
+      .from('sections')
+      .insert(sectionData)
+      .select()
+      .single();
+
+    if (error) throw error;
+    return data.id;
   }
 }
 
 export async function deleteCategory(id: string): Promise<void> {
-  const updates: Record<string, any> = {
-    [`categories/${id}`]: null,
-    [`adminSettings/visibility/sections/${id}`]: null,
-  };
-  await update(ref(database), updates);
+  const { error } = await supabase.from('sections').delete().eq('id', id);
+  if (error) throw error;
 }
 
 export async function toggleCategory(id: string, isVisible: boolean): Promise<void> {
-  const updates: Record<string, any> = {
-    [`categories/${id}/isVisible`]: isVisible,
-    [`categories/${id}/updatedAt`]: new Date().toISOString(),
-    [`adminSettings/visibility/sections/${id}`]: isVisible,
-  };
-  await update(ref(database), updates);
+  const { error } = await supabase
+    .from('sections')
+    .update({ is_visible: isVisible, is_active: isVisible, updated_at: new Date().toISOString() })
+    .eq('id', id);
+
+  if (error) throw error;
 }
 
 export async function reorderCategories(categories: DynamicCategory[]): Promise<void> {
-  const updates: Record<string, any> = {};
-  categories.forEach((cat, index) => {
-    updates[`categories/${cat.id}/order`] = index;
-  });
-  await update(ref(database), updates);
+  const updates = categories.map((cat, index) =>
+    supabase.from('sections').update({ sort_order: index }).eq('id', cat.id)
+  );
+  await Promise.all(updates);
 }
 
-// ===== Subscription =====
+// ===== Realtime Subscription =====
 
 export function subscribeToCategories(
   callback: (categories: DynamicCategory[]) => void
 ): () => void {
-  const catRef = ref(database, 'categories');
-  const unsub = onValue(catRef, (snapshot) => {
-    if (!snapshot.exists()) {
-      callback([]);
-      return;
-    }
-    const data = snapshot.val();
-    const categories = Object.entries(data)
-      .map(([id, val]: [string, any]) => ({ id, ...val } as DynamicCategory))
-      .filter(c => c.isVisible !== false)
-      .sort((a, b) => (a.order || 0) - (b.order || 0));
-    callback(categories);
-  });
-  return () => off(catRef);
+  // Initial fetch
+  getCategories().then(callback);
+
+  // Subscribe to realtime changes
+  const channel = supabase
+    .channel('categories-changes')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'sections' }, () => {
+      getCategories().then(callback);
+    })
+    .subscribe();
+
+  return () => {
+    supabase.removeChannel(channel);
+  };
 }
 
 // ===== Initialize Default Categories =====
 
 export async function initializeDefaultCategories(): Promise<void> {
-  const existing = await getCategories();
+  const existing = await getAllCategories();
   if (existing.length > 0) return;
 
   const defaults: Omit<DynamicCategory, 'id' | 'createdAt' | 'updatedAt'>[] = [
@@ -240,11 +236,86 @@ export async function initializeDefaultCategories(): Promise<void> {
   ];
 
   for (const def of defaults) {
-    const newRef = push(ref(database, 'categories'));
-    const now = new Date().toISOString();
-    await set(newRef, { ...def, createdAt: now, updatedAt: now });
-    await update(ref(database), {
-      [`adminSettings/visibility/sections/${newRef.key}`]: def.isVisible,
-    });
+    await saveCategory(def);
   }
+}
+
+// ===== Mapping Functions =====
+
+function mapSectionToCategory(section: any): DynamicCategory {
+  return {
+    id: section.id,
+    name: section.name || section.name_en || '',
+    nameAr: section.name || '',
+    nameEn: section.name_en || section.name || '',
+    icon: section.icon || '📋',
+    iconType: getIconType(section.icon),
+    color: section.color || 'bg-primary',
+    order: section.sort_order ?? 0,
+    isVisible: section.is_visible ?? section.is_active ?? true,
+    screenType: mapTypeToScreenType(section.type),
+    apiProviderId: section.api_provider_id || '',
+    description: section.description || '',
+    descriptionAr: section.description || '',
+    image: section.image_url || '',
+    showInHome: section.is_visible ?? true,
+    showInServices: section.is_active ?? true,
+    createdAt: section.created_at || '',
+    updatedAt: section.updated_at || '',
+  };
+}
+
+function mapCategoryToSection(cat: Partial<DynamicCategory> & { name: string }, now: string): any {
+  return {
+    name: cat.nameAr || cat.name,
+    name_en: cat.nameEn || cat.name,
+    description: cat.description || cat.descriptionAr || '',
+    icon: cat.icon || '📋',
+    color: cat.color || 'bg-primary',
+    image_url: cat.image || '',
+    sort_order: cat.order ?? 0,
+    is_active: cat.isVisible ?? true,
+    is_visible: cat.isVisible ?? true,
+    type: mapScreenTypeToType(cat.screenType),
+    api_provider_id: cat.apiProviderId || '',
+    updated_at: now,
+  };
+}
+
+function getIconType(icon: string): 'lucide' | 'emoji' | 'image' {
+  if (!icon) return 'emoji';
+  // Common lucide icon names
+  const lucideIcons = ['Gamepad2', 'Gift', 'Wallet', 'Coins', 'ArrowLeftRight', 'Phone', 'ShoppingBag', 'Zap', 'Globe', 'CreditCard', 'Smartphone', 'Shield', 'Star'];
+  if (lucideIcons.includes(icon)) return 'lucide';
+  if (icon.startsWith('http') || icon.startsWith('/')) return 'image';
+  return 'emoji';
+}
+
+function mapTypeToScreenType(type: string): DynamicCategory['screenType'] {
+  const mapping: Record<string, DynamicCategory['screenType']> = {
+    'api': 'api-products',
+    'manual': 'manual',
+    'wallet': 'usdt',
+    'exchange': 'exchange',
+    'telecom': 'telecom',
+    'games': 'api-games',
+    'investment': 'investment',
+    'escrow': 'escrow',
+  };
+  return mapping[type] || 'manual';
+}
+
+function mapScreenTypeToType(screenType?: string): string {
+  const mapping: Record<string, string> = {
+    'api-products': 'api',
+    'api-games': 'games',
+    'manual': 'manual',
+    'link': 'manual',
+    'exchange': 'exchange',
+    'usdt': 'wallet',
+    'telecom': 'telecom',
+    'investment': 'investment',
+    'escrow': 'escrow',
+  };
+  return mapping[screenType || 'manual'] || 'manual';
 }
