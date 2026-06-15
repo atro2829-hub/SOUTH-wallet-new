@@ -1,0 +1,1201 @@
+     1→     1→'use client';
+     2→     2→
+     3→     3→import { useState, useEffect, useCallback, startTransition } from 'react';
+     4→     4→import { supabase, DbBanner } from '@/lib/supabase';
+     5→     5→import { storage } from '@/lib/firebase';
+     6→     6→import { useAdminStore } from '@/lib/store';
+     7→     7→import { formatNumber, cn } from '@/lib/utils';
+     8→     8→import { ref as storageRef, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
+     9→     9→
+    10→    10→import { Card, CardContent } from '@/components/ui/card';
+    11→    11→import { Input } from '@/components/ui/input';
+    12→    12→import { Button } from '@/components/ui/button';
+    13→    13→import { Badge } from '@/components/ui/badge';
+    14→    14→import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+    15→    15→import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogAction, AlertDialogCancel } from '@/components/ui/alert-dialog';
+    16→    16→import { Label } from '@/components/ui/label';
+    17→    17→import { Switch } from '@/components/ui/switch';
+    18→    18→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+    19→    19→import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+    20→    20→import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
+    21→    21→import { Calendar } from '@/components/ui/calendar';
+    22→    22→import { Separator } from '@/components/ui/separator';
+    23→    23→import { ScrollArea } from '@/components/ui/scroll-area';
+    24→    24→
+    25→    25→import {
+    26→    26→  Plus, Trash2, Edit3, Image as ImageIcon,
+    27→    27→  CheckCircle, AlertCircle, Eye, GripVertical,
+    28→    28→  Upload, X, Loader2, LayoutDashboard, Smartphone,
+    29→    29→  Wallet, LayoutGrid, Globe, CalendarDays, ArrowUpDown,
+    30→    30→  Monitor, Link2, Tag, Layers, Activity,
+    31→    31→  CalendarClock, Zap, Ban, Move
+    32→    32→} from 'lucide-react';
+    33→    33→import { motion, AnimatePresence, Reorder } from 'framer-motion';
+    34→    34→import { format } from 'date-fns';
+    35→    35→import { ar } from 'date-fns/locale';
+    36→    36→
+    37→    37→// ============================================
+    38→    38→// Types
+    39→    39→// ============================================
+    40→    40→type BannerPosition = 'login' | 'home' | 'services' | 'wallet' | 'all';
+    41→    41→type BannerLinkType = 'none' | 'url' | 'screen' | 'provider' | 'promo';
+    42→    42→type BannerStatus = 'active' | 'scheduled' | 'expired' | 'inactive';
+    43→    43→
+    44→    44→interface BannerFormData {
+    45→    45→  title: string;
+    46→    46→  description: string;
+    47→    47→  image_url: string;
+    48→    48→  position: BannerPosition;
+    49→    49→  link_type: BannerLinkType;
+    50→    50→  link_target: string;
+    51→    51→  sort_order: number;
+    52→    52→  is_active: boolean;
+    53→    53→  start_date: Date | undefined;
+    54→    54→  end_date: Date | undefined;
+    55→    55→}
+    56→    56→
+    57→    57→// ============================================
+    58→    58→// Constants
+    59→    59→// ============================================
+    60→    60→const POSITION_CONFIG: Record<BannerPosition, { label: string; icon: React.ComponentType<{ className?: string; style?: React.CSSProperties }>; color: string; dims: string }> = {
+    61→    61→  home: { label: 'الرئيسية', icon: LayoutDashboard, color: '#C41E3A', dims: '1200 × 400' },
+    62→    62→  login: { label: 'تسجيل الدخول', icon: Smartphone, color: '#5C1A1B', dims: '800 × 600' },
+    63→    63→  services: { label: 'الخدمات', icon: LayoutGrid, color: '#3D0F10', dims: '1200 × 400' },
+    64→    64→  wallet: { label: 'المحفظة', icon: Wallet, color: '#8B3A3E', dims: '1200 × 400' },
+    65→    65→  all: { label: 'جميع المواضع', icon: Globe, color: '#D44A5C', dims: '1200 × 400' },
+    66→    66→};
+    67→    67→
+    68→    68→const LINK_TYPE_CONFIG: Record<BannerLinkType, { label: string; placeholder: string }> = {
+    69→    69→  none: { label: 'بدون رابط', placeholder: '' },
+    70→    70→  url: { label: 'رابط خارجي', placeholder: 'https://example.com' },
+    71→    71→  screen: { label: 'شاشة داخلية', placeholder: 'home / services / wallet' },
+    72→    72→  provider: { label: 'مزود خدمة', placeholder: 'معرف المزود' },
+    73→    73→  promo: { label: 'كود ترويجي', placeholder: 'PROMO-CODE' },
+    74→    74→};
+    75→    75→
+    76→    76→const EMPTY_FORM: BannerFormData = {
+    77→    77→  title: '',
+    78→    78→  description: '',
+    79→    79→  image_url: '',
+    80→    80→  position: 'home',
+    81→    81→  link_type: 'none',
+    82→    82→  link_target: '',
+    83→    83→  sort_order: 0,
+    84→    84→  is_active: true,
+    85→    85→  start_date: undefined,
+    86→    86→  end_date: undefined,
+    87→    87→};
+    88→    88→
+    89→    89→// ============================================
+    90→    90→// Helper Functions
+    91→    91→// ============================================
+    92→    92→function getBannerStatus(banner: DbBanner): BannerStatus {
+    93→    93→  if (!banner.is_active) return 'inactive';
+    94→    94→  const now = new Date();
+    95→    95→  if (banner.start_date && new Date(banner.start_date) > now) return 'scheduled';
+    96→    96→  if (banner.end_date && new Date(banner.end_date) < now) return 'expired';
+    97→    97→  return 'active';
+    98→    98→}
+    99→    99→
+   100→   100→function getStatusConfig(status: BannerStatus) {
+   101→   101→  switch (status) {
+   102→   102→    case 'active': return { label: 'نشط', color: 'bg-green-500/15 text-green-600 dark:text-green-400', icon: Zap };
+   103→   103→    case 'scheduled': return { label: 'مجدول', color: 'bg-amber-500/15 text-amber-600 dark:text-amber-400', icon: CalendarClock };
+   104→   104→    case 'expired': return { label: 'منتهي', color: 'bg-red-500/15 text-red-600 dark:text-red-400', icon: Ban };
+   105→   105→    case 'inactive': return { label: 'معطل', color: 'bg-gray-500/15 text-gray-600 dark:text-gray-400', icon: Ban };
+   106→   106→  }
+   107→   107→}
+   108→   108→
+   109→   109→// ============================================
+   110→   110→// Sub-Components
+   111→   111→// ============================================
+   112→   112→
+   113→   113→/** Stats Card */
+   114→   114→function StatsCard({ icon: Icon, label, value, color }: { icon: React.ComponentType<{ className?: string; style?: React.CSSProperties }>; label: string; value: number; color: string }) {
+   115→   115→  return (
+   116→   116→    <motion.div
+   117→   117→      initial={{ opacity: 0, y: 12 }}
+   118→   118→      animate={{ opacity: 1, y: 0 }}
+   119→   119→      className="ios-card p-4 flex items-center gap-3"
+   120→   120→    >
+   121→   121→      <div className="p-2.5 rounded-xl" style={{ background: `${color}15` }}>
+   122→   122→        <Icon className="w-5 h-5" style={{ color }} />
+   123→   123→      </div>
+   124→   124→      <div>
+   125→   125→        <p className="text-2xl font-bold text-foreground">{formatNumber(value)}</p>
+   126→   126→        <p className="text-xs text-muted-foreground">{label}</p>
+   127→   127→      </div>
+   128→   128→    </motion.div>
+   129→   129→  );
+   130→   130→}
+   131→   131→
+   132→   132→/** Date Picker Field */
+   133→   133→function DatePickerField({
+   134→   134→  label,
+   135→   135→  date,
+   136→   136→  onSelect,
+   137→   137→  placeholder,
+   138→   138→}: {
+   139→   139→  label: string;
+   140→   140→  date: Date | undefined;
+   141→   141→  onSelect: (date: Date | undefined) => void;
+   142→   142→  placeholder: string;
+   143→   143→}) {
+   144→   144→  const [open, setOpen] = useState(false);
+   145→   145→  return (
+   146→   146→    <div className="space-y-1.5">
+   147→   147→      <Label className="text-xs text-muted-foreground">{label}</Label>
+   148→   148→      <Popover open={open} onOpenChange={setOpen}>
+   149→   149→        <PopoverTrigger asChild>
+   150→   150→          <Button
+   151→   151→            variant="outline"
+   152→   152→            className={cn(
+   153→   153→              'w-full justify-start text-right h-11 font-normal rounded-xl',
+   154→   154→              !date && 'text-muted-foreground'
+   155→   155→            )}
+   156→   156→          >
+   157→   157→            <CalendarDays className="ml-2 h-4 w-4" />
+   158→   158→            {date ? format(date, 'yyyy/MM/dd', { locale: ar }) : placeholder}
+   159→   159→          </Button>
+   160→   160→        </PopoverTrigger>
+   161→   161→        <PopoverContent className="w-auto p-0" align="start">
+   162→   162→          <Calendar
+   163→   163→            mode="single"
+   164→   164→            selected={date}
+   165→   165→            onSelect={(d) => { onSelect(d); setOpen(false); }}
+   166→   166→            initialFocus
+   167→   167→          />
+   168→   168→        </PopoverContent>
+   169→   169→      </Popover>
+   170→   170→    </div>
+   171→   171→  );
+   172→   172→}
+   173→   173→
+   174→   174→/** Image Upload Zone with Drag-and-Drop */
+   175→   175→function ImageUploadZone({
+   176→   176→  imageUrl,
+   177→   177→  onImageSet,
+   178→   178→  onImageClear,
+   179→   179→  position,
+   180→   180→  uploading,
+   181→   181→  uploadProgress,
+   182→   182→}: {
+   183→   183→  imageUrl: string;
+   184→   184→  onImageSet: (file: File) => void;
+   185→   185→  onImageClear: () => void;
+   186→   186→  position: BannerPosition;
+   187→   187→  uploading: boolean;
+   188→   188→  uploadProgress: number;
+   189→   189→}) {
+   190→   190→  const [dragOver, setDragOver] = useState(false);
+   191→   191→  const dims = POSITION_CONFIG[position]?.dims || '1200 × 400';
+   192→   192→
+   193→   193→  const handleDrop = useCallback((e: React.DragEvent) => {
+   194→   194→    e.preventDefault();
+   195→   195→    setDragOver(false);
+   196→   196→    const file = e.dataTransfer.files[0];
+   197→   197→    if (file && file.type.startsWith('image/')) {
+   198→   198→      onImageSet(file);
+   199→   199→    }
+   200→   200→  }, [onImageSet]);
+   201→   201→
+   202→   202→  return (
+   203→   203→    <div className="space-y-2">
+   204→   204→      <Label className="text-xs text-muted-foreground">صورة البانر</Label>
+   205→   205→
+   206→   206→      {imageUrl ? (
+   207→   207→        <div className="relative group rounded-xl overflow-hidden border border-border/30">
+   208→   208→          <img
+   209→   209→            src={imageUrl}
+   210→   210→            alt="معاينة البانر"
+   211→   211→            className="w-full h-40 object-cover"
+   212→   212→          />
+   213→   213→          <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+   214→   214→            <Button
+   215→   215→              variant="secondary"
+   216→   216→              size="sm"
+   217→   217→              className="rounded-lg"
+   218→   218→              onClick={onImageClear}
+   219→   219→            >
+   220→   220→              <X className="w-4 h-4 ml-1" />
+   221→   221→              إزالة
+   222→   222→            </Button>
+   223→   223→          </div>
+   224→   224→          <div className="absolute bottom-2 left-2 right-2">
+   225→   225→            <Badge variant="secondary" className="text-[10px] bg-black/50 text-white border-0">
+   226→   226→              {dims} بكسل (مستحسن)
+   227→   227→            </Badge>
+   228→   228→          </div>
+   229→   229→        </div>
+   230→   230→      ) : (
+   231→   231→        <div
+   232→   232→          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+   233→   233→          onDragLeave={() => setDragOver(false)}
+   234→   234→          onDrop={handleDrop}
+   235→   235→          className={cn(
+   236→   236→            'border-2 border-dashed rounded-xl p-6 flex flex-col items-center justify-center gap-3 transition-all cursor-pointer min-h-[140px]',
+   237→   237→            dragOver
+   238→   238→              ? 'border-primary bg-primary/5'
+   239→   239→              : 'border-border/40 hover:border-primary/50 bg-muted/10'
+   240→   240→          )}
+   241→   241→          onClick={() => document.getElementById('banner-image-input')?.click()}
+   242→   242→        >
+   243→   243→          {uploading ? (
+   244→   244→            <>
+   245→   245→              <Loader2 className="w-8 h-8 text-primary animate-spin" />
+   246→   246→              <p className="text-sm text-muted-foreground">جاري الرفع... {uploadProgress}%</p>
+   247→   247→              <div className="w-full max-w-[200px] h-1.5 bg-muted rounded-full overflow-hidden">
+   248→   248→                <div
+   249→   249→                  className="h-full bg-primary rounded-full transition-all"
+   250→   250→                  style={{ width: `${uploadProgress}%` }}
+   251→   251→                />
+   252→   252→              </div>
+   253→   253→            </>
+   254→   254→          ) : (
+   255→   255→            <>
+   256→   256→              <div className="p-3 rounded-xl bg-primary/10">
+   257→   257→                <Upload className="w-6 h-6 text-primary" />
+   258→   258→              </div>
+   259→   259→              <div className="text-center">
+   260→   260→                <p className="text-sm font-medium text-foreground">اسحب الصورة هنا أو اضغط للرفع</p>
+   261→   261→                <p className="text-xs text-muted-foreground mt-1">الأبعاد المستحسنة: {dims} بكسل</p>
+   262→   262→              </div>
+   263→   263→            </>
+   264→   264→          )}
+   265→   265→          <input
+   266→   266→            id="banner-image-input"
+   267→   267→            type="file"
+   268→   268→            accept="image/*"
+   269→   269→            className="hidden"
+   270→   270→            onChange={(e) => {
+   271→   271→              const file = e.target.files?.[0];
+   272→   272→              if (file) onImageSet(file);
+   273→   273→              e.target.value = '';
+   274→   274→            }}
+   275→   275→          />
+   276→   276→        </div>
+   277→   277→      )}
+   278→   278→    </div>
+   279→   279→  );
+   280→   280→}
+   281→   281→
+   282→   282→/** Position Preview Card */
+   283→   283→function PositionPreviewCard({
+   284→   284→  position,
+   285→   285→  banners,
+   286→   286→}: {
+   287→   287→  position: BannerPosition;
+   288→   288→  banners: DbBanner[];
+   289→   289→}) {
+   290→   290→  const config = POSITION_CONFIG[position];
+   291→   291→  const Icon = config.icon;
+   292→   292→  const now = new Date();
+   293→   293→  const visibleBanners = banners.filter((b) => {
+   294→   294→    if (!b.is_active) return false;
+   295→   295→    if (b.start_date && new Date(b.start_date) > now) return false;
+   296→   296→    if (b.end_date && new Date(b.end_date) < now) return false;
+   297→   297→    return true;
+   298→   298→  }).sort((a, b) => a.sort_order - b.sort_order);
+   299→   299→
+   300→   300→  return (
+   301→   301→    <div className="space-y-3">
+   302→   302→      <div className="flex items-center gap-2">
+   303→   303→        <Icon className="w-4 h-4" style={{ color: config.color }} />
+   304→   304→        <span className="text-sm font-semibold text-foreground">{config.label}</span>
+   305→   305→        <Badge variant="secondary" className="text-[10px]">{formatNumber(visibleBanners.length)} بانر</Badge>
+   306→   306→      </div>
+   307→   307→
+   308→   308→      {position === 'login' ? (
+   309→   309→        <div className="relative w-48 h-72 mx-auto rounded-3xl border-2 border-border/30 overflow-hidden bg-background shadow-lg">
+   310→   310→          <div className="absolute inset-0 flex items-center justify-center">
+   311→   311→            {visibleBanners.length > 0 ? (
+   312→   312→              <img
+   313→   313→                src={visibleBanners[0].image_url}
+   314→   314→                alt={visibleBanners[0].title}
+   315→   315→                className="w-full h-40 object-cover"
+   316→   316→              />
+   317→   317→            ) : (
+   318→   318→              <div className="w-full h-40 flex items-center justify-center bg-muted/30">
+   319→   319→                <ImageIcon className="w-8 h-8 text-muted-foreground/30" />
+   320→   320→              </div>
+   321→   321→            )}
+   322→   322→          </div>
+   323→   323→          <div className="absolute bottom-0 left-0 right-0 p-3 bg-gradient-to-t from-black/60 to-transparent">
+   324→   324→            <div className="w-20 h-1.5 rounded-full bg-white/40 mx-auto flex gap-1 justify-center">
+   325→   325→              {visibleBanners.slice(0, 3).map((_, idx) => (
+   326→   326→                <div key={idx} className={cn('h-1 rounded-full flex-1', idx === 0 ? 'bg-white' : 'bg-white/40')} />
+   327→   327→              ))}
+   328→   328→            </div>
+   329→   329→          </div>
+   330→   330→        </div>
+   331→   331→      ) : (
+   332→   332→        <div className="rounded-xl border border-border/30 overflow-hidden bg-muted/10">
+   333→   333→          <div className="h-8 flex items-center px-3 bg-muted/30">
+   334→   334→            <div className="flex gap-1">
+   335→   335→              <div className="w-2 h-2 rounded-full bg-red-400" />
+   336→   336→              <div className="w-2 h-2 rounded-full bg-yellow-400" />
+   337→   337→              <div className="w-2 h-2 rounded-full bg-green-400" />
+   338→   338→            </div>
+   339→   339→          </div>
+   340→   340→          <div className="p-2 space-y-2">
+   341→   341→            {visibleBanners.length > 0 ? (
+   342→   342→              visibleBanners.slice(0, 3).map((b) => (
+   343→   343→                <div key={b.id} className="rounded-lg overflow-hidden h-16 relative">
+   344→   344→                  <img src={b.image_url} alt={b.title} className="w-full h-full object-cover" />
+   345→   345→                  <div className="absolute bottom-0 left-0 right-0 px-2 py-1 bg-gradient-to-t from-black/60 to-transparent">
+   346→   346→                    <p className="text-white text-[9px] font-medium truncate">{b.title}</p>
+   347→   347→                  </div>
+   348→   348→                </div>
+   349→   349→              ))
+   350→   350→            ) : (
+   351→   351→              <div className="h-16 flex items-center justify-center text-xs text-muted-foreground">
+   352→   352→                لا توجد بانرات
+   353→   353→              </div>
+   354→   354→            )}
+   355→   355→            {visibleBanners.length > 3 && (
+   356→   356→              <p className="text-[10px] text-center text-muted-foreground">
+   357→   357→                +{formatNumber(visibleBanners.length - 3)} بانرات أخرى
+   358→   358→              </p>
+   359→   359→            )}
+   360→   360→          </div>
+   361→   361→        </div>
+   362→   362→      )}
+   363→   363→    </div>
+   364→   364→  );
+   365→   365→}
+   366→   366→
+   367→   367→// ============================================
+   368→   368→// Main Component
+   369→   369→// ============================================
+   370→   370→export default function BannersPanel() {
+   371→   371→  const { showToast } = useAdminStore();
+   372→   372→
+   373→   373→  // Data
+   374→   374→  const [banners, setBanners] = useState<DbBanner[]>([]);
+   375→   375→  const [loading, setLoading] = useState(true);
+   376→   376→
+   377→   377→  // Filter
+   378→   378→  const [positionFilter, setPositionFilter] = useState<BannerPosition | 'all'>('all');
+   379→   379→  const [statusFilter, setStatusFilter] = useState<'all' | BannerStatus>('all');
+   380→   380→
+   381→   381→  // Dialogs
+   382→   382→  const [dialogOpen, setDialogOpen] = useState(false);
+   383→   383→  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+   384→   384→  const [previewDialogOpen, setPreviewDialogOpen] = useState(false);
+   385→   385→  const [editingBanner, setEditingBanner] = useState<DbBanner | null>(null);
+   386→   386→  const [deletingBanner, setDeletingBanner] = useState<DbBanner | null>(null);
+   387→   387→
+   388→   388→  // Form
+   389→   389→  const [form, setForm] = useState<BannerFormData>({ ...EMPTY_FORM });
+   390→   390→  const [saving, setSaving] = useState(false);
+   391→   391→  const [uploading, setUploading] = useState(false);
+   392→   392→  const [uploadProgress, setUploadProgress] = useState(0);
+   393→   393→  const [imageFile, setImageFile] = useState<File | null>(null);
+   394→   394→  const [imagePreview, setImagePreview] = useState('');
+   395→   395→
+   396→   396→  // Auto-expire check interval
+   397→   397→  useEffect(() => {
+   398→   398→    const interval = setInterval(() => {
+   399→   399→      setBanners((prev) => {
+   400→   400→        let changed = false;
+   401→   401→        const updated = prev.map((b) => {
+   402→   402→          if (b.is_active && b.end_date && new Date(b.end_date) < new Date()) {
+   403→   403→            changed = true;
+   404→   404→            return { ...b, is_active: false };
+   405→   405→          }
+   406→   406→          return b;
+   407→   407→        });
+   408→   408→        return changed ? updated : prev;
+   409→   409→      });
+   410→   410→    }, 60000);
+   411→   411→    return () => clearInterval(interval);
+   412→   412→  // eslint-disable-next-line react-hooks/exhaustive-deps
+   413→   413→  }, []);
+   414→   414→
+   415→   415→  // Load banners from Supabase
+   416→   416→  const loadBanners = useCallback(async () => {
+   417→   417→    try {
+   418→   418→      const { data, error } = await supabase
+   419→   419→        .from('banners')
+   420→   420→        .select('*')
+   421→   421→        .order('sort_order', { ascending: true });
+   422→   422→
+   423→   423→      if (error) throw error;
+   424→   424→      startTransition(() => {
+   425→   425→        setBanners((data as DbBanner[]) || []);
+   426→   426→        setLoading(false);
+   427→   427→      });
+   428→   428→    } catch (err) {
+   429→   429→      console.error('Error loading banners:', err);
+   430→   430→      startTransition(() => { setLoading(false); });
+   431→   431→    }
+   432→   432→  }, []);
+   433→   433→
+   434→   434→  // Initial load
+   435→   435→  useEffect(() => {
+   436→   436→    startTransition(() => { loadBanners(); });
+   437→   437→    // eslint-disable-next-line react-hooks/exhaustive-deps
+   438→   438→  }, []);
+   439→   439→
+   440→   440→  // Filtered banners
+   441→   441→  const filteredBanners = banners.filter((b) => {
+   442→   442→    if (positionFilter !== 'all' && b.position !== positionFilter) return false;
+   443→   443→    if (statusFilter !== 'all' && getBannerStatus(b) !== statusFilter) return false;
+   444→   444→    return true;
+   445→   445→  });
+   446→   446→
+   447→   447→  // Stats
+   448→   448→  const totalBanners = banners.length;
+   449→   449→  const activeBanners = banners.filter((b) => getBannerStatus(b) === 'active').length;
+   450→   450→  const scheduledBanners = banners.filter((b) => getBannerStatus(b) === 'scheduled').length;
+   451→   451→  const expiredBanners = banners.filter((b) => getBannerStatus(b) === 'expired').length;
+   452→   452→  const activePerPosition = (pos: BannerPosition) =>
+   453→   453→    banners.filter((b) => (b.position === pos || b.position === 'all') && getBannerStatus(b) === 'active').length;
+   454→   454→
+   455→   455→  // ============================================
+   456→   456→  // Image Upload to Firebase Storage
+   457→   457→  // ============================================
+   458→   458→  const uploadImageToStorage = async (file: File): Promise<string> => {
+   459→   459→    const fileName = `banners/${Date.now()}_${file.name}`;
+   460→   460→    const sRef = storageRef(storage, fileName);
+   461→   461→    return new Promise((resolve, reject) => {
+   462→   462→      const uploadTask = uploadBytesResumable(sRef, file);
+   463→   463→      uploadTask.on(
+   464→   464→        'state_changed',
+   465→   465→        (snapshot) => {
+   466→   466→          const progress = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
+   467→   467→          setUploadProgress(progress);
+   468→   468→        },
+   469→   469→        (error) => reject(error),
+   470→   470→        async () => {
+   471→   471→          const url = await getDownloadURL(uploadTask.snapshot.ref);
+   472→   472→          resolve(url);
+   473→   473→        }
+   474→   474→      );
+   475→   475→    });
+   476→   476→  };
+   477→   477→
+   478→   478→  const handleImageSelected = (file: File) => {
+   479→   479→    setImageFile(file);
+   480→   480→    const reader = new FileReader();
+   481→   481→    reader.onload = () => setImagePreview(reader.result as string);
+   482→   482→    reader.readAsDataURL(file);
+   483→   483→  };
+   484→   484→
+   485→   485→  const handleImageClear = () => {
+   486→   486→    setImageFile(null);
+   487→   487→    setImagePreview('');
+   488→   488→    setForm((prev) => ({ ...prev, image_url: '' }));
+   489→   489→  };
+   490→   490→
+   491→   491→  // ============================================
+   492→   492→  // CRUD Operations
+   493→   493→  // ============================================
+   494→   494→  const openCreateDialog = () => {
+   495→   495→    setEditingBanner(null);
+   496→   496→    setForm({ ...EMPTY_FORM });
+   497→   497→    setImageFile(null);
+   498→   498→    setImagePreview('');
+   499→   499→    setUploadProgress(0);
+   500→   500→    setDialogOpen(true);
+   501→   501→  };
+   502→   502→
+   503→   503→  const openEditDialog = (banner: DbBanner) => {
+   504→   504→    setEditingBanner(banner);
+   505→   505→    setForm({
+   506→   506→      title: banner.title || '',
+   507→   507→      description: banner.description || '',
+   508→   508→      image_url: banner.image_url || '',
+   509→   509→      position: banner.position || 'home',
+   510→   510→      link_type: banner.link_type || 'none',
+   511→   511→      link_target: banner.link_target || '',
+   512→   512→      sort_order: banner.sort_order || 0,
+   513→   513→      is_active: banner.is_active,
+   514→   514→      start_date: banner.start_date ? new Date(banner.start_date) : undefined,
+   515→   515→      end_date: banner.end_date ? new Date(banner.end_date) : undefined,
+   516→   516→    });
+   517→   517→    setImagePreview(banner.image_url || '');
+   518→   518→    setImageFile(null);
+   519→   519→    setUploadProgress(0);
+   520→   520→    setDialogOpen(true);
+   521→   521→  };
+   522→   522→
+   523→   523→  const handleSave = async () => {
+   524→   524→    if (!form.title.trim()) {
+   525→   525→      showToast('يرجى إدخال عنوان البانر', 'error');
+   526→   526→      return;
+   527→   527→    }
+   528→   528→
+   529→   529→    setSaving(true);
+   530→   530→    try {
+   531→   531→      let imageUrl = form.image_url;
+   532→   532→
+   533→   533→      // Upload new image if selected
+   534→   534→      if (imageFile) {
+   535→   535→        setUploading(true);
+   536→   536→        imageUrl = await uploadImageToStorage(imageFile);
+   537→   537→        setUploading(false);
+   538→   538→      }
+   539→   539→
+   540→   540→      if (!imageUrl) {
+   541→   541→        showToast('يرجى رفع صورة للبانر', 'error');
+   542→   542→        setSaving(false);
+   543→   543→        return;
+   544→   544→      }
+   545→   545→
+   546→   546→      const bannerData = {
+   547→   547→        title: form.title,
+   548→   548→        description: form.description,
+   549→   549→        image_url: imageUrl,
+   550→   550→        position: form.position,
+   551→   551→        link_type: form.link_type,
+   552→   552→        link_target: form.link_type !== 'none' ? form.link_target : '',
+   553→   553→        sort_order: form.sort_order,
+   554→   554→        is_active: form.is_active,
+   555→   555→        start_date: form.start_date ? form.start_date.toISOString() : null,
+   556→   556→        end_date: form.end_date ? form.end_date.toISOString() : null,
+   557→   557→        updated_at: new Date().toISOString(),
+   558→   558→      };
+   559→   559→
+   560→   560→      if (editingBanner) {
+   561→   561→        const { error } = await supabase
+   562→   562→          .from('banners')
+   563→   563→          .update(bannerData)
+   564→   564→          .eq('id', editingBanner.id);
+   565→   565→        if (error) throw error;
+   566→   566→        showToast('تم تحديث البانر بنجاح', 'success');
+   567→   567→      } else {
+   568→   568→        const { error } = await supabase
+   569→   569→          .from('banners')
+   570→   570→          .insert({ ...bannerData, created_at: new Date().toISOString() });
+   571→   571→        if (error) throw error;
+   572→   572→        showToast('تم إضافة البانر بنجاح', 'success');
+   573→   573→      }
+   574→   574→
+   575→   575→      setDialogOpen(false);
+   576→   576→      loadBanners();
+   577→   577→    } catch (err) {
+   578→   578→      console.error('Error saving banner:', err);
+   579→   579→      showToast('خطأ في حفظ البانر', 'error');
+   580→   580→    } finally {
+   581→   581→      setSaving(false);
+   582→   582→      setUploading(false);
+   583→   583→    }
+   584→   584→  };
+   585→   585→
+   586→   586→  const handleToggleActive = async (banner: DbBanner) => {
+   587→   587→    try {
+   588→   588→      const { error } = await supabase
+   589→   589→        .from('banners')
+   590→   590→        .update({ is_active: !banner.is_active, updated_at: new Date().toISOString() })
+   591→   591→        .eq('id', banner.id);
+   592→   592→      if (error) throw error;
+   593→   593→      showToast(banner.is_active ? 'تم تعطيل البانر' : 'تم تفعيل البانر', 'success');
+   594→   594→      loadBanners();
+   595→   595→    } catch (err) {
+   596→   596→      console.error('Error toggling banner:', err);
+   597→   597→      showToast('خطأ في تحديث البانر', 'error');
+   598→   598→    }
+   599→   599→  };
+   600→   600→
+   601→   601→  const handleDelete = async () => {
+   602→   602→    if (!deletingBanner) return;
+   603→   603→    try {
+   604→   604→      // Try to delete image from Firebase Storage
+   605→   605→      if (deletingBanner.image_url && deletingBanner.image_url.includes('firebasestorage')) {
+   606→   606→        try {
+   607→   607→          const imageRef = storageRef(storage, deletingBanner.image_url);
+   608→   608→          await deleteObject(imageRef);
+   609→   609→        } catch {
+   610→   610→          // Image may not exist in storage, continue with deletion
+   611→   611→        }
+   612→   612→      }
+   613→   613→
+   614→   614→      const { error } = await supabase
+   615→   615→        .from('banners')
+   616→   616→        .delete()
+   617→   617→        .eq('id', deletingBanner.id);
+   618→   618→      if (error) throw error;
+   619→   619→      showToast('تم حذف البانر بنجاح', 'success');
+   620→   620→      loadBanners();
+   621→   621→    } catch (err) {
+   622→   622→      console.error('Error deleting banner:', err);
+   623→   623→      showToast('خطأ في حذف البانر', 'error');
+   624→   624→    } finally {
+   625→   625→      setDeleteDialogOpen(false);
+   626→   626→      setDeletingBanner(null);
+   627→   627→    }
+   628→   628→  };
+   629→   629→
+   630→   630→  const handleReorder = async (reordered: DbBanner[]) => {
+   631→   631→    // Optimistic update
+   632→   632→    const updatedBanners = banners.map((b) => {
+   633→   633→      const idx = reordered.findIndex((r) => r.id === b.id);
+   634→   634→      if (idx !== -1) return { ...b, sort_order: idx };
+   635→   635→      return b;
+   636→   636→    });
+   637→   637→    setBanners(updatedBanners);
+   638→   638→
+   639→   639→    try {
+   640→   640→      const updates = reordered.map((b, index) =>
+   641→   641→        supabase.from('banners').update({ sort_order: index, updated_at: new Date().toISOString() }).eq('id', b.id)
+   642→   642→      );
+   643→   643→      await Promise.all(updates);
+   644→   644→    } catch (err) {
+   645→   645→      console.error('Error reordering banners:', err);
+   646→   646→      showToast('خطأ في إعادة الترتيب', 'error');
+   647→   647→      loadBanners();
+   648→   648→    }
+   649→   649→  };
+   650→   650→
+   651→   651→  // ============================================
+   652→   652→  // Render
+   653→   653→  // ============================================
+   654→   654→  if (loading) {
+   655→   655→    return (
+   656→   656→      <div className="flex items-center justify-center min-h-[400px]">
+   657→   657→        <div className="flex flex-col items-center gap-3">
+   658→   658→          <Loader2 className="w-8 h-8 animate-spin text-primary" />
+   659→   659→          <p className="text-sm text-muted-foreground">جاري تحميل البانرات...</p>
+   660→   660→        </div>
+   661→   661→      </div>
+   662→   662→    );
+   663→   663→  }
+   664→   664→
+   665→   665→  return (
+   666→   666→    <div className="space-y-6" dir="rtl">
+   667→   667→      {/* ===== Header ===== */}
+   668→   668→      <div className="flex items-center justify-between">
+   669→   669→        <div>
+   670→   670→          <h1 className="text-2xl font-bold text-foreground">إدارة البانرات الإعلانية</h1>
+   671→   671→          <p className="text-muted-foreground text-sm mt-1">
+   672→   672→            إدارة البانرات الإعلانية في جميع أنحاء التطبيق
+   673→   673→          </p>
+   674→   674→        </div>
+   675→   675→        <div className="flex items-center gap-2">
+   676→   676→          <Button
+   677→   677→            variant="outline"
+   678→   678→            size="sm"
+   679→   679→            onClick={() => setPreviewDialogOpen(true)}
+   680→   680→            className="rounded-xl"
+   681→   681→          >
+   682→   682→            <Eye className="w-4 h-4 ml-1" />
+   683→   683→            معاينة
+   684→   684→          </Button>
+   685→   685→          <Button
+   686→   686→            size="sm"
+   687→   687→            onClick={openCreateDialog}
+   688→   688→            className="rounded-xl bg-primary text-primary-foreground hover:bg-primary/90"
+   689→   689→          >
+   690→   690→            <Plus className="w-4 h-4 ml-1" />
+   691→   691→            بانر جديد
+   692→   692→          </Button>
+   693→   693→        </div>
+   694→   694→      </div>
+   695→   695→
+   696→   696→      {/* ===== Stats ===== */}
+   697→   697→      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+   698→   698→        <StatsCard icon={Layers} label="إجمالي البانرات" value={totalBanners} color="#5C1A1B" />
+   699→   699→        <StatsCard icon={Zap} label="بانرات نشطة" value={activeBanners} color="#2E7D32" />
+   700→   700→        <StatsCard icon={CalendarClock} label="مجدولة" value={scheduledBanners} color="#F57F17" />
+   701→   701→        <StatsCard icon={Ban} label="منتهية الصلاحية" value={expiredBanners} color="#C62828" />
+   702→   702→      </div>
+   703→   703→
+   704→   704→      {/* Active per position mini-stats */}
+   705→   705→      <div className="flex flex-wrap gap-2">
+   706→   706→        {(Object.keys(POSITION_CONFIG) as BannerPosition[]).map((pos) => {
+   707→   707→          const config = POSITION_CONFIG[pos];
+   708→   708→          const Icon = config.icon;
+   709→   709→          return (
+   710→   710→            <Badge
+   711→   711→              key={pos}
+   712→   712→              variant="secondary"
+   713→   713→              className="text-xs py-1.5 px-3 rounded-lg cursor-pointer hover:bg-primary/10 transition-colors"
+   714→   714→              style={{ borderColor: `${config.color}30`, borderWidth: 1 }}
+   715→   715→              onClick={() => setPositionFilter(pos === positionFilter ? 'all' : pos)}
+   716→   716→            >
+   717→   717→              <Icon className="w-3 h-3 ml-1" style={{ color: config.color }} />
+   718→   718→              {config.label}: {formatNumber(activePerPosition(pos))}
+   719→   719→            </Badge>
+   720→   720→          );
+   721→   721→        })}
+   722→   722→      </div>
+   723→   723→
+   724→   724→      {/* ===== Filters ===== */}
+   725→   725→      <div className="flex flex-col sm:flex-row gap-3">
+   726→   726→        <Tabs
+   727→   727→          value={positionFilter}
+   728→   728→          onValueChange={(v) => setPositionFilter(v as BannerPosition | 'all')}
+   729→   729→          className="flex-1"
+   730→   730→        >
+   731→   731→          <TabsList className="w-full sm:w-auto rounded-xl h-10 p-1 bg-muted/50">
+   732→   732→            <TabsTrigger value="all" className="rounded-lg text-xs">الكل</TabsTrigger>
+   733→   733→            {(Object.keys(POSITION_CONFIG) as BannerPosition[]).map((pos) => {
+   734→   734→              const config = POSITION_CONFIG[pos];
+   735→   735→              const Icon = config.icon;
+   736→   736→              return (
+   737→   737→                <TabsTrigger key={pos} value={pos} className="rounded-lg text-xs gap-1">
+   738→   738→                  <Icon className="w-3 h-3" style={{ color: config.color }} />
+   739→   739→                  <span className="hidden sm:inline">{config.label}</span>
+   740→   740→                </TabsTrigger>
+   741→   741→              );
+   742→   742→            })}
+   743→   743→          </TabsList>
+   744→   744→        </Tabs>
+   745→   745→
+   746→   746→        <Select value={statusFilter} onValueChange={(v) => setStatusFilter(v as 'all' | BannerStatus)}>
+   747→   747→          <SelectTrigger className="w-full sm:w-[160px] rounded-xl h-10">
+   748→   748→            <Activity className="w-4 h-4 ml-2 text-muted-foreground" />
+   749→   749→            <SelectValue />
+   750→   750→          </SelectTrigger>
+   751→   751→          <SelectContent>
+   752→   752→            <SelectItem value="all">جميع الحالات</SelectItem>
+   753→   753→            <SelectItem value="active">نشط</SelectItem>
+   754→   754→            <SelectItem value="scheduled">مجدول</SelectItem>
+   755→   755→            <SelectItem value="expired">منتهي</SelectItem>
+   756→   756→            <SelectItem value="inactive">معطل</SelectItem>
+   757→   757→          </SelectContent>
+   758→   758→        </Select>
+   759→   759→      </div>
+   760→   760→
+   761→   761→      {/* ===== Banners List with Drag Reorder ===== */}
+   762→   762→      {filteredBanners.length === 0 ? (
+   763→   763→        <motion.div
+   764→   764→          initial={{ opacity: 0 }}
+   765→   765→          animate={{ opacity: 1 }}
+   766→   766→          className="flex flex-col items-center justify-center py-16 text-center"
+   767→   767→        >
+   768→   768→          <div className="p-4 rounded-2xl bg-muted/30 mb-4">
+   769→   769→            <ImageIcon className="w-12 h-12 text-muted-foreground/30" />
+   770→   770→          </div>
+   771→   771→          <p className="text-muted-foreground font-medium">لا توجد بانرات</p>
+   772→   772→          <p className="text-xs text-muted-foreground mt-1">
+   773→   773→            {positionFilter !== 'all' || statusFilter !== 'all'
+   774→   774→              ? 'جرّب تغيير الفلاتر أو أضف بانر جديد'
+   775→   775→              : 'أضف أول بانر إعلاني لتطبيقك'}
+   776→   776→          </p>
+   777→   777→          <Button
+   778→   778→            size="sm"
+   779→   779→            onClick={openCreateDialog}
+   780→   780→            className="mt-4 rounded-xl bg-primary text-primary-foreground"
+   781→   781→          >
+   782→   782→            <Plus className="w-4 h-4 ml-1" />
+   783→   783→            إضافة بانر
+   784→   784→          </Button>
+   785→   785→        </motion.div>
+   786→   786→      ) : (
+   787→   787→        <Reorder.Group
+   788→   788→          axis="y"
+   789→   789→          values={filteredBanners}
+   790→   790→          onReorder={(reordered) => {
+   791→   791→            setBanners((prev) => {
+   792→   792→              // Merge reordered filtered items back into full list
+   793→   793→              const reorderedIds = new Set(reordered.map((r) => r.id));
+   794→   794→              const nonFiltered = prev.filter((b) => !reorderedIds.has(b.id));
+   795→   795→              const merged = [...nonFiltered, ...reordered];
+   796→   796→              return merged.sort((a, b) => a.sort_order - b.sort_order);
+   797→   797→            });
+   798→   798→            handleReorder(reordered);
+   799→   799→          }}
+   800→   800→          className="space-y-3"
+   801→   801→        >
+   802→   802→          <AnimatePresence mode="popLayout">
+   803→   803→            {filteredBanners.map((banner, i) => {
+   804→   804→              const status = getBannerStatus(banner);
+   805→   805→              const statusCfg = getStatusConfig(status);
+   806→   806→              const posConfig = POSITION_CONFIG[banner.position as BannerPosition] || POSITION_CONFIG.home;
+   807→   807→              const PosIcon = posConfig.icon;
+   808→   808→
+   809→   809→              return (
+   810→   810→                <Reorder.Item
+   811→   811→                  key={banner.id}
+   812→   812→                  value={banner}
+   813→   813→                  initial={{ opacity: 0, y: 20 }}
+   814→   814→                  animate={{ opacity: 1, y: 0 }}
+   815→   815→                  exit={{ opacity: 0, x: -100 }}
+   816→   816→                  transition={{ delay: i * 0.03, duration: 0.3 }}
+   817→   817→                  className="cursor-grab active:cursor-grabbing"
+   818→   818→                >
+   819→   819→                  <Card className="ios-card border-0 overflow-hidden card-press">
+   820→   820→                    <div className="flex">
+   821→   821→                      {/* Drag Handle */}
+   822→   822→                      <div className="flex items-center px-2 border-l border-border/10">
+   823→   823→                        <GripVertical className="w-4 h-4 text-muted-foreground/40" />
+   824→   824→                      </div>
+   825→   825→
+   826→   826→                      {/* Banner Image */}
+   827→   827→                      <div className="w-28 sm:w-40 shrink-0">
+   828→   828→                        {banner.image_url ? (
+   829→   829→                          <img
+   830→   830→                            src={banner.image_url}
+   831→   831→                            alt={banner.title}
+   832→   832→                            className="w-full h-full object-cover"
+   833→   833→                          />
+   834→   834→                        ) : (
+   835→   835→                          <div className="w-full h-full min-h-[100px] flex items-center justify-center bg-muted/30">
+   836→   836→                            <ImageIcon className="w-6 h-6 text-muted-foreground/30" />
+   837→   837→                          </div>
+   838→   838→                        )}
+   839→   839→                      </div>
+   840→   840→
+   841→   841→                      {/* Banner Info */}
+   842→   842→                      <CardContent className="flex-1 p-3 sm:p-4">
+   843→   843→                        <div className="flex items-start justify-between gap-2">
+   844→   844→                          <div className="flex-1 min-w-0">
+   845→   845→                            <div className="flex items-center gap-2 mb-1">
+   846→   846→                              <h3 className="font-semibold text-sm text-foreground truncate">
+   847→   847→                                {banner.title || 'بدون عنوان'}
+   848→   848→                              </h3>
+   849→   849→                              <Badge className={cn('text-[10px] px-2 py-0 h-5', statusCfg.color)}>
+   850→   850→                                <statusCfg.icon className="w-3 h-3 ml-0.5" />
+   851→   851→                                {statusCfg.label}
+   852→   852→                              </Badge>
+   853→   853→                            </div>
+   854→   854→
+   855→   855→                            {banner.description && (
+   856→   856→                              <p className="text-xs text-muted-foreground truncate mb-2">
+   857→   857→                                {banner.description}
+   858→   858→                              </p>
+   859→   859→                            )}
+   860→   860→
+   861→   861→                            <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+   862→   862→                              <span className="flex items-center gap-1">
+   863→   863→                                <PosIcon className="w-3 h-3" style={{ color: posConfig.color }} />
+   864→   864→                                {posConfig.label}
+   865→   865→                              </span>
+   866→   866→                              <span className="flex items-center gap-1">
+   867→   867→                                <ArrowUpDown className="w-3 h-3" />
+   868→   868→                                ترتيب: {banner.sort_order}
+   869→   869→                              </span>
+   870→   870→                              {banner.link_type !== 'none' && banner.link_target && (
+   871→   871→                                <span className="flex items-center gap-1">
+   872→   872→                                  <Link2 className="w-3 h-3" />
+   873→   873→                                  <span className="truncate max-w-[120px]" dir="ltr">{banner.link_target}</span>
+   874→   874→                                  <Badge variant="outline" className="text-[9px] h-4 px-1">
+   875→   875→                                    {LINK_TYPE_CONFIG[banner.link_type as BannerLinkType]?.label}
+   876→   876→                                  </Badge>
+   877→   877→                                </span>
+   878→   878→                              )}
+   879→   879→                            </div>
+   880→   880→
+   881→   881→                            {/* Scheduling Info */}
+   882→   882→                            {(banner.start_date || banner.end_date) && (
+   883→   883→                              <div className="flex items-center gap-2 mt-2 text-[10px]">
+   884→   884→                                {banner.start_date && (
+   885→   885→                                  <span className="flex items-center gap-1 text-amber-600 dark:text-amber-400">
+   886→   886→                                    <CalendarDays className="w-3 h-3" />
+   887→   887→                                    من: {new Date(banner.start_date).toLocaleDateString('ar-SA')}
+   888→   888→                                  </span>
+   889→   889→                                )}
+   890→   890→                                {banner.end_date && (
+   891→   891→                                  <span className="flex items-center gap-1 text-red-600 dark:text-red-400">
+   892→   892→                                    <CalendarDays className="w-3 h-3" />
+   893→   893→                                    إلى: {new Date(banner.end_date).toLocaleDateString('ar-SA')}
+   894→   894→                                  </span>
+   895→   895→                                )}
+   896→   896→                              </div>
+   897→   897→                            )}
+   898→   898→                          </div>
+   899→   899→
+   900→   900→                          {/* Actions */}
+   901→   901→                          <div className="flex items-center gap-1 shrink-0">
+   902→   902→                            <Switch
+   903→   903→                              checked={banner.is_active}
+   904→   904→                              onCheckedChange={() => handleToggleActive(banner)}
+   905→   905→                              className="scale-75"
+   906→   906→                            />
+   907→   907→                            <Button
+   908→   908→                              variant="ghost"
+   909→   909→                              size="sm"
+   910→   910→                              className="h-8 w-8 p-0"
+   911→   911→                              onClick={() => openEditDialog(banner)}
+   912→   912→                            >
+   913→   913→                              <Edit3 className="w-4 h-4 text-primary" />
+   914→   914→                            </Button>
+   915→   915→                            <Button
+   916→   916→                              variant="ghost"
+   917→   917→                              size="sm"
+   918→   918→                              className="h-8 w-8 p-0"
+   919→   919→                              onClick={() => {
+   920→   920→                                setDeletingBanner(banner);
+   921→   921→                                setDeleteDialogOpen(true);
+   922→   922→                              }}
+   923→   923→                            >
+   924→   924→                              <Trash2 className="w-4 h-4 text-destructive" />
+   925→   925→                            </Button>
+   926→   926→                          </div>
+   927→   927→                        </div>
+   928→   928→                      </CardContent>
+   929→   929→                    </div>
+   930→   930→                  </Card>
+   931→   931→                </Reorder.Item>
+   932→   932→              );
+   933→   933→            })}
+   934→   934→          </AnimatePresence>
+   935→   935→        </Reorder.Group>
+   936→   936→      )}
+   937→   937→
+   938→   938→      {/* ===== Create/Edit Dialog ===== */}
+   939→   939→      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+   940→   940→        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto rounded-2xl" dir="rtl">
+   941→   941→          <DialogHeader>
+   942→   942→            <DialogTitle className="text-lg font-bold text-foreground">
+   943→   943→              {editingBanner ? 'تعديل البانر' : 'إضافة بانر جديد'}
+   944→   944→            </DialogTitle>
+   945→   945→          </DialogHeader>
+   946→   946→
+   947→   947→          <div className="space-y-5 py-2">
+   948→   948→            {/* Title */}
+   949→   949→            <div className="space-y-1.5">
+   950→   950→              <Label className="text-xs text-muted-foreground flex items-center gap-1">
+   951→   951→                <Tag className="w-3 h-3" />
+   952→   952→                العنوان *
+   953→   953→              </Label>
+   954→   954→              <Input
+   955→   955→                value={form.title}
+   956→   956→                onChange={(e) => setForm((p) => ({ ...p, title: e.target.value }))}
+   957→   957→                placeholder="عنوان البانر الإعلاني..."
+   958→   958→                className="h-11 rounded-xl"
+   959→   959→              />
+   960→   960→            </div>
+   961→   961→
+   962→   962→            {/* Description */}
+   963→   963→            <div className="space-y-1.5">
+   964→   964→              <Label className="text-xs text-muted-foreground">الوصف</Label>
+   965→   965→              <Input
+   966→   966→                value={form.description}
+   967→   967→                onChange={(e) => setForm((p) => ({ ...p, description: e.target.value }))}
+   968→   968→                placeholder="وصف مختصر للبانر..."
+   969→   969→                className="h-11 rounded-xl"
+   970→   970→              />
+   971→   971→            </div>
+   972→   972→
+   973→   973→            {/* Position */}
+   974→   974→            <div className="space-y-1.5">
+   975→   975→              <Label className="text-xs text-muted-foreground flex items-center gap-1">
+   976→   976→                <Monitor className="w-3 h-3" />
+   977→   977→                الموضع
+   978→   978→              </Label>
+   979→   979→              <Select
+   980→   980→                value={form.position}
+   981→   981→                onValueChange={(v) => setForm((p) => ({ ...p, position: v as BannerPosition }))}
+   982→   982→              >
+   983→   983→                <SelectTrigger className="h-11 rounded-xl">
+   984→   984→                  <SelectValue />
+   985→   985→                </SelectTrigger>
+   986→   986→                <SelectContent>
+   987→   987→                  {(Object.keys(POSITION_CONFIG) as BannerPosition[]).map((pos) => {
+   988→   988→                    const config = POSITION_CONFIG[pos];
+   989→   989→                    const Icon = config.icon;
+   990→   990→                    return (
+   991→   991→                      <SelectItem key={pos} value={pos}>
+   992→   992→                        <div className="flex items-center gap-2">
+   993→   993→                          <Icon className="w-4 h-4" style={{ color: config.color }} />
+   994→   994→                          <span>{config.label}</span>
+   995→   995→                        </div>
+   996→   996→                      </SelectItem>
+   997→   997→                    );
+   998→   998→                  })}
+   999→   999→                </SelectContent>
+  1000→  1000→              </Select>
+  1001→  1001→            </div>
+  1002→  1002→
+  1003→  1003→            {/* Image Upload */}
+  1004→  1004→            <ImageUploadZone
+  1005→  1005→              imageUrl={imagePreview || form.image_url}
+  1006→  1006→              onImageSet={handleImageSelected}
+  1007→  1007→              onImageClear={handleImageClear}
+  1008→  1008→              position={form.position}
+  1009→  1009→              uploading={uploading}
+  1010→  1010→              uploadProgress={uploadProgress}
+  1011→  1011→            />
+  1012→  1012→
+  1013→  1013→            {/* Link Type */}
+  1014→  1014→            <div className="space-y-1.5">
+  1015→  1015→              <Label className="text-xs text-muted-foreground flex items-center gap-1">
+  1016→  1016→                <Link2 className="w-3 h-3" />
+  1017→  1017→                نوع الرابط
+  1018→  1018→              </Label>
+  1019→  1019→              <Select
+  1020→  1020→                value={form.link_type}
+  1021→  1021→                onValueChange={(v) => setForm((p) => ({ ...p, link_type: v as BannerLinkType, link_target: '' }))}
+  1022→  1022→              >
+  1023→  1023→                <SelectTrigger className="h-11 rounded-xl">
+  1024→  1024→                  <SelectValue />
+  1025→  1025→                </SelectTrigger>
+  1026→  1026→                <SelectContent>
+  1027→  1027→                  {(Object.keys(LINK_TYPE_CONFIG) as BannerLinkType[]).map((type) => (
+  1028→  1028→                    <SelectItem key={type} value={type}>
+  1029→  1029→                      {LINK_TYPE_CONFIG[type].label}
+  1030→  1030→                    </SelectItem>
+  1031→  1031→                  ))}
+  1032→  1032→                </SelectContent>
+  1033→  1033→              </Select>
+  1034→  1034→            </div>
+  1035→  1035→
+  1036→  1036→            {/* Link Target */}
+  1037→  1037→            {form.link_type !== 'none' && (
+  1038→  1038→              <motion.div
+  1039→  1039→                initial={{ opacity: 0, height: 0 }}
+  1040→  1040→                animate={{ opacity: 1, height: 'auto' }}
+  1041→  1041→                exit={{ opacity: 0, height: 0 }}
+  1042→  1042→                className="space-y-1.5"
+  1043→  1043→              >
+  1044→  1044→                <Label className="text-xs text-muted-foreground">الرابط المستهدف</Label>
+  1045→  1045→                <Input
+  1046→  1046→                  value={form.link_target}
+  1047→  1047→                  onChange={(e) => setForm((p) => ({ ...p, link_target: e.target.value }))}
+  1048→  1048→                  placeholder={LINK_TYPE_CONFIG[form.link_type]?.placeholder}
+  1049→  1049→                  dir="ltr"
+  1050→  1050→                  className="h-11 rounded-xl text-left"
+  1051→  1051→                />
+  1052→  1052→              </motion.div>
+  1053→  1053→            )}
+  1054→  1054→
+  1055→  1055→            {/* Sort Order */}
+  1056→  1056→            <div className="space-y-1.5">
+  1057→  1057→              <Label className="text-xs text-muted-foreground flex items-center gap-1">
+  1058→  1058→                <Move className="w-3 h-3" />
+  1059→  1059→                الترتيب
+  1060→  1060→              </Label>
+  1061→  1061→              <Input
+  1062→  1062→                type="number"
+  1063→  1063→                value={form.sort_order}
+  1064→  1064→                onChange={(e) => setForm((p) => ({ ...p, sort_order: parseInt(e.target.value) || 0 }))}
+  1065→  1065→                dir="ltr"
+  1066→  1066→                className="h-11 rounded-xl"
+  1067→  1067→                min={0}
+  1068→  1068→              />
+  1069→  1069→            </div>
+  1070→  1070→
+  1071→  1071→            <Separator />
+  1072→  1072→
+  1073→  1073→            {/* Scheduling */}
+  1074→  1074→            <div className="space-y-3">
+  1075→  1075→              <Label className="text-xs font-semibold text-foreground flex items-center gap-1">
+  1076→  1076→                <CalendarDays className="w-3 h-3" />
+  1077→  1077→                الجدولة (اختياري)
+  1078→  1078→              </Label>
+  1079→  1079→              <div className="grid grid-cols-2 gap-3">
+  1080→  1080→                <DatePickerField
+  1081→  1081→                  label="تاريخ البداية"
+  1082→  1082→                  date={form.start_date}
+  1083→  1083→                  onSelect={(d) => setForm((p) => ({ ...p, start_date: d }))}
+  1084→  1084→                  placeholder="بدون تحديد"
+  1085→  1085→                />
+  1086→  1086→                <DatePickerField
+  1087→  1087→                  label="تاريخ الانتهاء"
+  1088→  1088→                  date={form.end_date}
+  1089→  1089→                  onSelect={(d) => setForm((p) => ({ ...p, end_date: d }))}
+  1090→  1090→                  placeholder="بدون تحديد"
+  1091→  1091→                />
+  1092→  1092→              </div>
+  1093→  1093→              {form.start_date && form.end_date && form.start_date > form.end_date && (
+  1094→  1094→                <p className="text-xs text-destructive flex items-center gap-1">
+  1095→  1095→                  <AlertCircle className="w-3 h-3" />
+  1096→  1096→                  تاريخ الانتهاء يجب أن يكون بعد تاريخ البداية
+  1097→  1097→                </p>
+  1098→  1098→              )}
+  1099→  1099→            </div>
+  1100→  1100→
+  1101→  1101→            <Separator />
+  1102→  1102→
+  1103→  1103→            {/* Active Toggle */}
+  1104→  1104→            <div className="flex items-center justify-between p-3 rounded-xl bg-muted/20">
+  1105→  1105→              <div>
+  1106→  1106→                <p className="text-sm font-medium text-foreground">تفعيل البانر</p>
+  1107→  1107→                <p className="text-xs text-muted-foreground">سيكون البانر مرئياً عند التفعيل</p>
+  1108→  1108→              </div>
+  1109→  1109→              <Switch
+  1110→  1110→                checked={form.is_active}
+  1111→  1111→                onCheckedChange={(v) => setForm((p) => ({ ...p, is_active: v }))}
+  1112→  1112→              />
+  1113→  1113→            </div>
+  1114→  1114→          </div>
+  1115→  1115→
+  1116→  1116→          <DialogFooter className="gap-2">
+  1117→  1117→            <Button
+  1118→  1118→              variant="outline"
+  1119→  1119→              onClick={() => setDialogOpen(false)}
+  1120→  1120→              className="rounded-xl"
+  1121→  1121→              disabled={saving}
+  1122→  1122→            >
+  1123→  1123→              إلغاء
+  1124→  1124→            </Button>
+  1125→  1125→            <Button
+  1126→  1126→              onClick={handleSave}
+  1127→  1127→              disabled={saving || uploading}
+  1128→  1128→              className="rounded-xl bg-primary text-primary-foreground hover:bg-primary/90"
+  1129→  1129→            >
+  1130→  1130→              {saving ? (
+  1131→  1131→                <>
+  1132→  1132→                  <Loader2 className="w-4 h-4 ml-1 animate-spin" />
+  1133→  1133→                  {uploading ? 'جاري الرفع...' : 'جاري الحفظ...'}
+  1134→  1134→                </>
+  1135→  1135→              ) : editingBanner ? (
+  1136→  1136→                <>
+  1137→  1137→                  <CheckCircle className="w-4 h-4 ml-1" />
+  1138→  1138→                  تحديث
+  1139→  1139→                </>
+  1140→  1140→              ) : (
+  1141→  1141→                <>
+  1142→  1142→                  <Plus className="w-4 h-4 ml-1" />
+  1143→  1143→                  إضافة
+  1144→  1144→                </>
+  1145→  1145→              )}
+  1146→  1146→            </Button>
+  1147→  1147→          </DialogFooter>
+  1148→  1148→        </DialogContent>
+  1149→  1149→      </Dialog>
+  1150→  1150→
+  1151→  1151→      {/* ===== Delete Confirmation Dialog ===== */}
+  1152→  1152→      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+  1153→  1153→        <AlertDialogContent className="rounded-2xl" dir="rtl">
+  1154→  1154→          <AlertDialogHeader>
+  1155→  1155→            <AlertDialogTitle className="text-foreground">حذف البانر</AlertDialogTitle>
+  1156→  1156→            <AlertDialogDescription className="text-muted-foreground">
+  1157→  1157→              هل أنت متأكد من حذف البانر &quot;{deletingBanner?.title || 'بدون عنوان'}&quot;؟
+  1158→  1158→              <br />
+  1159→  1159→              لا يمكن التراجع عن هذا الإجراء وسيتم حذف الصورة أيضاً.
+  1160→  1160→            </AlertDialogDescription>
+  1161→  1161→          </AlertDialogHeader>
+  1162→  1162→          <AlertDialogFooter>
+  1163→  1163→            <AlertDialogCancel className="rounded-xl">إلغاء</AlertDialogCancel>
+  1164→  1164→            <AlertDialogAction
+  1165→  1165→              onClick={handleDelete}
+  1166→  1166→              className="rounded-xl bg-destructive text-destructive-foreground hover:bg-destructive/90"
+  1167→  1167→            >
+  1168→  1168→              <Trash2 className="w-4 h-4 ml-1" />
+  1169→  1169→              حذف
+  1170→  1170→            </AlertDialogAction>
+  1171→  1171→          </AlertDialogFooter>
+  1172→  1172→        </AlertDialogContent>
+  1173→  1173→      </AlertDialog>
+  1174→  1174→
+  1175→  1175→      {/* ===== Position Preview Dialog ===== */}
+  1176→  1176→      <Dialog open={previewDialogOpen} onOpenChange={setPreviewDialogOpen}>
+  1177→  1177→        <DialogContent className="max-w-2xl max-h-[85vh] rounded-2xl" dir="rtl">
+  1178→  1178→          <DialogHeader>
+  1179→  1179→            <DialogTitle className="text-lg font-bold text-foreground flex items-center gap-2">
+  1180→  1180→              <Eye className="w-5 h-5 text-primary" />
+  1181→  1181→              معاينة البانرات حسب الموضع
+  1182→  1182→            </DialogTitle>
+  1183→  1183→          </DialogHeader>
+  1184→  1184→
+  1185→  1185→          <ScrollArea className="max-h-[65vh]">
+  1186→  1186→            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 p-2">
+  1187→  1187→              {(Object.keys(POSITION_CONFIG) as BannerPosition[]).map((pos) => (
+  1188→  1188→                <PositionPreviewCard
+  1189→  1189→                  key={pos}
+  1190→  1190→                  position={pos}
+  1191→  1191→                  banners={banners.filter((b) => b.position === pos || b.position === 'all')}
+  1192→  1192→                />
+  1193→  1193→              ))}
+  1194→  1194→            </div>
+  1195→  1195→          </ScrollArea>
+  1196→  1196→        </DialogContent>
+  1197→  1197→      </Dialog>
+  1198→  1198→    </div>
+  1199→  1199→  );
+  1200→  1200→}
+  1201→  1201→

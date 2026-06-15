@@ -1,0 +1,1634 @@
+     1→'use client';
+     2→
+     3→import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+     4→import { useTheme } from 'next-themes';
+     5→import { motion, AnimatePresence, useMotionValue, useTransform, animate } from 'framer-motion';
+     6→import {
+     7→  ArrowLeft, ArrowRightLeft, RefreshCw, TrendingUp, TrendingDown,
+     8→  Globe, Calculator, History, X, CheckCircle2, Copy, Share2, Download,
+     9→  FileText, Wallet, Shield, Bell, BellRing, ChevronDown, Info,
+    10→  ArrowUpDown, Zap, Clock, AlertTriangle
+    11→} from 'lucide-react';
+    12→import { useAppStore } from '@/lib/store';
+    13→import { currencySymbols, currencyNames, currencyBadgeColors, formatNumber, formatBalance, timeAgo, defaultExchangeRates } from '@/lib/utils';
+    14→import { LOGO_BASE64 } from '@/lib/logo';
+    15→import { supabaseService, type DbExchangeRate } from '@/lib/supabase';
+    16→import { syncExchangeRatesFromApi, getExchangeRatesFromFirebase } from '@/lib/exchange-rate-sync';
+    17→import {
+    18→  AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid
+    19→} from 'recharts';
+    20→
+    21→// ═══════════════════════════════════════════════════════════
+    22→// TYPES
+    23→// ═══════════════════════════════════════════════════════════
+    24→
+    25→interface ConversionRecord {
+    26→  fromAmount: number;
+    27→  fromCurrency: string;
+    28→  toAmount: number;
+    29→  toCurrency: string;
+    30→  rate: number;
+    31→  commission: number;
+    32→  date: string;
+    33→  referenceNumber?: string;
+    34→}
+    35→
+    36→interface VoucherData {
+    37→  fromAmount: number;
+    38→  fromCurrency: string;
+    39→  toAmount: number;
+    40→  toCurrency: string;
+    41→  rate: number;
+    42→  commission: number;
+    43→  commissionAmount: number;
+    44→  rawResult: number;
+    45→  referenceNumber: string;
+    46→  date: string;
+    47→  userName: string;
+    48→  userId: string;
+    49→  senderAccount: string;
+    50→}
+    51→
+    52→interface RateAlert {
+    53→  id: string;
+    54→  fromCurrency: string;
+    55→  toCurrency: string;
+    56→  targetRate: number;
+    57→  direction: 'above' | 'below';
+    58→  createdAt: string;
+    59→  isActive: boolean;
+    60→}
+    61→
+    62→interface RateHistoryPoint {
+    63→  date: string;
+    64→  label: string;
+    65→  usdYer: number;
+    66→  sarYer: number;
+    67→}
+    68→
+    69→// ═══════════════════════════════════════════════════════════
+    70→// HELPERS
+    71→// ═══════════════════════════════════════════════════════════
+    72→
+    73→function generateReferenceNumber(): string {
+    74→  const prefix = 'EXC';
+    75→  const timestamp = Date.now().toString(36).toUpperCase();
+    76→  const random = Math.random().toString(36).substring(2, 6).toUpperCase();
+    77→  return `${prefix}-${timestamp}-${random}`;
+    78→}
+    79→
+    80→function formatVoucherDate(isoString: string): string {
+    81→  const d = new Date(isoString);
+    82→  const day = String(d.getDate()).padStart(2, '0');
+    83→  const month = String(d.getMonth() + 1).padStart(2, '0');
+    84→  const year = d.getFullYear();
+    85→  const hours = String(d.getHours()).padStart(2, '0');
+    86→  const minutes = String(d.getMinutes()).padStart(2, '0');
+    87→  return `${day}/${month}/${year} - ${hours}:${minutes}`;
+    88→}
+    89→
+    90→// Format a number smartly based on magnitude
+    91→function smartFormat(n: number, currency?: string): string {
+    92→  if (n === 0) return '0';
+    93→  if (n < 0.01 && n > 0) return n.toFixed(6);
+    94→  if (n < 1) return n.toFixed(4);
+    95→  if (n < 100) return n.toFixed(2);
+    96→  return formatNumber(parseFloat(n.toFixed(2)));
+    97→}
+    98→
+    99→// Generate mock 7-day rate history (simulating real data)
+   100→function generateRateHistory(currentUsdYer: number, currentSarYer: number): RateHistoryPoint[] {
+   101→  const history: RateHistoryPoint[] = [];
+   102→  const dayLabels = ['السبت', 'الأحد', 'الإثنين', 'الثلاثاء', 'الأربعاء', 'الخميس', 'الجمعة'];
+   103→
+   104→  for (let i = 6; i >= 0; i--) {
+   105→    const date = new Date();
+   106→    date.setDate(date.getDate() - i);
+   107→    const dayName = dayLabels[date.getDay()] || date.toLocaleDateString('ar-SA', { weekday: 'short' }) ;
+   108→
+   109→    // Simulate rate fluctuation: ±1.5% random walk from current
+   110→    const usdFluctuation = 1 + (Math.random() - 0.5) * 0.03;
+   111→    const sarFluctuation = 1 + (Math.random() - 0.5) * 0.03;
+   112→    const dayFactor = i === 0 ? 1 : usdFluctuation;
+   113→
+   114→    history.push({
+   115→      date: date.toISOString().split('T')[0],
+   116→      label: dayName,
+   117→      usdYer: i === 0 ? currentUsdYer : Math.round(currentUsdYer * dayFactor),
+   118→      sarYer: i === 0 ? currentSarYer : Math.round(currentSarYer * sarFluctuation),
+   119→    });
+   120→  }
+   121→  return history;
+   122→}
+   123→
+   124→// ═══════════════════════════════════════════════════════════
+   125→// ANIMATED NUMBER COMPONENT
+   126→// ═══════════════════════════════════════════════════════════
+   127→
+   128→function AnimatedNumber({ value, className, style }: { value: number; className?: string; style?: React.CSSProperties }) {
+   129→  const motionVal = useMotionValue(0);
+   130→  const display = useTransform(motionVal, (v) => smartFormat(v));
+   131→
+   132→  useEffect(() => {
+   133→    const controls = animate(motionVal, value, {
+   134→      duration: 0.6,
+   135→      ease: 'easeOut',
+   136→    });
+   137→    return controls.stop;
+   138→  }, [value, motionVal]);
+   139→
+   140→  return (
+   141→    <motion.span className={className} style={style}>
+   142→      {display.get() === '0' ? smartFormat(value) : display.get()}
+   143→    </motion.span>
+   144→  );
+   145→}
+   146→
+   147→// ═══════════════════════════════════════════════════════════
+   148→// MAIN COMPONENT
+   149→// ═══════════════════════════════════════════════════════════
+   150→
+   151→export default function ExchangeScreen() {
+   152→  const { theme } = useTheme();
+   153→  const isDark = theme === 'dark';
+   154→  const { user, setUser, setActiveScreen, exchangeRates, setExchangeRates, addNotification } = useAppStore();
+   155→
+   156→  const isVerified = user?.kycStatus === 'verified';
+   157→
+   158→  // Rate data state
+   159→  const [lastUpdate, setLastUpdate] = useState<string>(new Date().toISOString());
+   160→  const [isRefreshing, setIsRefreshing] = useState(false);
+   161→  const [commission, setCommission] = useState<number>(1.5);
+   162→  const [rateSource, setRateSource] = useState<string>('يدوي');
+   163→  const [previousRates, setPreviousRates] = useState<{ usdYer: number; sarYer: number } | null>(null);
+   164→
+   165→  // Converter state
+   166→  const [fromAmount, setFromAmount] = useState('1000');
+   167→  const [fromCurrency, setFromCurrency] = useState<'YER' | 'SAR' | 'USD'>('YER');
+   168→  const [toCurrency, setToCurrency] = useState<'YER' | 'SAR' | 'USD'>('SAR');
+   169→  const [conversionHistory, setConversionHistory] = useState<ConversionRecord[]>([]);
+   170→
+   171→  // Voucher state
+   172→  const [showVoucher, setShowVoucher] = useState(false);
+   173→  const [voucherData, setVoucherData] = useState<VoucherData | null>(null);
+   174→  const [copiedRef, setCopiedRef] = useState(false);
+   175→
+   176→  // Confirm dialog state
+   177→  const [showConfirm, setShowConfirm] = useState(false);
+   178→  const [isProcessing, setIsProcessing] = useState(false);
+   179→
+   180→  // Tab state
+   181→  const [activeTab, setActiveTab] = useState<'converter' | 'history' | 'alerts'>('converter');
+   182→
+   183→  // Rate alerts state
+   184→  const [alerts, setAlerts] = useState<RateAlert[]>([]);
+   185→  const [showAlertForm, setShowAlertForm] = useState(false);
+   186→  const [alertFromCurrency, setAlertFromCurrency] = useState<'YER' | 'SAR' | 'USD'>('USD');
+   187→  const [alertToCurrency, setAlertToCurrency] = useState<'YER' | 'SAR' | 'USD'>('YER');
+   188→  const [alertTargetRate, setAlertTargetRate] = useState('');
+   189→  const [alertDirection, setAlertDirection] = useState<'above' | 'below'>('above');
+   190→
+   191→  // Rate history state
+   192→  const [rateHistory, setRateHistory] = useState<RateHistoryPoint[]>([]);
+   193→  const [historyPair, setHistoryPair] = useState<'usdYer' | 'sarYer'>('usdYer');
+   194→
+   195→  // Receipt ref
+   196→  const receiptRef = useRef<HTMLDivElement>(null);
+   197→
+   198→  // Rate trend indicators
+   199→  const [trends, setTrends] = useState<Record<string, 'up' | 'down' | 'stable'>>({
+   200→    'USD-YER': 'stable', 'SAR-YER': 'stable', 'USD-SAR': 'stable'
+   201→  });
+   202→
+   203→  // ═══════════════════════════════════════════════════════════
+   204→  // RATE FETCHING
+   205→  // ═══════════════════════════════════════════════════════════
+   206→
+   207→  const fetchRates = useCallback(async () => {
+   208→    try {
+   209→      // Try Supabase first
+   210→      const supabaseRate = await supabaseService.getExchangeRates();
+   211→      if (supabaseRate) {
+   212→        const newRates = {
+   213→          YER: 1,
+   214→          SAR: supabaseRate.sar_to_yer,
+   215→          USD: supabaseRate.usd_to_yer,
+   216→        };
+   217→        setPreviousRates({ usdYer: exchangeRates.USD, sarYer: exchangeRates.SAR });
+   218→        setExchangeRates(newRates);
+   219→        setRateSource(supabaseRate.source === 'yemenrates.com' ? 'API مباشر' : 'يدوي');
+   220→        setLastUpdate(supabaseRate.updated_at);
+   221→        return;
+   222→      }
+   223→    } catch {
+   224→      // Fall through to Firebase
+   225→    }
+   226→
+   227→    try {
+   228→      const ratesData = await getExchangeRatesFromFirebase();
+   229→      setPreviousRates({ usdYer: exchangeRates.USD, sarYer: exchangeRates.SAR });
+   230→      setExchangeRates({ YER: ratesData.YER, SAR: ratesData.SAR, USD: ratesData.USD });
+   231→      setCommission(ratesData.commission);
+   232→      setLastUpdate(ratesData.lastSynced);
+   233→      setRateSource('Firebase');
+   234→    } catch {
+   235→      // Keep defaults
+   236→    }
+   237→  }, [exchangeRates, setExchangeRates]);
+   238→
+   239→  useEffect(() => {
+   240→    fetchRates();
+   241→  }, []);
+   242→
+   243→  // Generate rate history when rates change
+   244→  useEffect(() => {
+   245→    if (exchangeRates.USD > 0 && exchangeRates.SAR > 0) {
+   246→      setRateHistory(generateRateHistory(exchangeRates.USD, exchangeRates.SAR));
+   247→    }
+   248→  }, [exchangeRates.USD, exchangeRates.SAR]);
+   249→
+   250→  // Check alerts whenever rates change
+   251→  useEffect(() => {
+   252→    alerts.forEach(alert => {
+   253→      if (!alert.isActive) return;
+   254→      const currentRate = getRate(alert.fromCurrency, alert.toCurrency);
+   255→      const triggered =
+   256→        (alert.direction === 'above' && currentRate >= alert.targetRate) ||
+   257→        (alert.direction === 'below' && currentRate <= alert.targetRate);
+   258→
+   259→      if (triggered) {
+   260→        addNotification({
+   261→          id: `alert-${alert.id}`,
+   262→          title: 'تنبيه سعر الصرف',
+   263→          body: `وصل سعر ${currencyNames[alert.fromCurrency]} إلى ${smartFormat(currentRate)} ${currencySymbols[alert.toCurrency]}`,
+   264→          type: 'info',
+   265→          isRead: false,
+   266→          createdAt: new Date().toISOString(),
+   267→        });
+   268→        setAlerts(prev => prev.map(a => a.id === alert.id ? { ...a, isActive: false } : a));
+   269→      }
+   270→    });
+   271→  }, [exchangeRates]);
+   272→
+   273→  // ═══════════════════════════════════════════════════════════
+   274→  // CONVERSION LOGIC (USD as base)
+   275→  // ═══════════════════════════════════════════════════════════
+   276→
+   277→  // All rates are expressed as: how many YER per 1 unit
+   278→  // USD is base: 1 USD = X YER, 1 SAR = Y YER
+   279→  const getRate = (from: string, to: string): number => {
+   280→    if (from === to) return 1;
+   281→    // Convert through USD base:
+   282→    // from -> USD -> to
+   283→    const fromToUsd: Record<string, number> = {
+   284→      YER: 1 / exchangeRates.USD,
+   285→      SAR: 1 / (exchangeRates.USD / exchangeRates.SAR),
+   286→      USD: 1,
+   287→    };
+   288→    const usdToTarget: Record<string, number> = {
+   289→      YER: exchangeRates.USD,
+   290→      SAR: exchangeRates.SAR,
+   291→      USD: 1,
+   292→    };
+   293→    return fromToUsd[from] * usdToTarget[to];
+   294→  };
+   295→
+   296→  const currentRate = getRate(fromCurrency, toCurrency);
+   297→  const rawResult = (parseFloat(fromAmount) || 0) * currentRate;
+   298→  const commissionAmount = rawResult * (commission / 100);
+   299→  const result = rawResult - commissionAmount;
+   300→
+   301→  // Get balance for currency
+   302→  const getBalance = (currency: string): number => {
+   303→    if (!user) return 0;
+   304→    switch (currency) {
+   305→      case 'YER': return user.balanceYER || 0;
+   306→      case 'SAR': return user.balanceSAR || 0;
+   307→      case 'USD': return user.balanceUSD || 0;
+   308→      default: return 0;
+   309→    }
+   310→  };
+   311→
+   312→  const fromBalance = getBalance(fromCurrency);
+   313→
+   314→  // ═══════════════════════════════════════════════════════════
+   315→  // HANDLERS
+   316→  // ═══════════════════════════════════════════════════════════
+   317→
+   318→  const handleSwap = () => {
+   319→    const temp = fromCurrency;
+   320→    setFromCurrency(toCurrency);
+   321→    setToCurrency(temp);
+   322→  };
+   323→
+   324→  const handleRefresh = async () => {
+   325→    setIsRefreshing(true);
+   326→    try {
+   327→      let newRatesData;
+   328→      try {
+   329→        newRatesData = await syncExchangeRatesFromApi();
+   330→        setRateSource('API مباشر');
+   331→      } catch {
+   332→        // Try Supabase
+   333→        try {
+   334→          const supabaseRate = await supabaseService.getExchangeRates();
+   335→          if (supabaseRate) {
+   336→            newRatesData = {
+   337→              YER: 1,
+   338→              SAR: supabaseRate.sar_to_yer,
+   339→              USD: supabaseRate.usd_to_yer,
+   340→              commission: commission,
+   341→              lastSynced: supabaseRate.updated_at,
+   342→              buyRates: { USD: supabaseRate.usd_to_yer, SAR: supabaseRate.sar_to_yer },
+   343→              sellRates: { USD: supabaseRate.usd_to_yer, SAR: supabaseRate.sar_to_yer },
+   344→            };
+   345→            setRateSource(supabaseRate.source === 'yemenrates.com' ? 'API مباشر' : 'يدوي');
+   346→          }
+   347→        } catch {
+   348→          newRatesData = await getExchangeRatesFromFirebase();
+   349→          setRateSource('Firebase');
+   350→        }
+   351→      }
+   352→
+   353→      if (newRatesData) {
+   354→        const newRates = {
+   355→          YER: newRatesData.YER,
+   356→          SAR: newRatesData.SAR,
+   357→          USD: newRatesData.USD,
+   358→        };
+   359→        setPreviousRates({ usdYer: exchangeRates.USD, sarYer: exchangeRates.SAR });
+   360→        setTrends({
+   361→          'USD-YER': newRates.USD > exchangeRates.USD ? 'up' : newRates.USD < exchangeRates.USD ? 'down' : 'stable',
+   362→          'SAR-YER': newRates.SAR > exchangeRates.SAR ? 'up' : newRates.SAR < exchangeRates.SAR ? 'down' : 'stable',
+   363→          'USD-SAR': (newRates.USD / newRates.SAR) > (exchangeRates.USD / exchangeRates.SAR) ? 'up' : 'down',
+   364→        });
+   365→        setExchangeRates(newRates);
+   366→        setCommission(newRatesData.commission);
+   367→        setLastUpdate(newRatesData.lastSynced);
+   368→      }
+   369→    } catch {
+   370→      // Keep existing rates
+   371→    }
+   372→    setTimeout(() => setIsRefreshing(false), 800);
+   373→  };
+   374→
+   375→  const handleConfirmExchange = () => {
+   376→    const amount = parseFloat(fromAmount) || 0;
+   377→    if (!amount || result <= 0) return;
+   378→    if (amount > fromBalance) return;
+   379→    setShowConfirm(true);
+   380→  };
+   381→
+   382→  const handleSaveConversion = async () => {
+   383→    const amount = parseFloat(fromAmount) || 0;
+   384→    if (!amount || result <= 0 || !user) return;
+   385→
+   386→    setIsProcessing(true);
+   387→
+   388→    try {
+   389→      // Use Supabase RPC for conversion
+   390→      let convertedAmount = result;
+   391→
+   392→      try {
+   393→        const rpcResult = await supabaseService.convertCurrency(amount, fromCurrency, toCurrency);
+   394→        if (rpcResult && rpcResult > 0) {
+   395→          convertedAmount = rpcResult - (rpcResult * commission / 100);
+   396→        }
+   397→      } catch {
+   398→        // Fall back to client-side calculation (already computed)
+   399→      }
+   400→
+   401→      // Atomic balance updates via Supabase RPC
+   402→      try {
+   403→        await supabaseService.updateBalance(user.id, fromCurrency, amount, 'subtract');
+   404→        await supabaseService.updateBalance(user.id, toCurrency, convertedAmount, 'add');
+   405→      } catch (balanceErr) {
+   406→        console.warn('Supabase balance update failed, trying Firebase fallback:', balanceErr);
+   407→
+   408→        // Firebase fallback
+   409→        const { runTransaction: fbRunTransaction, ref: fbRef, get: fbGet, update: fbUpdate } = await import('firebase/database');
+   410→        const { database } = await import('@/lib/firebase');
+   411→
+   412→        const fromBalanceField = `balance${fromCurrency}` as 'balanceYER' | 'balanceSAR' | 'balanceUSD';
+   413→        const toBalanceField = `balance${toCurrency}` as 'balanceYER' | 'balanceSAR' | 'balanceUSD';
+   414→
+   415→        const fromTxResult = await fbRunTransaction(fbRef(database, `users/${user.id}/${fromBalanceField}`), (currentVal) => {
+   416→          const val = currentVal || 0;
+   417→          if (val < amount) return;
+   418→          return val - amount;
+   419→        });
+   420→
+   421→        if (!fromTxResult.committed) {
+   422→          setIsProcessing(false);
+   423→          return;
+   424→        }
+   425→
+   426→        await fbRunTransaction(fbRef(database, `users/${user.id}/${toBalanceField}`), (currentVal) => {
+   427→          return (currentVal || 0) + convertedAmount;
+   428→        });
+   429→      }
+   430→
+   431→      // Update local user state
+   432→      const updatedUser = { ...user };
+   433→      const fromKey = `balance${fromCurrency}` as keyof typeof updatedUser;
+   434→      const toKey = `balance${toCurrency}` as keyof typeof updatedUser;
+   435→      (updatedUser as any)[fromKey] = ((user as any)[fromKey] || 0) - amount;
+   436→      (updatedUser as any)[toKey] = ((user as any)[toKey] || 0) + convertedAmount;
+   437→      setUser(updatedUser);
+   438→
+   439→      // Create transaction record in Supabase
+   440→      try {
+   441→        const refNum = generateReferenceNumber();
+   442→        await supabaseService.createTransaction({
+   443→          user_id: user.id,
+   444→          from_user_id: user.id,
+   445→          to_user_id: user.id,
+   446→          amount: amount,
+   447→          currency: fromCurrency,
+   448→          fee: commissionAmount,
+   449→          fee_currency: toCurrency,
+   450→          type: 'exchange',
+   451→          status: 'completed',
+   452→          description: `تبديل ${formatNumber(amount)} ${currencyNames[fromCurrency]} إلى ${smartFormat(convertedAmount)} ${currencyNames[toCurrency]}`,
+   453→          reference_number: refNum,
+   454→          receipt_data: {
+   455→            exchangeRate: currentRate,
+   456→            exchangeFromCurrency: fromCurrency,
+   457→            exchangeToCurrency: toCurrency,
+   458→            exchangeFromAmount: amount,
+   459→            exchangeToAmount: convertedAmount,
+   460→            exchangeCommission: commission,
+   461→          },
+   462→          sender_name: user.name,
+   463→          sender_phone: user.phone || '',
+   464→          receiver_name: user.name,
+   465→          receiver_phone: user.phone || '',
+   466→          receiver_card_number: user.cardNumber || '',
+   467→          api_provider_id: '',
+   468→          api_order_id: '',
+   469→          completed_at: new Date().toISOString(),
+   470→        });
+   471→      } catch {
+   472→        // Transaction record creation is non-critical
+   473→      }
+   474→
+   475→      // Notification
+   476→      addNotification({
+   477→        id: Date.now().toString(),
+   478→        title: 'تم التبديل بنجاح',
+   479→        body: `تم تبديل ${formatNumber(amount)} ${currencySymbols[fromCurrency]} إلى ${smartFormat(convertedAmount)} ${currencySymbols[toCurrency]}`,
+   480→        type: 'transaction',
+   481→        isRead: false,
+   482→        createdAt: new Date().toISOString(),
+   483→      });
+   484→
+   485→      // Generate voucher
+   486→      const refNum = generateReferenceNumber();
+   487→      const now = new Date().toISOString();
+   488→
+   489→      const record: ConversionRecord = {
+   490→        fromAmount: amount,
+   491→        fromCurrency,
+   492→        toAmount: convertedAmount,
+   493→        toCurrency,
+   494→        rate: currentRate,
+   495→        commission,
+   496→        date: now,
+   497→        referenceNumber: refNum,
+   498→      };
+   499→      setConversionHistory(prev => [record, ...prev].slice(0, 10));
+   500→
+   501→      setVoucherData({
+   502→        fromAmount: amount,
+   503→        fromCurrency,
+   504→        toAmount: convertedAmount,
+   505→        toCurrency,
+   506→        rate: currentRate,
+   507→        commission,
+   508→        commissionAmount,
+   509→        rawResult,
+   510→        referenceNumber: refNum,
+   511→        date: now,
+   512→        userName: user.name || 'مستخدم',
+   513→        userId: user.userId || '------',
+   514→        senderAccount: user.userId || '------',
+   515→      });
+   516→      setShowVoucher(true);
+   517→      setShowConfirm(false);
+   518→    } catch {
+   519→      addNotification({
+   520→        id: Date.now().toString(),
+   521→        title: 'فشل التبديل',
+   522→        body: 'حدث خطأ أثناء عملية التبديل، يرجى المحاولة مرة أخرى',
+   523→        type: 'security',
+   524→        isRead: false,
+   525→        createdAt: new Date().toISOString(),
+   526→      });
+   527→    } finally {
+   528→      setIsProcessing(false);
+   529→    }
+   530→  };
+   531→
+   532→  // Rate alert handlers
+   533→  const handleAddAlert = () => {
+   534→    const targetVal = parseFloat(alertTargetRate);
+   535→    if (!targetVal || targetVal <= 0) return;
+   536→    if (alertFromCurrency === alertToCurrency) return;
+   537→
+   538→    const newAlert: RateAlert = {
+   539→      id: `alert-${Date.now()}`,
+   540→      fromCurrency: alertFromCurrency,
+   541→      toCurrency: alertToCurrency,
+   542→      targetRate: targetVal,
+   543→      direction: alertDirection,
+   544→      createdAt: new Date().toISOString(),
+   545→      isActive: true,
+   546→    };
+   547→    setAlerts(prev => [newAlert, ...prev]);
+   548→    setShowAlertForm(false);
+   549→    setAlertTargetRate('');
+   550→
+   551→    addNotification({
+   552→      id: `alert-set-${Date.now()}`,
+   553→      title: 'تم تعيين التنبيه',
+   554→      body: `سيتم إشعارك عندما يصل سعر ${currencyNames[alertFromCurrency]} ${alertDirection === 'above' ? 'إلى' : 'إلى أقل من'} ${smartFormat(targetVal)} ${currencySymbols[alertToCurrency]}`,
+   555→      type: 'info',
+   556→      isRead: false,
+   557→      createdAt: new Date().toISOString(),
+   558→    });
+   559→  };
+   560→
+   561→  const handleRemoveAlert = (id: string) => {
+   562→    setAlerts(prev => prev.filter(a => a.id !== id));
+   563→  };
+   564→
+   565→  const handleCopyRef = () => {
+   566→    if (voucherData) {
+   567→      navigator.clipboard.writeText(voucherData.referenceNumber).catch(() => {});
+   568→      setCopiedRef(true);
+   569→      setTimeout(() => setCopiedRef(false), 2000);
+   570→    }
+   571→  };
+   572→
+   573→  const handleShareReceipt = async () => {
+   574→    if (!voucherData) return;
+   575→    const text = `
+   576→سند التحويل - محفظة الجنوب
+   577→══════════════════════════════
+   578→رقم السند: ${voucherData.referenceNumber}
+   579→التاريخ: ${formatVoucherDate(voucherData.date)}
+   580→══════════════════════════════
+   581→من: ${voucherData.userName}
+   582→رقم الحساب: ${voucherData.senderAccount}
+   583→══════════════════════════════
+   584→المبلغ المرسل: ${formatNumber(voucherData.fromAmount)} ${currencySymbols[voucherData.fromCurrency]} (${currencyNames[voucherData.fromCurrency]})
+   585→المبلغ المستلم: ${smartFormat(voucherData.toAmount)} ${currencySymbols[voucherData.toCurrency]} (${currencyNames[voucherData.toCurrency]})
+   586→══════════════════════════════
+   587→سعر الصرف: 1 ${currencySymbols[voucherData.fromCurrency]} = ${voucherData.rate < 1 ? voucherData.rate.toFixed(4) : voucherData.rate.toFixed(2)} ${currencySymbols[voucherData.toCurrency]}
+   588→العمولة (${voucherData.commission}%): ${smartFormat(voucherData.commissionAmount)} ${currencySymbols[voucherData.toCurrency]}
+   589→صافي المبلغ: ${smartFormat(voucherData.toAmount)} ${currencySymbols[voucherData.toCurrency]}
+   590→══════════════════════════════
+   591→محفظة الجنوب - محفظتك الرقمية
+   592→`.trim();
+   593→
+   594→    if (navigator.share) {
+   595→      try { await navigator.share({ title: 'سند التحويل - محفظة الجنوب', text }); } catch {}
+   596→    } else {
+   597→      await navigator.clipboard.writeText(text);
+   598→    }
+   599→  };
+   600→
+   601→  const handleDownloadReceipt = async () => {
+   602→    if (!receiptRef.current) return;
+   603→    try {
+   604→      const html2canvas = (await import('html2canvas')).default;
+   605→      const canvas = await html2canvas(receiptRef.current, {
+   606→        backgroundColor: isDark ? '#0F0F0F' : '#FFFFFF',
+   607→        scale: 2,
+   608→      });
+   609→      const link = document.createElement('a');
+   610→      link.download = `receipt-${voucherData?.referenceNumber || 'exchange'}.png`;
+   611→      link.href = canvas.toDataURL('image/png');
+   612→      link.click();
+   613→    } catch {
+   614→      handleShareReceipt();
+   615→    }
+   616→  };
+   617→
+   618→  // ═══════════════════════════════════════════════════════════
+   619→  // COMPUTED VALUES
+   620→  // ═══════════════════════════════════════════════════════════
+   621→
+   622→  // Live rate cards data
+   623→  const liveRateCards = useMemo(() => [
+   624→    { from: 'USD', to: 'YER', rate: exchangeRates.USD, key: 'USD-YER', fromSymbol: '$', toSymbol: 'ر.ي',
+   625→      change: previousRates ? exchangeRates.USD - previousRates.usdYer : 0 },
+   626→    { from: 'SAR', to: 'YER', rate: exchangeRates.SAR, key: 'SAR-YER', fromSymbol: 'ر.س', toSymbol: 'ر.ي',
+   627→      change: previousRates ? exchangeRates.SAR - previousRates.sarYer : 0 },
+   628→    { from: 'USD', to: 'SAR', rate: exchangeRates.SAR > 0 ? parseFloat((exchangeRates.USD / exchangeRates.SAR).toFixed(4)) : 0,
+   629→      key: 'USD-SAR', fromSymbol: '$', toSymbol: 'ر.س', change: 0 },
+   630→  ], [exchangeRates, previousRates]);
+   631→
+   632→  const voucherBg = isDark ? '#1A1A1A' : '#FFFFFF';
+   633→  const voucherBorderColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.08)';
+   634→  const voucherDividerColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
+   635→  const cardBg = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.85)';
+   636→
+   637→  // Yesterday rate for comparison
+   638→  const yesterdayUsdYer = rateHistory.length >= 2 ? rateHistory[rateHistory.length - 2].usdYer : exchangeRates.USD;
+   639→  const usdChangeFromYesterday = exchangeRates.USD - yesterdayUsdYer;
+   640→
+   641→  // ═══════════════════════════════════════════════════════════
+   642→  // KYC CHECK
+   643→  // ═══════════════════════════════════════════════════════════
+   644→
+   645→  useEffect(() => {
+   646→    if (!isVerified) {
+   647→      addNotification({
+   648→        id: Date.now().toString(),
+   649→        title: 'يرجى توثيق حسابك أولاً',
+   650→        body: 'لا يمكنك تبديل العملات إلا بعد توثيق حسابك',
+   651→        type: 'security',
+   652→        isRead: false,
+   653→        createdAt: new Date().toISOString(),
+   654→      });
+   655→      setActiveScreen('kyc');
+   656→    }
+   657→  }, [isVerified, addNotification, setActiveScreen]);
+   658→
+   659→  if (!isVerified) return null;
+   660→
+   661→  // ═══════════════════════════════════════════════════════════
+   662→  // RENDER
+   663→  // ═══════════════════════════════════════════════════════════
+   664→
+   665→  return (
+   666→    <div className="min-h-screen" dir="rtl" style={{ background: isDark ? '#0F0F0F' : '#F5F5F5' }}>
+   667→      {/* ═══ Header ═══ */}
+   668→      <div className="relative overflow-hidden" style={{ background: 'linear-gradient(145deg, #1A0A0E 0%, #3D0F10 40%, #5C1A1B 100%)' }}>
+   669→        <div className="absolute inset-0 opacity-20" style={{ background: 'radial-gradient(circle at 30% 40%, rgba(196,30,58,0.3), transparent 60%)' }} />
+   670→        <div className="relative px-5 pt-4 pb-5">
+   671→          <div className="flex items-center gap-3">
+   672→            <motion.button whileTap={{ scale: 0.9 }} onClick={() => setActiveScreen('main')}
+   673→              className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'rgba(255,255,255,0.1)' }}>
+   674→              <ArrowLeft size={18} strokeWidth={1.5} color="#FFF" />
+   675→            </motion.button>
+   676→            <div className="flex-1">
+   677→              <h1 className="text-white text-xl font-bold">تبديل العملات</h1>
+   678→              <p className="text-white/40 text-xs">العملة الأساسية: دولار أمريكي • تحويل فوري</p>
+   679→            </div>
+   680→            <motion.button whileTap={{ scale: 0.85 }} onClick={handleRefresh}
+   681→              animate={{ rotate: isRefreshing ? 360 : 0 }} transition={{ duration: 0.8 }}
+   682→              className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'rgba(255,255,255,0.1)' }}>
+   683→              <RefreshCw size={18} color="#FFF" />
+   684→            </motion.button>
+   685→          </div>
+   686→
+   687→          {/* Rate source badge */}
+   688→          <div className="flex items-center gap-2 mt-3">
+   689→            <div className="pulse-dot w-2 h-2 rounded-full" style={{ background: rateSource.includes('API') ? '#10B981' : '#F59E0B' }} />
+   690→            <span className="text-[10px] font-bold" style={{ color: rateSource.includes('API') ? '#10B981' : '#F59E0B' }}>
+   691→              {rateSource}
+   692→            </span>
+   693→            <span className="text-white/30 text-[10px]">•</span>
+   694→            <span className="text-white/30 text-[10px]">آخر تحديث: {timeAgo(lastUpdate)}</span>
+   695→          </div>
+   696→        </div>
+   697→      </div>
+   698→
+   699→      <div className="px-4 mt-4 pb-8 space-y-4">
+   700→        {/* ═══ Live Exchange Rates ═══ */}
+   701→        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+   702→          className="rounded-2xl overflow-hidden" style={{ background: cardBg, backdropFilter: 'blur(20px)', border: isDark ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(0,0,0,0.06)' }}>
+   703→          <div className="flex items-center justify-between p-4 pb-2">
+   704→            <div className="flex items-center gap-2">
+   705→              <Zap size={14} color="#C41E3A" />
+   706→              <span className="text-xs font-bold" style={{ color: '#C41E3A' }}>أسعار مباشرة</span>
+   707→            </div>
+   708→            <div className="flex items-center gap-1 px-2 py-0.5 rounded-full" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
+   709→              <span className="text-[9px]" style={{ color: isDark ? '#888' : '#AAA' }}>العملة الأساسية: USD</span>
+   710→            </div>
+   711→          </div>
+   712→
+   713→          <div className="px-4 pb-4 space-y-2">
+   714→            {liveRateCards.map((pair) => {
+   715→              const trend = trends[pair.key];
+   716→              const changePercent = pair.rate > 0 ? ((pair.change / pair.rate) * 100).toFixed(2) : '0';
+   717→              return (
+   718→                <motion.div key={pair.key}
+   719→                  whileTap={{ scale: 0.98 }}
+   720→                  className="flex items-center justify-between p-3 rounded-xl"
+   721→                  style={{ background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)' }}>
+   722→                  <div className="flex items-center gap-3">
+   723→                    <div className="flex items-center gap-1">
+   724→                      <div className="w-8 h-8 rounded-lg flex items-center justify-center text-[10px] font-bold"
+   725→                        style={{ background: `${currencyBadgeColors[pair.from]}15`, color: currencyBadgeColors[pair.from] }}>
+   726→                        {pair.from}
+   727→                      </div>
+   728→                      <ArrowRightLeft size={10} color="#5C1A1B" />
+   729→                      <div className="w-8 h-8 rounded-lg flex items-center justify-center text-[10px] font-bold"
+   730→                        style={{ background: `${currencyBadgeColors[pair.to]}15`, color: currencyBadgeColors[pair.to] }}>
+   731→                        {pair.to}
+   732→                      </div>
+   733→                    </div>
+   734→                    <div>
+   735→                      <p className="text-[11px] font-medium" style={{ color: isDark ? '#CCC' : '#444' }}>
+   736→                        1 {pair.from} → {pair.to}
+   737→                      </p>
+   738→                      {pair.change !== 0 && (
+   739→                        <p className="text-[9px]" style={{ color: pair.change > 0 ? '#10B981' : '#C41E3A' }}>
+   740→                          {pair.change > 0 ? '+' : ''}{smartFormat(pair.change)} ({changePercent}%)
+   741→                        </p>
+   742→                      )}
+   743→                    </div>
+   744→                  </div>
+   745→                  <div className="flex items-center gap-2">
+   746→                    <span className="text-base font-bold" dir="ltr" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
+   747→                      {pair.rate < 1 ? pair.rate.toFixed(4) : formatNumber(parseFloat(pair.rate.toFixed(2)))}
+   748→                    </span>
+   749→                    {trend === 'up' && <TrendingUp size={14} color="#10B981" />}
+   750→                    {trend === 'down' && <TrendingDown size={14} color="#C41E3A" />}
+   751→                    {trend === 'stable' && <div className="w-1.5 h-1.5 rounded-full" style={{ background: isDark ? '#555' : '#CCC' }} />}
+   752→                  </div>
+   753→                </motion.div>
+   754→              );
+   755→            })}
+   756→
+   757→            {/* Cross rate indicator */}
+   758→            <div className="flex items-center justify-center gap-3 p-2 rounded-xl" style={{ background: isDark ? 'rgba(92,26,27,0.08)' : 'rgba(92,26,27,0.04)' }}>
+   759→              <span className="text-[10px]" style={{ color: isDark ? '#999' : '#888' }}>سعر متقاطع:</span>
+   760→              <span className="text-[11px] font-bold" dir="ltr" style={{ color: '#C41E3A' }}>
+   761→                1 SAR = {smartFormat(exchangeRates.SAR / exchangeRates.USD)} USD
+   762→              </span>
+   763→              <span className="text-[10px]" style={{ color: isDark ? '#999' : '#888' }}>|</span>
+   764→              <span className="text-[11px] font-bold" dir="ltr" style={{ color: '#C41E3A' }}>
+   765→                1 SAR = {smartFormat(exchangeRates.SAR)} YER
+   766→              </span>
+   767→            </div>
+   768→          </div>
+   769→        </motion.div>
+   770→
+   771→        {/* ═══ Tab Selector ═══ */}
+   772→        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}
+   773→          className="flex rounded-xl p-1 gap-1" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
+   774→          {[
+   775→            { key: 'converter' as const, label: 'محول العملات', icon: <Calculator size={14} /> },
+   776→            { key: 'history' as const, label: 'سجل الأسعار', icon: <TrendingUp size={14} /> },
+   777→            { key: 'alerts' as const, label: 'تنبيهات', icon: <Bell size={14} /> },
+   778→          ].map(tab => (
+   779→            <button key={tab.key} onClick={() => setActiveTab(tab.key)}
+   780→              className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-xs font-bold transition-all duration-200"
+   781→              style={{
+   782→                background: activeTab === tab.key ? '#5C1A1B' : 'transparent',
+   783→                color: activeTab === tab.key ? '#FFF' : isDark ? '#999' : '#888',
+   784→              }}>
+   785→              {tab.icon}
+   786→              {tab.label}
+   787→              {tab.key === 'alerts' && alerts.filter(a => a.isActive).length > 0 && (
+   788→                <span className="w-4 h-4 rounded-full flex items-center justify-center text-[8px] font-bold text-white" style={{ background: '#C41E3A' }}>
+   789→                  {alerts.filter(a => a.isActive).length}
+   790→                </span>
+   791→              )}
+   792→            </button>
+   793→          ))}
+   794→        </motion.div>
+   795→
+   796→        {/* ═══════════════════════════════════════════════════════════
+   797→            TAB 1: CURRENCY CONVERTER
+   798→            ═══════════════════════════════════════════════════════════ */}
+   799→        <AnimatePresence mode="wait">
+   800→          {activeTab === 'converter' && (
+   801→            <motion.div key="converter" initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }}
+   802→              className="space-y-4">
+   803→
+   804→              {/* Converter Card */}
+   805→              <div className="rounded-2xl p-4" style={{ background: cardBg, backdropFilter: 'blur(20px)', border: isDark ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(0,0,0,0.06)' }}>
+   806→                <div className="flex items-center gap-2 mb-4">
+   807→                  <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'rgba(92,26,27,0.1)' }}>
+   808→                    <Calculator size={16} color="#5C1A1B" />
+   809→                  </div>
+   810→                  <div>
+   811→                    <h3 className="text-sm font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>محول العملات</h3>
+   812→                    <p className="text-[10px]" style={{ color: isDark ? '#666' : '#AAA' }}>التحويل عبر العملة الأساسية USD</p>
+   813→                  </div>
+   814→                </div>
+   815→
+   816→                <div className="space-y-3">
+   817→                  {/* From */}
+   818→                  <div>
+   819→                    <div className="flex items-center justify-between mb-1.5">
+   820→                      <span className="text-[11px] font-medium" style={{ color: isDark ? '#888' : '#999' }}>من</span>
+   821→                      <button onClick={() => { const b = getBalance(fromCurrency); setFromAmount(String(b)); }}
+   822→                        className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+   823→                        style={{ background: 'rgba(92,26,27,0.1)', color: '#5C1A1B' }}>
+   824→                        الرصيد: {formatNumber(fromBalance)} {currencySymbols[fromCurrency]}
+   825→                      </button>
+   826→                    </div>
+   827→                    <div className="flex items-center gap-2 p-3 rounded-xl" style={{ background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)' }}>
+   828→                      <input type="number" value={fromAmount} onChange={e => setFromAmount(e.target.value)} placeholder="0" dir="ltr"
+   829→                        className="flex-1 bg-transparent outline-none text-2xl font-bold min-w-0" style={{ color: isDark ? '#FFF' : '#1a1a1a' }} />
+   830→                      <select value={fromCurrency} onChange={e => setFromCurrency(e.target.value as 'YER' | 'SAR' | 'USD')}
+   831→                        className="px-3 py-2 rounded-lg text-sm font-bold outline-none cursor-pointer"
+   832→                        style={{ background: `${currencyBadgeColors[fromCurrency]}15`, color: currencyBadgeColors[fromCurrency] }}>
+   833→                        <option value="YER">ر.ي YER</option>
+   834→                        <option value="SAR">ر.س SAR</option>
+   835→                        <option value="USD">$ USD</option>
+   836→                      </select>
+   837→                    </div>
+   838→                  </div>
+   839→
+   840→                  {/* Swap button */}
+   841→                  <div className="flex justify-center relative">
+   842→                    <div className="absolute inset-x-0 top-1/2 h-px" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }} />
+   843→                    <motion.button whileTap={{ scale: 0.85, rotate: 180 }} onClick={handleSwap}
+   844→                      className="relative z-10 w-11 h-11 rounded-xl flex items-center justify-center shadow-lg"
+   845→                      style={{ background: 'linear-gradient(135deg, #5C1A1B, #3D0F10)' }}>
+   846→                      <ArrowRightLeft size={18} color="#FFF" />
+   847→                    </motion.button>
+   848→                  </div>
+   849→
+   850→                  {/* To */}
+   851→                  <div>
+   852→                    <div className="flex items-center justify-between mb-1.5">
+   853→                      <span className="text-[11px] font-medium" style={{ color: isDark ? '#888' : '#999' }}>إلى</span>
+   854→                    </div>
+   855→                    <div className="flex items-center gap-2 p-3 rounded-xl" style={{ background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)' }}>
+   856→                      <motion.p key={result.toFixed(4)} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+   857→                        className="flex-1 text-2xl font-bold" dir="ltr" style={{ color: '#5C1A1B' }}>
+   858→                        {smartFormat(result)}
+   859→                      </motion.p>
+   860→                      <select value={toCurrency} onChange={e => setToCurrency(e.target.value as 'YER' | 'SAR' | 'USD')}
+   861→                        className="px-3 py-2 rounded-lg text-sm font-bold outline-none cursor-pointer"
+   862→                        style={{ background: `${currencyBadgeColors[toCurrency]}15`, color: currencyBadgeColors[toCurrency] }}>
+   863→                        <option value="YER">ر.ي YER</option>
+   864→                        <option value="SAR">ر.س SAR</option>
+   865→                        <option value="USD">$ USD</option>
+   866→                      </select>
+   867→                    </div>
+   868→                  </div>
+   869→
+   870→                  {/* Conversion path visualization */}
+   871→                  {fromCurrency !== toCurrency && (
+   872→                    <div className="flex items-center justify-center gap-1.5 p-2 rounded-lg"
+   873→                      style={{ background: isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)' }}>
+   874→                      <span className="text-[9px] font-bold" style={{ color: currencyBadgeColors[fromCurrency] }}>{fromCurrency}</span>
+   875→                      {fromCurrency !== 'USD' && (
+   876→                        <>
+   877→                          <ArrowRightLeft size={8} color={isDark ? '#555' : '#BBB'} />
+   878→                          <span className="text-[9px] font-bold" style={{ color: currencyBadgeColors['USD'] }}>USD</span>
+   879→                        </>
+   880→                      )}
+   881→                      <ArrowRightLeft size={8} color={isDark ? '#555' : '#BBB'} />
+   882→                      <span className="text-[9px] font-bold" style={{ color: currencyBadgeColors[toCurrency] }}>{toCurrency}</span>
+   883→                      <span className="text-[9px] mr-1" style={{ color: isDark ? '#666' : '#AAA' }}>
+   884→                        (عبر العملة الأساسية)
+   885→                      </span>
+   886→                    </div>
+   887→                  )}
+   888→
+   889→                  {/* Rate & Fee Info */}
+   890→                  <div className="space-y-2 p-3 rounded-xl" style={{ background: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)' }}>
+   891→                    <div className="flex items-center justify-between">
+   892→                      <span className="text-[11px]" style={{ color: isDark ? '#888' : '#AAA' }}>سعر الصرف</span>
+   893→                      <span className="text-[11px] font-bold" dir="ltr" style={{ color: isDark ? '#CCC' : '#444' }}>
+   894→                        1 {currencySymbols[fromCurrency]} = {currentRate < 1 ? currentRate.toFixed(4) : currentRate.toFixed(2)} {currencySymbols[toCurrency]}
+   895→                      </span>
+   896→                    </div>
+   897→                    <div className="flex items-center justify-between">
+   898→                      <span className="text-[11px]" style={{ color: isDark ? '#888' : '#AAA' }}>المبلغ قبل العمولة</span>
+   899→                      <span className="text-[11px] font-bold" dir="ltr" style={{ color: isDark ? '#CCC' : '#444' }}>
+   900→                        {smartFormat(rawResult)} {currencySymbols[toCurrency]}
+   901→                      </span>
+   902→                    </div>
+   903→                    <div className="flex items-center justify-between">
+   904→                      <span className="text-[11px]" style={{ color: isDark ? '#888' : '#AAA' }}>رسوم التبديل ({commission}%)</span>
+   905→                      <span className="text-[11px] font-bold" dir="ltr" style={{ color: '#C41E3A' }}>
+   906→                        -{smartFormat(commissionAmount)} {currencySymbols[toCurrency]}
+   907→                      </span>
+   908→                    </div>
+   909→                    <div className="h-px" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }} />
+   910→                    <div className="flex items-center justify-between">
+   911→                      <span className="text-xs font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>ستحصل على</span>
+   912→                      <span className="text-sm font-bold" dir="ltr" style={{ color: '#10B981' }}>
+   913→                        {smartFormat(result)} {currencySymbols[toCurrency]}
+   914→                      </span>
+   915→                    </div>
+   916→                  </div>
+   917→
+   918→                  {/* Insufficient balance warning */}
+   919→                  {(parseFloat(fromAmount) || 0) > fromBalance && (
+   920→                    <div className="flex items-center gap-2 p-2.5 rounded-xl" style={{ background: 'rgba(196,30,58,0.1)', border: '1px solid rgba(196,30,58,0.2)' }}>
+   921→                      <AlertTriangle size={14} color="#C41E3A" />
+   922→                      <span className="text-[11px] font-medium" style={{ color: '#C41E3A' }}>رصيدك غير كافي في {currencyNames[fromCurrency]}</span>
+   923→                    </div>
+   924→                  )}
+   925→
+   926→                  <motion.button whileTap={{ scale: 0.95 }} onClick={handleConfirmExchange}
+   927→                    disabled={!fromAmount || result <= 0 || (parseFloat(fromAmount) || 0) > fromBalance || fromCurrency === toCurrency}
+   928→                    className="w-full py-3.5 rounded-xl text-sm font-bold text-white transition-all duration-200"
+   929→                    style={{
+   930→                      background: (!fromAmount || result <= 0 || (parseFloat(fromAmount) || 0) > fromBalance || fromCurrency === toCurrency)
+   931→                        ? isDark ? '#333' : '#CCC'
+   932→                        : 'linear-gradient(135deg, #5C1A1B, #3D0F10)',
+   933→                      opacity: (!fromAmount || result <= 0 || (parseFloat(fromAmount) || 0) > fromBalance || fromCurrency === toCurrency) ? 0.6 : 1,
+   934→                    }}>
+   935→                    {fromCurrency === toCurrency ? 'اختر عملتين مختلفتين' : 'تأكيد التبديل'}
+   936→                  </motion.button>
+   937→                </div>
+   938→              </div>
+   939→
+   940→              {/* Conversion History */}
+   941→              {conversionHistory.length > 0 && (
+   942→                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+   943→                  className="rounded-2xl p-4" style={{ background: cardBg, backdropFilter: 'blur(20px)', border: isDark ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(0,0,0,0.06)' }}>
+   944→                  <div className="flex items-center gap-2 mb-3">
+   945→                    <History size={16} color="#5C1A1B" />
+   946→                    <h3 className="text-sm font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>سجل التحويلات</h3>
+   947→                  </div>
+   948→                  <div className="space-y-2 max-h-64 overflow-y-auto" style={{ scrollbarWidth: 'thin' }}>
+   949→                    {conversionHistory.map((rec, i) => (
+   950→                      <div key={i} className="flex items-center justify-between p-3 rounded-xl"
+   951→                        style={{ background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)' }}>
+   952→                        <div className="flex items-center gap-2">
+   953→                          <span className="text-xs font-bold" style={{ color: currencyBadgeColors[rec.fromCurrency] }}>
+   954→                            {rec.fromAmount.toLocaleString()} {currencySymbols[rec.fromCurrency]}
+   955→                          </span>
+   956→                          <ArrowRightLeft size={10} color={isDark ? '#555' : '#AAA'} />
+   957→                          <span className="text-xs font-bold" style={{ color: currencyBadgeColors[rec.toCurrency] }}>
+   958→                            {smartFormat(rec.toAmount)} {currencySymbols[rec.toCurrency]}
+   959→                          </span>
+   960→                        </div>
+   961→                        <span className="text-[9px]" style={{ color: isDark ? '#555' : '#BBB' }}>{timeAgo(rec.date)}</span>
+   962→                      </div>
+   963→                    ))}
+   964→                  </div>
+   965→                </motion.div>
+   966→              )}
+   967→            </motion.div>
+   968→          )}
+   969→
+   970→          {/* ═══════════════════════════════════════════════════════════
+   971→              TAB 2: RATE HISTORY CHART
+   972→              ═══════════════════════════════════════════════════════════ */}
+   973→          {activeTab === 'history' && (
+   974→            <motion.div key="history" initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }}
+   975→              className="space-y-4">
+   976→
+   977→              {/* Chart Card */}
+   978→              <div className="rounded-2xl p-4" style={{ background: cardBg, backdropFilter: 'blur(20px)', border: isDark ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(0,0,0,0.06)' }}>
+   979→                <div className="flex items-center justify-between mb-4">
+   980→                  <div className="flex items-center gap-2">
+   981→                    <TrendingUp size={16} color="#5C1A1B" />
+   982→                    <h3 className="text-sm font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>سجل الأسعار - 7 أيام</h3>
+   983→                  </div>
+   984→                  <div className="flex rounded-lg p-0.5" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
+   985→                    <button onClick={() => setHistoryPair('usdYer')}
+   986→                      className="px-2.5 py-1 rounded-md text-[10px] font-bold transition-all"
+   987→                      style={{
+   988→                        background: historyPair === 'usdYer' ? '#5C1A1B' : 'transparent',
+   989→                        color: historyPair === 'usdYer' ? '#FFF' : isDark ? '#999' : '#888',
+   990→                      }}>
+   991→                      USD/YER
+   992→                    </button>
+   993→                    <button onClick={() => setHistoryPair('sarYer')}
+   994→                      className="px-2.5 py-1 rounded-md text-[10px] font-bold transition-all"
+   995→                      style={{
+   996→                        background: historyPair === 'sarYer' ? '#5C1A1B' : 'transparent',
+   997→                        color: historyPair === 'sarYer' ? '#FFF' : isDark ? '#999' : '#888',
+   998→                      }}>
+   999→                      SAR/YER
+  1000→                    </button>
+  1001→                  </div>
+  1002→                </div>
+  1003→
+  1004→                {/* Yesterday comparison */}
+  1005→                <div className="flex items-center gap-3 mb-4 p-2.5 rounded-xl" style={{ background: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)' }}>
+  1006→                  <Clock size={12} color={isDark ? '#888' : '#AAA'} />
+  1007→                  <span className="text-[10px]" style={{ color: isDark ? '#888' : '#AAA' }}>مقارنة بأمس:</span>
+  1008→                  <span className="text-[11px] font-bold" style={{ color: usdChangeFromYesterday >= 0 ? '#10B981' : '#C41E3A' }}>
+  1009→                    {usdChangeFromYesterday >= 0 ? '▲' : '▼'} {Math.abs(usdChangeFromYesterday).toFixed(0)} ر.ي
+  1010→                  </span>
+  1011→                  <span className="text-[10px]" style={{ color: isDark ? '#888' : '#AAA' }}>
+  1012→                    ({usdChangeFromYesterday >= 0 ? '+' : ''}{((usdChangeFromYesterday / exchangeRates.USD) * 100).toFixed(2)}%)
+  1013→                  </span>
+  1014→                </div>
+  1015→
+  1016→                {/* Chart */}
+  1017→                <div className="h-52" dir="ltr">
+  1018→                  <ResponsiveContainer width="100%" height="100%">
+  1019→                    <AreaChart data={rateHistory} margin={{ top: 5, right: 5, left: 5, bottom: 0 }}>
+  1020→                      <defs>
+  1021→                        <linearGradient id="maroonGradient" x1="0" y1="0" x2="0" y2="1">
+  1022→                          <stop offset="5%" stopColor="#5C1A1B" stopOpacity={0.3} />
+  1023→                          <stop offset="95%" stopColor="#5C1A1B" stopOpacity={0} />
+  1024→                        </linearGradient>
+  1025→                        <linearGradient id="greenGradient" x1="0" y1="0" x2="0" y2="1">
+  1026→                          <stop offset="5%" stopColor="#059669" stopOpacity={0.3} />
+  1027→                          <stop offset="95%" stopColor="#059669" stopOpacity={0} />
+  1028→                        </linearGradient>
+  1029→                      </defs>
+  1030→                      <CartesianGrid strokeDasharray="3 3" stroke={isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)'} />
+  1031→                      <XAxis dataKey="label" tick={{ fontSize: 9, fill: isDark ? '#888' : '#AAA' }} axisLine={false} tickLine={false} />
+  1032→                      <YAxis tick={{ fontSize: 9, fill: isDark ? '#888' : '#AAA' }} axisLine={false} tickLine={false}
+  1033→                        domain={['dataMin - 20', 'dataMax + 20']} />
+  1034→                      <Tooltip
+  1035→                        contentStyle={{
+  1036→                          background: isDark ? '#1A1A1A' : '#FFF',
+  1037→                          border: `1px solid ${isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'}`,
+  1038→                          borderRadius: '12px',
+  1039→                          fontSize: '11px',
+  1040→                          direction: 'rtl',
+  1041→                        }}
+  1042→                        formatter={(value: number) => [formatNumber(value), historyPair === 'usdYer' ? 'USD/YER' : 'SAR/YER']}
+  1043→                      />
+  1044→                      <Area type="monotone" dataKey={historyPair}
+  1045→                        stroke={historyPair === 'usdYer' ? '#5C1A1B' : '#059669'}
+  1046→                        fill={historyPair === 'usdYer' ? 'url(#maroonGradient)' : 'url(#greenGradient)'}
+  1047→                        strokeWidth={2}
+  1048→                        dot={{ r: 3, fill: historyPair === 'usdYer' ? '#5C1A1B' : '#059669', strokeWidth: 0 }}
+  1049→                        activeDot={{ r: 5, fill: '#C41E3A', stroke: '#FFF', strokeWidth: 2 }}
+  1050→                      />
+  1051→                    </AreaChart>
+  1052→                  </ResponsiveContainer>
+  1053→                </div>
+  1054→
+  1055→                {/* Current Rate Highlight */}
+  1056→                <div className="flex items-center justify-between mt-3 p-3 rounded-xl"
+  1057→                  style={{ background: isDark ? 'rgba(92,26,27,0.08)' : 'rgba(92,26,27,0.04)', border: '1px solid rgba(92,26,27,0.1)' }}>
+  1058→                  <div className="flex items-center gap-2">
+  1059→                    <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'rgba(92,26,27,0.15)' }}>
+  1060→                      <span className="text-[10px] font-bold" style={{ color: '#5C1A1B' }}>
+  1061→                        {historyPair === 'usdYer' ? '$' : 'ر.س'}
+  1062→                      </span>
+  1063→                    </div>
+  1064→                    <div>
+  1065→                      <p className="text-[10px]" style={{ color: isDark ? '#888' : '#AAA' }}>السعر الحالي</p>
+  1066→                      <p className="text-sm font-bold" dir="ltr" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
+  1067→                        1 {historyPair === 'usdYer' ? 'USD' : 'SAR'} = {formatNumber(historyPair === 'usdYer' ? exchangeRates.USD : exchangeRates.SAR)} ر.ي
+  1068→                      </p>
+  1069→                    </div>
+  1070→                  </div>
+  1071→                  <div className="text-left">
+  1072→                    <p className="text-[10px]" style={{ color: isDark ? '#888' : '#AAA' }}>أعلى سعر</p>
+  1073→                    <p className="text-[11px] font-bold" dir="ltr" style={{ color: '#10B981' }}>
+  1074→                      {formatNumber(Math.max(...rateHistory.map(h => h[historyPair])))}
+  1075→                    </p>
+  1076→                  </div>
+  1077→                  <div className="text-left">
+  1078→                    <p className="text-[10px]" style={{ color: isDark ? '#888' : '#AAA' }}>أدنى سعر</p>
+  1079→                    <p className="text-[11px] font-bold" dir="ltr" style={{ color: '#C41E3A' }}>
+  1080→                      {formatNumber(Math.min(...rateHistory.map(h => h[historyPair])))}
+  1081→                    </p>
+  1082→                  </div>
+  1083→                </div>
+  1084→              </div>
+  1085→
+  1086→              {/* All Rates Summary */}
+  1087→              <div className="rounded-2xl p-4" style={{ background: cardBg, backdropFilter: 'blur(20px)', border: isDark ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(0,0,0,0.06)' }}>
+  1088→                <div className="flex items-center gap-2 mb-3">
+  1089→                  <Globe size={16} color="#5C1A1B" />
+  1090→                  <h3 className="text-sm font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>جميع أسعار الصرف</h3>
+  1091→                </div>
+  1092→                <div className="grid grid-cols-2 gap-2">
+  1093→                  {[
+  1094→                    { from: 'USD', to: 'YER', rate: exchangeRates.USD },
+  1095→                    { from: 'SAR', to: 'YER', rate: exchangeRates.SAR },
+  1096→                    { from: 'YER', to: 'USD', rate: 1 / exchangeRates.USD },
+  1097→                    { from: 'YER', to: 'SAR', rate: 1 / exchangeRates.SAR },
+  1098→                    { from: 'USD', to: 'SAR', rate: exchangeRates.SAR / exchangeRates.USD },
+  1099→                    { from: 'SAR', to: 'USD', rate: exchangeRates.USD / exchangeRates.SAR },
+  1100→                  ].map((pair, i) => (
+  1101→                    <div key={i} className="flex items-center justify-between p-2.5 rounded-xl"
+  1102→                      style={{ background: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)' }}>
+  1103→                      <div className="flex items-center gap-1">
+  1104→                        <span className="text-[9px] font-bold" style={{ color: currencyBadgeColors[pair.from] }}>{pair.from}</span>
+  1105→                        <ArrowRightLeft size={7} color={isDark ? '#555' : '#BBB'} />
+  1106→                        <span className="text-[9px] font-bold" style={{ color: currencyBadgeColors[pair.to] }}>{pair.to}</span>
+  1107→                      </div>
+  1108→                      <span className="text-[11px] font-bold" dir="ltr" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
+  1109→                        {pair.rate < 1 ? pair.rate.toFixed(4) : formatNumber(parseFloat(pair.rate.toFixed(2)))}
+  1110→                      </span>
+  1111→                    </div>
+  1112→                  ))}
+  1113→                </div>
+  1114→              </div>
+  1115→            </motion.div>
+  1116→          )}
+  1117→
+  1118→          {/* ═══════════════════════════════════════════════════════════
+  1119→              TAB 3: RATE ALERTS
+  1120→              ═══════════════════════════════════════════════════════════ */}
+  1121→          {activeTab === 'alerts' && (
+  1122→            <motion.div key="alerts" initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 20 }}
+  1123→              className="space-y-4">
+  1124→
+  1125→              {/* Add Alert Button */}
+  1126→              <motion.button whileTap={{ scale: 0.95 }} onClick={() => setShowAlertForm(!showAlertForm)}
+  1127→                className="w-full p-4 rounded-2xl flex items-center justify-center gap-2"
+  1128→                style={{
+  1129→                  background: showAlertForm ? 'transparent' : 'linear-gradient(135deg, #5C1A1B, #3D0F10)',
+  1130→                  border: showAlertForm ? `2px dashed ${isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.1)'}` : 'none',
+  1131→                  color: showAlertForm ? (isDark ? '#888' : '#AAA') : '#FFF',
+  1132→                }}>
+  1133→                {showAlertForm ? <X size={16} /> : <BellRing size={16} />}
+  1134→                <span className="text-sm font-bold">{showAlertForm ? 'إلغاء' : 'إضافة تنبيه سعر جديد'}</span>
+  1135→              </motion.button>
+  1136→
+  1137→              {/* Alert Form */}
+  1138→              <AnimatePresence>
+  1139→                {showAlertForm && (
+  1140→                  <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }}
+  1141→                    className="overflow-hidden">
+  1142→                    <div className="rounded-2xl p-4" style={{ background: cardBg, backdropFilter: 'blur(20px)', border: isDark ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(0,0,0,0.06)' }}>
+  1143→                      <div className="space-y-3">
+  1144→                        {/* Currency pair */}
+  1145→                        <div className="flex gap-2">
+  1146→                          <div className="flex-1">
+  1147→                            <label className="text-[10px] font-bold mb-1 block" style={{ color: isDark ? '#888' : '#AAA' }}>من عملة</label>
+  1148→                            <select value={alertFromCurrency} onChange={e => setAlertFromCurrency(e.target.value as 'YER' | 'SAR' | 'USD')}
+  1149→                              className="w-full px-3 py-2.5 rounded-xl text-sm font-bold outline-none cursor-pointer"
+  1150→                              style={{ background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)', color: isDark ? '#FFF' : '#1a1a1a' }}>
+  1151→                              <option value="YER">ر.ي YER</option>
+  1152→                              <option value="SAR">ر.س SAR</option>
+  1153→                              <option value="USD">$ USD</option>
+  1154→                            </select>
+  1155→                          </div>
+  1156→                          <div className="flex-1">
+  1157→                            <label className="text-[10px] font-bold mb-1 block" style={{ color: isDark ? '#888' : '#AAA' }}>إلى عملة</label>
+  1158→                            <select value={alertToCurrency} onChange={e => setAlertToCurrency(e.target.value as 'YER' | 'SAR' | 'USD')}
+  1159→                              className="w-full px-3 py-2.5 rounded-xl text-sm font-bold outline-none cursor-pointer"
+  1160→                              style={{ background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)', color: isDark ? '#FFF' : '#1a1a1a' }}>
+  1161→                              <option value="YER">ر.ي YER</option>
+  1162→                              <option value="SAR">ر.س SAR</option>
+  1163→                              <option value="USD">$ USD</option>
+  1164→                            </select>
+  1165→                          </div>
+  1166→                        </div>
+  1167→
+  1168→                        {/* Target rate */}
+  1169→                        <div>
+  1170→                          <label className="text-[10px] font-bold mb-1 block" style={{ color: isDark ? '#888' : '#AAA' }}>السعر المستهدف</label>
+  1171→                          <input type="number" value={alertTargetRate} onChange={e => setAlertTargetRate(e.target.value)}
+  1172→                            placeholder={String(getRate(alertFromCurrency, alertToCurrency).toFixed(2))} dir="ltr"
+  1173→                            className="w-full px-3 py-2.5 rounded-xl text-sm font-bold outline-none"
+  1174→                            style={{ background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)', color: isDark ? '#FFF' : '#1a1a1a' }} />
+  1175→                          <p className="text-[9px] mt-1" style={{ color: isDark ? '#666' : '#AAA' }}>
+  1176→                            السعر الحالي: {smartFormat(getRate(alertFromCurrency, alertToCurrency))} {currencySymbols[alertToCurrency]}
+  1177→                          </p>
+  1178→                        </div>
+  1179→
+  1180→                        {/* Direction */}
+  1181→                        <div>
+  1182→                          <label className="text-[10px] font-bold mb-1 block" style={{ color: isDark ? '#888' : '#AAA' }}>عندما يصل السعر</label>
+  1183→                          <div className="flex gap-2">
+  1184→                            <button onClick={() => setAlertDirection('above')}
+  1185→                              className="flex-1 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5"
+  1186→                              style={{
+  1187→                                background: alertDirection === 'above' ? 'rgba(16,185,129,0.15)' : isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+  1188→                                color: alertDirection === 'above' ? '#10B981' : isDark ? '#888' : '#AAA',
+  1189→                                border: alertDirection === 'above' ? '1px solid rgba(16,185,129,0.3)' : '1px solid transparent',
+  1190→                              }}>
+  1191→                              <TrendingUp size={12} /> أعلى من
+  1192→                            </button>
+  1193→                            <button onClick={() => setAlertDirection('below')}
+  1194→                              className="flex-1 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5"
+  1195→                              style={{
+  1196→                                background: alertDirection === 'below' ? 'rgba(196,30,58,0.15)' : isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+  1197→                                color: alertDirection === 'below' ? '#C41E3A' : isDark ? '#888' : '#AAA',
+  1198→                                border: alertDirection === 'below' ? '1px solid rgba(196,30,58,0.3)' : '1px solid transparent',
+  1199→                              }}>
+  1200→                              <TrendingDown size={12} /> أقل من
+  1201→                            </button>
+  1202→                          </div>
+  1203→                        </div>
+  1204→
+  1205→                        <motion.button whileTap={{ scale: 0.95 }} onClick={handleAddAlert}
+  1206→                          disabled={!alertTargetRate || alertFromCurrency === alertToCurrency}
+  1207→                          className="w-full py-3 rounded-xl text-sm font-bold text-white"
+  1208→                          style={{
+  1209→                            background: (!alertTargetRate || alertFromCurrency === alertToCurrency)
+  1210→                              ? isDark ? '#333' : '#CCC'
+  1211→                              : 'linear-gradient(135deg, #5C1A1B, #3D0F10)',
+  1212→                          }}>
+  1213→                          تفعيل التنبيه
+  1214→                        </motion.button>
+  1215→                      </div>
+  1216→                    </div>
+  1217→                  </motion.div>
+  1218→                )}
+  1219→              </AnimatePresence>
+  1220→
+  1221→              {/* Active Alerts List */}
+  1222→              {alerts.length > 0 ? (
+  1223→                <div className="rounded-2xl p-4" style={{ background: cardBg, backdropFilter: 'blur(20px)', border: isDark ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(0,0,0,0.06)' }}>
+  1224→                  <div className="flex items-center gap-2 mb-3">
+  1225→                    <Bell size={16} color="#5C1A1B" />
+  1226→                    <h3 className="text-sm font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>التنبيهات النشطة</h3>
+  1227→                  </div>
+  1228→                  <div className="space-y-2">
+  1229→                    {alerts.map((alert) => (
+  1230→                      <motion.div key={alert.id}
+  1231→                        layout
+  1232→                        initial={{ opacity: 0, y: 10 }}
+  1233→                        animate={{ opacity: 1, y: 0 }}
+  1234→                        exit={{ opacity: 0, y: -10 }}
+  1235→                        className="flex items-center justify-between p-3 rounded-xl"
+  1236→                        style={{
+  1237→                          background: alert.isActive
+  1238→                            ? isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)'
+  1239→                            : isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.015)',
+  1240→                          opacity: alert.isActive ? 1 : 0.5,
+  1241→                        }}>
+  1242→                        <div className="flex items-center gap-3">
+  1243→                          <div className="w-8 h-8 rounded-lg flex items-center justify-center"
+  1244→                            style={{ background: alert.direction === 'above' ? 'rgba(16,185,129,0.1)' : 'rgba(196,30,58,0.1)' }}>
+  1245→                            {alert.direction === 'above'
+  1246→                              ? <TrendingUp size={14} color="#10B981" />
+  1247→                              : <TrendingDown size={14} color="#C41E3A" />}
+  1248→                          </div>
+  1249→                          <div>
+  1250→                            <p className="text-[11px] font-bold" style={{ color: isDark ? '#CCC' : '#444' }}>
+  1251→                              {currencySymbols[alert.fromCurrency]} → {currencySymbols[alert.toCurrency]}
+  1252→                            </p>
+  1253→                            <p className="text-[9px]" style={{ color: isDark ? '#666' : '#AAA' }}>
+  1254→                              {alert.direction === 'above' ? 'أعلى من' : 'أقل من'} {smartFormat(alert.targetRate)} {currencySymbols[alert.toCurrency]}
+  1255→                            </p>
+  1256→                          </div>
+  1257→                        </div>
+  1258→                        <div className="flex items-center gap-2">
+  1259→                          {alert.isActive ? (
+  1260→                            <span className="text-[8px] font-bold px-2 py-0.5 rounded-full" style={{ background: 'rgba(16,185,129,0.1)', color: '#10B981' }}>نشط</span>
+  1261→                          ) : (
+  1262→                            <span className="text-[8px] font-bold px-2 py-0.5 rounded-full" style={{ background: 'rgba(255,255,255,0.06)', color: isDark ? '#666' : '#AAA' }}>مكتمل</span>
+  1263→                          )}
+  1264→                          <button onClick={() => handleRemoveAlert(alert.id)}
+  1265→                            className="w-6 h-6 rounded-lg flex items-center justify-center"
+  1266→                            style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
+  1267→                            <X size={10} color={isDark ? '#888' : '#AAA'} />
+  1268→                          </button>
+  1269→                        </div>
+  1270→                      </motion.div>
+  1271→                    ))}
+  1272→                  </div>
+  1273→                </div>
+  1274→              ) : (
+  1275→                <div className="rounded-2xl p-8 text-center" style={{ background: cardBg, backdropFilter: 'blur(20px)', border: isDark ? '1px solid rgba(255,255,255,0.08)' : '1px solid rgba(0,0,0,0.06)' }}>
+  1276→                  <div className="w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-3" style={{ background: 'rgba(92,26,27,0.1)' }}>
+  1277→                    <Bell size={24} color="#5C1A1B" />
+  1278→                  </div>
+  1279→                  <p className="text-sm font-bold mb-1" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>لا توجد تنبيهات</p>
+  1280→                  <p className="text-[11px]" style={{ color: isDark ? '#888' : '#AAA' }}>
+  1281→                    أضف تنبيهًا ليتم إشعارك عند وصول سعر الصرف إلى هدفك
+  1282→                  </p>
+  1283→                </div>
+  1284→              )}
+  1285→            </motion.div>
+  1286→          )}
+  1287→        </AnimatePresence>
+  1288→      </div>
+  1289→
+  1290→      {/* ═══════════════════════════════════════════════════════════
+  1291→          CONFIRM DIALOG
+  1292→          ═══════════════════════════════════════════════════════════ */}
+  1293→      <AnimatePresence>
+  1294→        {showConfirm && (
+  1295→          <motion.div
+  1296→            initial={{ opacity: 0 }}
+  1297→            animate={{ opacity: 1 }}
+  1298→            exit={{ opacity: 0 }}
+  1299→            className="fixed inset-0 z-50 flex items-center justify-center px-4"
+  1300→            style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)' }}
+  1301→            onClick={() => setShowConfirm(false)}
+  1302→          >
+  1303→            <motion.div
+  1304→              initial={{ scale: 0.9, opacity: 0 }}
+  1305→              animate={{ scale: 1, opacity: 1 }}
+  1306→              exit={{ scale: 0.9, opacity: 0 }}
+  1307→              className="w-full max-w-sm rounded-2xl p-5"
+  1308→              style={{ background: isDark ? '#1A0A0E' : '#FFFFFF', border: `1px solid ${isDark ? 'rgba(196,30,58,0.2)' : 'rgba(92,26,27,0.1)'}` }}
+  1309→              onClick={(e) => e.stopPropagation()}
+  1310→            >
+  1311→              <div className="flex items-center gap-3 mb-4">
+  1312→                <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={{ background: 'rgba(92,26,27,0.1)' }}>
+  1313→                  <Shield size={22} strokeWidth={1.5} color="#5C1A1B" />
+  1314→                </div>
+  1315→                <div>
+  1316→                  <h3 className="text-base font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>تأكيد التبديل</h3>
+  1317→                  <p className="text-[11px]" style={{ color: isDark ? '#888' : '#AAA' }}>هل أنت متأكد من عملية التبديل؟</p>
+  1318→                </div>
+  1319→              </div>
+  1320→
+  1321→              <div className="space-y-2.5 mb-4 p-3 rounded-xl" style={{ background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)' }}>
+  1322→                <div className="flex justify-between items-center">
+  1323→                  <span className="text-xs" style={{ color: isDark ? '#888' : '#AAA' }}>من</span>
+  1324→                  <div className="flex items-center gap-1.5">
+  1325→                    <span className="text-xs font-bold" style={{ color: currencyBadgeColors[fromCurrency] }}>
+  1326→                      {formatNumber(parseFloat(fromAmount) || 0)} {currencySymbols[fromCurrency]}
+  1327→                    </span>
+  1328→                  </div>
+  1329→                </div>
+  1330→                <div className="flex justify-between items-center">
+  1331→                  <span className="text-xs" style={{ color: isDark ? '#888' : '#AAA' }}>إلى</span>
+  1332→                  <span className="text-xs font-bold" style={{ color: '#10B981' }}>
+  1333→                    {smartFormat(result)} {currencySymbols[toCurrency]}
+  1334→                  </span>
+  1335→                </div>
+  1336→                <div className="h-px" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)' }} />
+  1337→                <div className="flex justify-between items-center">
+  1338→                  <span className="text-xs" style={{ color: isDark ? '#888' : '#AAA' }}>سعر الصرف</span>
+  1339→                  <span className="text-[11px] font-bold" dir="ltr" style={{ color: isDark ? '#CCC' : '#444' }}>
+  1340→                    1 {currencySymbols[fromCurrency]} = {currentRate < 1 ? currentRate.toFixed(4) : currentRate.toFixed(2)} {currencySymbols[toCurrency]}
+  1341→                  </span>
+  1342→                </div>
+  1343→                <div className="flex justify-between items-center">
+  1344→                  <span className="text-xs" style={{ color: isDark ? '#888' : '#AAA' }}>العمولة ({commission}%)</span>
+  1345→                  <span className="text-xs font-bold" style={{ color: '#C41E3A' }}>
+  1346→                    -{smartFormat(commissionAmount)} {currencySymbols[toCurrency]}
+  1347→                  </span>
+  1348→                </div>
+  1349→
+  1350→                {/* Conversion path */}
+  1351→                {fromCurrency !== toCurrency && (
+  1352→                  <div className="flex items-center justify-center gap-1 p-1.5 rounded-lg" style={{ background: isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)' }}>
+  1353→                    <Info size={10} color={isDark ? '#666' : '#AAA'} />
+  1354→                    <span className="text-[9px]" style={{ color: isDark ? '#666' : '#AAA' }}>
+  1355→                      التحويل: {fromCurrency} → USD → {toCurrency}
+  1356→                    </span>
+  1357→                  </div>
+  1358→                )}
+  1359→              </div>
+  1360→
+  1361→              <div className="flex gap-3">
+  1362→                <motion.button whileTap={{ scale: 0.95 }} onClick={() => setShowConfirm(false)}
+  1363→                  className="flex-1 py-3 rounded-xl text-sm font-bold"
+  1364→                  style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', color: isDark ? '#FFF' : '#1a1a1a' }}>
+  1365→                  إلغاء
+  1366→                </motion.button>
+  1367→                <motion.button whileTap={{ scale: 0.95 }} onClick={handleSaveConversion} disabled={isProcessing}
+  1368→                  className="flex-1 py-3 rounded-xl text-sm font-bold text-white"
+  1369→                  style={{ background: isProcessing ? '#555' : 'linear-gradient(135deg, #5C1A1B, #3D0F10)' }}>
+  1370→                  {isProcessing ? (
+  1371→                    <span className="flex items-center justify-center gap-2">
+  1372→                      <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
+  1373→                        className="w-4 h-4 rounded-full border-2 border-white/30 border-t-white" />
+  1374→                      جارٍ التبديل...
+  1375→                    </span>
+  1376→                  ) : 'تأكيد'}
+  1377→                </motion.button>
+  1378→              </div>
+  1379→            </motion.div>
+  1380→          </motion.div>
+  1381→        )}
+  1382→      </AnimatePresence>
+  1383→
+  1384→      {/* ═══════════════════════════════════════════════════════════
+  1385→          TRANSFER VOUCHER / RECEIPT
+  1386→          ═══════════════════════════════════════════════════════════ */}
+  1387→      <AnimatePresence>
+  1388→        {showVoucher && voucherData && (
+  1389→          <motion.div
+  1390→            initial={{ opacity: 0 }}
+  1391→            animate={{ opacity: 1 }}
+  1392→            exit={{ opacity: 0 }}
+  1393→            className="fixed inset-0 z-50 flex items-end justify-center"
+  1394→            style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)' }}
+  1395→            onClick={() => setShowVoucher(false)}
+  1396→          >
+  1397→            <motion.div
+  1398→              initial={{ y: '100%' }}
+  1399→              animate={{ y: 0 }}
+  1400→              exit={{ y: '100%' }}
+  1401→              transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+  1402→              className="w-full max-w-lg rounded-t-3xl overflow-hidden"
+  1403→              style={{ background: isDark ? '#0F0F0F' : '#F5F5F5', maxHeight: '92vh' }}
+  1404→              onClick={(e) => e.stopPropagation()}
+  1405→            >
+  1406→              {/* Voucher Header */}
+  1407→              <div className="relative px-5 pt-5 pb-4" style={{ background: 'linear-gradient(145deg, #1A0A0E 0%, #3D0F10 50%, #5C1A1B 100%)' }}>
+  1408→                <div className="absolute inset-0 opacity-20" style={{ background: 'radial-gradient(circle at 80% 20%, rgba(196,30,58,0.2), transparent 50%)' }} />
+  1409→                <div className="relative flex items-center justify-between">
+  1410→                  <div className="flex items-center gap-3">
+  1411→                    <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'rgba(16,185,129,0.2)' }}>
+  1412→                      <CheckCircle2 size={20} strokeWidth={1.5} color="#10B981" />
+  1413→                    </div>
+  1414→                    <div>
+  1415→                      <h2 className="text-white text-base font-bold">تم التبديل بنجاح</h2>
+  1416→                      <p className="text-white/40 text-[11px]">سند التحويل</p>
+  1417→                    </div>
+  1418→                  </div>
+  1419→                  <button onClick={() => setShowVoucher(false)}
+  1420→                    className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'rgba(255,255,255,0.1)' }}>
+  1421→                    <X size={16} color="#FFF" />
+  1422→                  </button>
+  1423→                </div>
+  1424→              </div>
+  1425→
+  1426→              {/* Voucher Body */}
+  1427→              <div className="px-5 py-4 overflow-y-auto" style={{ maxHeight: 'calc(92vh - 80px)' }}>
+  1428→                <div ref={receiptRef}>
+  1429→                  <div
+  1430→                    className="rounded-2xl overflow-hidden"
+  1431→                    style={{
+  1432→                      background: voucherBg,
+  1433→                      border: `1px solid ${voucherBorderColor}`,
+  1434→                      boxShadow: isDark ? 'none' : '0 4px 20px rgba(0,0,0,0.08)',
+  1435→                    }}
+  1436→                  >
+  1437→                    {/* Logo + Brand Row */}
+  1438→                    <div className="flex items-center gap-3 p-4" style={{ borderBottom: `1px dashed ${voucherDividerColor}` }}>
+  1439→                      <div className="w-10 h-10 rounded-xl overflow-hidden flex items-center justify-center" style={{ background: 'rgba(92,26,27,0.1)' }}>
+  1440→                        <img src={LOGO_BASE64} alt="محفظة الجنوب" className="w-full h-full object-cover" />
+  1441→                      </div>
+  1442→                      <div className="flex-1">
+  1443→                        <p className="text-sm font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>محفظة الجنوب</p>
+  1444→                        <p className="text-[10px]" style={{ color: isDark ? '#666' : '#AAA' }}>سند تبديل عملات</p>
+  1445→                      </div>
+  1446→                      <div className="flex items-center gap-1 px-2 py-1 rounded-md" style={{ background: 'rgba(16,185,129,0.1)' }}>
+  1447→                        <CheckCircle2 size={10} color="#10B981" />
+  1448→                        <span className="text-[9px] font-bold" style={{ color: '#10B981' }}>مكتمل</span>
+  1449→                      </div>
+  1450→                    </div>
+  1451→
+  1452→                    {/* Receipt Number & Date */}
+  1453→                    <div className="p-4" style={{ borderBottom: `1px dashed ${voucherDividerColor}` }}>
+  1454→                      <div className="flex items-center justify-between mb-2">
+  1455→                        <div className="flex items-center gap-2">
+  1456→                          <FileText size={12} color="#5C1A1B" />
+  1457→                          <span className="text-[10px] font-bold" style={{ color: isDark ? '#888' : '#999' }}>رقم السند</span>
+  1458→                        </div>
+  1459→                        <button onClick={handleCopyRef}
+  1460→                          className="flex items-center gap-1.5 px-2 py-1 rounded-md active:scale-95 transition-transform"
+  1461→                          style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
+  1462→                          <span className="text-[11px] font-mono font-bold" dir="ltr" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
+  1463→                            {voucherData.referenceNumber}
+  1464→                          </span>
+  1465→                          {copiedRef ? <CheckCircle2 size={12} color="#10B981" /> : <Copy size={12} color={isDark ? '#888' : '#AAA'} />}
+  1466→                        </button>
+  1467→                      </div>
+  1468→                      <div className="flex items-center justify-between">
+  1469→                        <span className="text-[10px]" style={{ color: isDark ? '#666' : '#AAA' }}>التاريخ والوقت</span>
+  1470→                        <span className="text-[11px] font-medium" dir="ltr" style={{ color: isDark ? '#CCC' : '#555' }}>
+  1471→                          {formatVoucherDate(voucherData.date)}
+  1472→                        </span>
+  1473→                      </div>
+  1474→                    </div>
+  1475→
+  1476→                    {/* Sender Info */}
+  1477→                    <div className="p-4" style={{ borderBottom: `1px dashed ${voucherDividerColor}` }}>
+  1478→                      <p className="text-[10px] font-bold mb-2" style={{ color: '#5C1A1B' }}>معلومات المرسل</p>
+  1479→                      <div className="flex items-center justify-between mb-1.5">
+  1480→                        <span className="text-[11px]" style={{ color: isDark ? '#888' : '#999' }}>اسم المرسل</span>
+  1481→                        <span className="text-[11px] font-medium" style={{ color: isDark ? '#CCC' : '#444' }}>
+  1482→                          {voucherData.userName}
+  1483→                        </span>
+  1484→                      </div>
+  1485→                      <div className="flex items-center justify-between">
+  1486→                        <span className="text-[11px]" style={{ color: isDark ? '#888' : '#999' }}>رقم الحساب</span>
+  1487→                        <span className="text-[11px] font-mono font-medium" dir="ltr" style={{ color: isDark ? '#CCC' : '#444' }}>
+  1488→                          {voucherData.senderAccount}
+  1489→                        </span>
+  1490→                      </div>
+  1491→                    </div>
+  1492→
+  1493→                    {/* From -> To Section */}
+  1494→                    <div className="p-4" style={{ borderBottom: `1px dashed ${voucherDividerColor}` }}>
+  1495→                      <div className="flex items-center gap-3">
+  1496→                        <div className="flex-1 text-center">
+  1497→                          <p className="text-[10px] mb-1" style={{ color: isDark ? '#666' : '#999' }}>من</p>
+  1498→                          <div className="py-2 px-3 rounded-xl" style={{ background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)' }}>
+  1499→                            <p className="text-lg font-bold" dir="ltr" style={{ color: currencyBadgeColors[voucherData.fromCurrency] }}>
+  1500→                              {formatBalance(voucherData.fromAmount, voucherData.fromCurrency)}
+  1501→                            </p>
+  1502→                            <p className="text-[10px] font-medium mt-0.5" style={{ color: isDark ? '#888' : '#AAA' }}>
+  1503→                              {currencyNames[voucherData.fromCurrency]} ({voucherData.fromCurrency})
+  1504→                            </p>
+  1505→                          </div>
+  1506→                        </div>
+  1507→
+  1508→                        <div className="shrink-0 w-8 h-8 rounded-full flex items-center justify-center" style={{ background: 'rgba(92,26,27,0.1)' }}>
+  1509→                          <ArrowRightLeft size={14} color="#5C1A1B" />
+  1510→                        </div>
+  1511→
+  1512→                        <div className="flex-1 text-center">
+  1513→                          <p className="text-[10px] mb-1" style={{ color: isDark ? '#666' : '#999' }}>إلى</p>
+  1514→                          <div className="py-2 px-3 rounded-xl" style={{ background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)' }}>
+  1515→                            <p className="text-lg font-bold" dir="ltr" style={{ color: '#10B981' }}>
+  1516→                              {smartFormat(voucherData.toAmount)}
+  1517→                            </p>
+  1518→                            <p className="text-[10px] font-medium mt-0.5" style={{ color: isDark ? '#888' : '#AAA' }}>
+  1519→                              {currencyNames[voucherData.toCurrency]} ({voucherData.toCurrency})
+  1520→                            </p>
+  1521→                          </div>
+  1522→                        </div>
+  1523→                      </div>
+  1524→                    </div>
+  1525→
+  1526→                    {/* Details Rows */}
+  1527→                    <div className="p-4 space-y-0">
+  1528→                      <div className="flex items-center justify-between py-2.5" style={{ borderBottom: `1px solid ${voucherDividerColor}` }}>
+  1529→                        <span className="text-xs" style={{ color: isDark ? '#888' : '#888' }}>سعر الصرف</span>
+  1530→                        <span className="text-xs font-bold" dir="ltr" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
+  1531→                          1 {currencySymbols[voucherData.fromCurrency]} = {voucherData.rate < 1 ? voucherData.rate.toFixed(4) : voucherData.rate.toFixed(2)} {currencySymbols[voucherData.toCurrency]}
+  1532→                        </span>
+  1533→                      </div>
+  1534→                      <div className="flex items-center justify-between py-2.5" style={{ borderBottom: `1px solid ${voucherDividerColor}` }}>
+  1535→                        <span className="text-xs" style={{ color: isDark ? '#888' : '#888' }}>المبلغ قبل العمولة</span>
+  1536→                        <span className="text-xs font-bold" dir="ltr" style={{ color: isDark ? '#CCC' : '#555' }}>
+  1537→                          {smartFormat(voucherData.rawResult)} {currencySymbols[voucherData.toCurrency]}
+  1538→                        </span>
+  1539→                      </div>
+  1540→                      <div className="flex items-center justify-between py-2.5" style={{ borderBottom: `1px solid ${voucherDividerColor}` }}>
+  1541→                        <span className="text-xs" style={{ color: isDark ? '#888' : '#888' }}>العمولة ({voucherData.commission}%)</span>
+  1542→                        <span className="text-xs font-bold" dir="ltr" style={{ color: '#C41E3A' }}>
+  1543→                          -{smartFormat(voucherData.commissionAmount)} {currencySymbols[voucherData.toCurrency]}
+  1544→                        </span>
+  1545→                      </div>
+  1546→                      <div className="flex items-center justify-between py-2.5">
+  1547→                        <span className="text-xs font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>صافي المبلغ المحول</span>
+  1548→                        <span className="text-xs font-bold" dir="ltr" style={{ color: '#10B981' }}>
+  1549→                          {smartFormat(voucherData.toAmount)} {currencySymbols[voucherData.toCurrency]}
+  1550→                        </span>
+  1551→                      </div>
+  1552→                    </div>
+  1553→
+  1554→                    {/* Dashed tear-off line */}
+  1555→                    <div className="relative h-6" style={{ borderTop: `2px dashed ${voucherDividerColor}` }}>
+  1556→                      <div className="absolute -left-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full" style={{ background: isDark ? '#0F0F0F' : '#F5F5F5' }} />
+  1557→                      <div className="absolute -right-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full" style={{ background: isDark ? '#0F0F0F' : '#F5F5F5' }} />
+  1558→                    </div>
+  1559→
+  1560→                    {/* Note */}
+  1561→                    <div className="px-4 pb-3 pt-1">
+  1562→                      <div className="p-2.5 rounded-lg text-center" style={{ background: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)', border: `1px dashed ${voucherDividerColor}` }}>
+  1563→                        <p className="text-[9px]" style={{ color: isDark ? '#888' : '#999' }}>
+  1564→                          ملاحظة: هذا السند إلكتروني ولا يحتاج توقيع
+  1565→                        </p>
+  1566→                      </div>
+  1567→                    </div>
+  1568→
+  1569→                    {/* Footer */}
+  1570→                    <div className="px-4 pb-4 text-center">
+  1571→                      <p className="text-[10px] font-bold" style={{ color: isDark ? '#555' : '#999' }}>
+  1572→                        محفظة الجنوب - محفظتك الرقمية
+  1573→                      </p>
+  1574→                      <p className="text-[9px] mt-1" style={{ color: isDark ? '#444' : '#DDD' }}>
+  1575→                        {voucherData.referenceNumber}
+  1576→                      </p>
+  1577→                    </div>
+  1578→                  </div>
+  1579→                </div>
+  1580→
+  1581→                {/* Action Buttons */}
+  1582→                <div className="flex gap-3 mt-4">
+  1583→                  <motion.button whileTap={{ scale: 0.95 }} onClick={handleShareReceipt}
+  1584→                    className="flex-1 flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-bold"
+  1585→                    style={{
+  1586→                      background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+  1587→                      color: isDark ? '#FFF' : '#1a1a1a',
+  1588→                      border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}`,
+  1589→                    }}>
+  1590→                    <Share2 size={16} />
+  1591→                    مشاركة السند
+  1592→                  </motion.button>
+  1593→                  <motion.button whileTap={{ scale: 0.95 }} onClick={async () => {
+  1594→                    if (voucherData) {
+  1595→                      await navigator.clipboard.writeText(
+  1596→                        `سند تبديل - ${voucherData.referenceNumber}\nمن: ${voucherData.userName}\nالمبلغ: ${formatNumber(voucherData.fromAmount)} ${currencySymbols[voucherData.fromCurrency]} → ${smartFormat(voucherData.toAmount)} ${currencySymbols[voucherData.toCurrency]}`
+  1597→                      ).catch(() => {});
+  1598→                    }
+  1599→                  }}
+  1600→                    className="flex-1 flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-bold"
+  1601→                    style={{
+  1602→                      background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+  1603→                      color: isDark ? '#FFF' : '#1a1a1a',
+  1604→                      border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}`,
+  1605→                    }}>
+  1606→                    <Copy size={16} />
+  1607→                    نسخ السند
+  1608→                  </motion.button>
+  1609→                </div>
+  1610→                <motion.button whileTap={{ scale: 0.95 }} onClick={handleDownloadReceipt}
+  1611→                  className="w-full mt-3 flex items-center justify-center gap-2 py-3.5 rounded-xl text-sm font-bold text-white"
+  1612→                  style={{ background: 'linear-gradient(135deg, #5C1A1B, #3D0F10)' }}>
+  1613→                  <Download size={16} />
+  1614→                  تحميل السند
+  1615→                </motion.button>
+  1616→
+  1617→                <motion.button whileTap={{ scale: 0.95 }} onClick={() => setShowVoucher(false)}
+  1618→                  className="w-full mt-3 py-3.5 rounded-xl text-sm font-bold"
+  1619→                  style={{
+  1620→                    background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+  1621→                    color: isDark ? '#FFF' : '#1a1a1a',
+  1622→                    border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}`,
+  1623→                  }}>
+  1624→                  إغلاق
+  1625→                </motion.button>
+  1626→              </div>
+  1627→            </motion.div>
+  1628→          </motion.div>
+  1629→        )}
+  1630→      </AnimatePresence>
+  1631→    </div>
+  1632→  );
+  1633→}
+  1634→

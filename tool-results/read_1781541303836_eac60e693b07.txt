@@ -1,0 +1,941 @@
+     1→'use client';
+     2→
+     3→import { useState, useEffect } from 'react';
+     4→import { useTheme } from 'next-themes';
+     5→import { motion, AnimatePresence } from 'framer-motion';
+     6→import {
+     7→  X,
+     8→  ChevronDown,
+     9→  Check,
+    10→  AlertTriangle,
+    11→  Loader2,
+    12→  Wifi,
+    13→  Tag,
+    14→  RotateCcw,
+    15→  Receipt,
+    16→  Copy,
+    17→  CheckCircle2,
+    18→} from 'lucide-react';
+    19→import { useAppStore, type ServiceProvider, type ProductPackage, type Order } from '@/lib/store';
+    20→import { currencySymbols, currencyBadgeColors, generateReference } from '@/lib/utils';
+    21→import { ref, push, set, get, update, runTransaction } from 'firebase/database';
+    22→import { database } from '@/lib/firebase';
+    23→import { useToast } from '@/components/fahed/toast-provider';
+    24→import { allProducts } from '@/lib/products-data';
+    25→import { executeApiOrder, type ApiProviderConfig } from '@/lib/api-provider';
+    26→
+    27→export default function OrderBottomSheet() {
+    28→  const { theme } = useTheme();
+    29→  const isDark = theme === 'dark';
+    30→  const {
+    31→    isOrderOpen,
+    32→    setOrderOpen,
+    33→    selectedProvider,
+    34→    setSelectedProvider,
+    35→    packages,
+    36→    user,
+    37→    addOrder,
+    38→    addNotification,
+    39→    addTransaction,
+    40→    setUser,
+    41→    orders,
+    42→    applyPromoCode,
+    43→  } = useAppStore();
+    44→  const { showToast } = useToast();
+    45→
+    46→  const [customerInput, setCustomerInput] = useState('');
+    47→  const [selectedPackageId, setSelectedPackageId] = useState<string | null>(null);
+    48→  const [isProcessing, setIsProcessing] = useState(false);
+    49→  const [orderResult, setOrderResult] = useState<'success' | 'insufficient' | 'error' | null>(null);
+    50→  const [errorMessage, setErrorMessage] = useState('');
+    51→  const [completedOrderId, setCompletedOrderId] = useState('');
+    52→  const [showReceipt, setShowReceipt] = useState(false);
+    53→
+    54→  // Promo code
+    55→  const [promoCode, setPromoCode] = useState('');
+    56→  const [promoApplied, setPromoApplied] = useState(false);
+    57→  const [promoDiscount, setPromoDiscount] = useState(0);
+    58→
+    59→  // Quick recharge - find last order with this provider
+    60→  const lastOrder = orders.find((o) => o.providerId === selectedProvider?.id);
+    61→
+    62→  // Reset state when provider changes
+    63→  useEffect(() => {
+    64→    setCustomerInput('');
+    65→    setSelectedPackageId(null);
+    66→    setOrderResult(null);
+    67→    setErrorMessage('');
+    68→    setPromoCode('');
+    69→    setPromoApplied(false);
+    70→    setPromoDiscount(0);
+    71→    setShowReceipt(false);
+    72→    setCompletedOrderId('');
+    73→  }, [selectedProvider]);
+    74→
+    75→  if (!selectedProvider) return null;
+    76→
+    77→  const providerPackages = [
+    78→    ...packages.filter((pkg) => pkg.providerId === selectedProvider.id && pkg.isActive),
+    79→    ...allProducts.filter((pkg) => pkg.providerId === selectedProvider.id && pkg.isActive),
+    80→  ].filter((pkg, index, self) => index === self.findIndex(p => p.id === pkg.id));
+    81→
+    82→  const selectedPackage = providerPackages.find((pkg) => pkg.id === selectedPackageId);
+    83→
+    84→  const getBalance = (currency: string): number => {
+    85→    if (!user) return 0;
+    86→    const field = `balance${currency}` as keyof typeof user;
+    87→    return (user[field] as number) || 0;
+    88→  };
+    89→
+    90→  const effectivePrice = selectedPackage
+    91→    ? promoApplied
+    92→      ? Math.max(0, selectedPackage.price - promoDiscount)
+    93→      : selectedPackage.price
+    94→    : 0;
+    95→
+    96→  const handleClose = () => {
+    97→    setOrderOpen(false);
+    98→    setTimeout(() => setSelectedProvider(null), 300);
+    99→  };
+   100→
+   101→  const handleApplyPromo = async () => {
+   102→    if (!promoCode.trim()) return;
+   103→    const promo = await applyPromoCode(promoCode.trim().toUpperCase());
+   104→    if (promo) {
+   105→      const discount = promo.type === 'percentage' && selectedPackage
+   106→        ? Math.round(selectedPackage.price * promo.discount / 100)
+   107→        : promo.type === 'fixed' ? promo.discount : 0;
+   108→      setPromoApplied(true);
+   109→      setPromoDiscount(discount);
+   110→      showToast('success', 'تم تطبيق الكود', `خصم ${discount.toLocaleString('ar-SA')} ${currencySymbols[selectedPackage?.currency || 'YER']}`);
+   111→    } else {
+   112→      showToast('error', 'كود غير صالح', 'الكود الترويجي غير صالح أو منتهي الصلاحية');
+   113→    }
+   114→  };
+   115→
+   116→  const handleQuickRecharge = () => {
+   117→    if (lastOrder) {
+   118→      setCustomerInput(lastOrder.customerInput);
+   119→      setSelectedPackageId(lastOrder.packageId);
+   120→      showToast('info', 'إعادة الطلب', 'تم ملء بيانات آخر طلب');
+   121→    }
+   122→  };
+   123→
+   124→  // ─── API Auto-Processing ──────────────────────────────────────────
+   125→  // When a package has executionType='auto' and an apiProvider configured,
+   126→  // this function will call the external API and handle the result.
+   127→  const processApiOrder = async (
+   128→    orderId: string,
+   129→    pkg: ProductPackage,
+   130→    orderCustomerInput: string
+   131→  ): Promise<{ success: boolean; message: string }> => {
+   132→    try {
+   133→      // Find the API provider config from Firebase
+   134→      const apiProvidersRef = ref(database, 'adminSettings/apiProviders');
+   135→      const snapshot = await get(apiProvidersRef);
+   136→      
+   137→      if (!snapshot.exists()) {
+   138→        return { success: false, message: 'لا يوجد مزود API مُكوّن' };
+   139→      }
+   140→      
+   141→      const providersData = snapshot.val();
+   142→      let matchedProvider: ApiProviderConfig | null = null;
+   143→      
+   144→      // Find the provider that matches the package's apiProvider field
+   145→      for (const [, provider] of Object.entries(providersData)) {
+   146→        const p = provider as any;
+   147→        if (p.isActive && (
+   148→          p.id === pkg.apiProvider ||
+   149→          p.name === pkg.apiProvider ||
+   150→          // Also match if the provider's sectionId matches the package's providerId category
+   151→          (p.sectionId && pkg.providerId && pkg.providerId.startsWith(`api-${p.sectionId}`))
+   152→        )) {
+   153→          matchedProvider = {
+   154→            id: p.id || '',
+   155→            name: p.name || '',
+   156→            baseUrl: p.baseUrl || '',
+   157→            apiKey: p.apiKey || '',
+   158→            apiSecret: p.apiSecret || '',
+   159→            method: p.method || 'POST',
+   160→            headers: p.headers || {},
+   161→            bodyTemplate: p.bodyTemplate || '',
+   162→            responseFormat: p.responseFormat || 'json',
+   163→            fieldMappings: p.fieldMappings || undefined,
+   164→            isActive: p.isActive !== false,
+   165→            createdAt: p.createdAt || '',
+   166→          };
+   167→          break;
+   168→        }
+   169→      }
+   170→      
+   171→      if (!matchedProvider) {
+   172→        return { success: false, message: 'لم يتم العثور على مزود API مطابق' };
+   173→      }
+   174→      
+   175→      // Execute the order via API
+   176→      const apiResult = await executeApiOrder(matchedProvider, {
+   177→        customerId: orderCustomerInput,
+   178→        packageId: pkg.productIdInApi || pkg.id,
+   179→        amount: effectivePrice,
+   180→        currency: pkg.currency,
+   181→        phone: orderCustomerInput,
+   182→        playerName: orderCustomerInput,
+   183→      });
+   184→      
+   185→      return {
+   186→        success: apiResult.success,
+   187→        message: apiResult.message || (apiResult.success ? 'تم تنفيذ الطلب بنجاح' : 'فشل تنفيذ الطلب'),
+   188→      };
+   189→    } catch (error: any) {
+   190→      return { success: false, message: error.message || 'حدث خطأ في الاتصال بمزود API' };
+   191→    }
+   192→  };
+   193→
+   194→  const handleConfirm = async () => {
+   195→    if (!user || !selectedPackage || !customerInput.trim()) {
+   196→      setErrorMessage('يرجى ملء جميع البيانات');
+   197→      return;
+   198→    }
+   199→
+   200→    const currentBalance = getBalance(selectedPackage.currency);
+   201→    if (currentBalance < effectivePrice) {
+   202→      setOrderResult('insufficient');
+   203→      return;
+   204→    }
+   205→
+   206→    setIsProcessing(true);
+   207→    setErrorMessage('');
+   208→
+   209→    try {
+   210→      const balanceField = `balance${selectedPackage.currency}` as keyof typeof user;
+   211→      let newBalance = currentBalance - effectivePrice;
+   212→
+   213→      const updatedUser = {
+   214→        ...user,
+   215→        [balanceField]: newBalance,
+   216→      };
+   217→
+   218→      // Determine if this is an auto-execution order
+   219→      const isAutoExecution = selectedPackage.executionType === 'auto' && !!selectedPackage.apiProvider;
+   220→
+   221→      const orderId = generateReference();
+   222→      const newOrder: Order = {
+   223→        id: orderId,
+   224→        userId: user.id,
+   225→        userName: user.name,
+   226→        userPhone: user.phone,
+   227→        providerId: selectedProvider.id,
+   228→        providerName: selectedProvider.name,
+   229→        packageId: selectedPackage.id,
+   230→        packageName: selectedPackage.name,
+   231→        customerInput: customerInput.trim(),
+   232→        amount: effectivePrice,
+   233→        currency: selectedPackage.currency,
+   234→        status: isAutoExecution ? 'pending' : 'pending',
+   235→        executionType: selectedPackage.executionType,
+   236→        createdAt: new Date().toISOString(),
+   237→      };
+   238→
+   239→      // Deduct balance using runTransaction to avoid race conditions
+   240→      try {
+   241→        const txResult = await runTransaction(ref(database, `users/${user.id}/${balanceField}`), (currentVal) => {
+   242→          const val = currentVal || 0;
+   243→          if (val < effectivePrice) return; // Abort if insufficient
+   244→          return val - effectivePrice;
+   245→        });
+   246→        if (txResult.committed) {
+   247→          newBalance = txResult.snapshot.val();
+   248→        }
+   249→      } catch {
+   250→        // Continue locally
+   251→      }
+   252→
+   253→      // Save the order
+   254→      try {
+   255→        const orderRef = ref(database, `orders/${orderId}`);
+   256→        await set(orderRef, newOrder);
+   257→      } catch {
+   258→        // Continue locally even if Firebase fails
+   259→      }
+   260→
+   261→      const txId = generateReference();
+   262→      const newTx = {
+   263→        id: txId,
+   264→        fromUserId: user.id,
+   265→        toUserId: 'system',
+   266→        amount: effectivePrice,
+   267→        currency: selectedPackage.currency,
+   268→        type: 'order' as const,
+   269→        status: 'completed' as const,
+   270→        description: `${selectedPackage.name} - ${selectedProvider.name}`,
+   271→        createdAt: new Date().toISOString(),
+   272→      };
+   273→
+   274→      try {
+   275→        const txRef = ref(database, `transactions/${txId}`);
+   276→        await set(txRef, newTx);
+   277→      } catch {
+   278→        // Continue locally
+   279→      }
+   280→
+   281→      // ─── API Auto-Processing ──────────────────────────────────
+   282→      if (isAutoExecution) {
+   283→        try {
+   284→          const apiResult = await processApiOrder(orderId, selectedPackage, customerInput.trim());
+   285→          
+   286→          if (apiResult.success) {
+   287→            // API success → mark order complete
+   288→            const completedAt = new Date().toISOString();
+   289→            const updatedOrder = { ...newOrder, status: 'completed' as const, completedAt };
+   290→            try {
+   291→              await update(ref(database, `orders/${orderId}`), { status: 'completed', completedAt });
+   292→            } catch {}
+   293→            newOrder.status = 'completed';
+   294→            newOrder.completedAt = completedAt;
+   295→            
+   296→            // Send FCM notification to user - SUCCESS
+   297→            try {
+   298→              const { sendFCMDirect } = await import('@/lib/fcm-sender');
+   299→              const fcmTokenRef = ref(database, `users/${user.id}/fcmToken`);
+   300→              const tokenSnapshot = await get(fcmTokenRef);
+   301→              const fcmToken = tokenSnapshot.val();
+   302→              if (fcmToken) {
+   303→                await sendFCMDirect(
+   304→                  [fcmToken],
+   305→                  'تم تنفيذ الطلب',
+   306→                  `تم تنفيذ طلب ${selectedPackage.name} بنجاح`,
+   307→                  'transaction',
+   308→                  {
+   309→                    orderId: String(orderId),
+   310→                    status: String('completed'),
+   311→                    providerName: String(selectedProvider.name),
+   312→                    packageName: String(selectedPackage.name),
+   313→                    amount: String(effectivePrice),
+   314→                    currency: String(selectedPackage.currency),
+   315→                  }
+   316→                );
+   317→              }
+   318→            } catch (notifErr) {
+   319→              console.warn('FCM notification failed:', notifErr);
+   320→            }
+   321→          } else {
+   322→            // API failure → refund balance + mark order as refunded
+   323→            const refundedBalance = newBalance + effectivePrice;
+   324→            try {
+   325→              await runTransaction(ref(database, `users/${user.id}/${balanceField}`), (currentVal) => {
+   326→                return (currentVal || 0) + effectivePrice;
+   327→              });
+   328→            } catch {}
+   329→            
+   330→            const updatedOrder = { ...newOrder, status: 'refunded' as const };
+   331→            try {
+   332→              await update(ref(database, `orders/${orderId}`), { status: 'refunded' });
+   333→            } catch {}
+   334→            newOrder.status = 'refunded';
+   335→            
+   336→            // Update local user balance (refund)
+   337→            updatedUser[balanceField] = refundedBalance;
+   338→            
+   339→            // Send FCM notification to user - FAILURE/REFUND
+   340→            try {
+   341→              const { sendFCMDirect } = await import('@/lib/fcm-sender');
+   342→              const fcmTokenRef = ref(database, `users/${user.id}/fcmToken`);
+   343→              const tokenSnapshot = await get(fcmTokenRef);
+   344→              const fcmToken = tokenSnapshot.val();
+   345→              if (fcmToken) {
+   346→                await sendFCMDirect(
+   347→                  [fcmToken],
+   348→                  'فشل تنفيذ الطلب',
+   349→                  `${apiResult.message} - تم إرجاع المبلغ`,
+   350→                  'transaction',
+   351→                  {
+   352→                    orderId: String(orderId),
+   353→                    status: String('refunded'),
+   354→                    providerName: String(selectedProvider.name),
+   355→                    packageName: String(selectedPackage.name),
+   356→                    amount: String(effectivePrice),
+   357→                    currency: String(selectedPackage.currency),
+   358→                    errorMessage: String(apiResult.message),
+   359→                  }
+   360→                );
+   361→              }
+   362→            } catch (notifErr) {
+   363→              console.warn('FCM notification failed:', notifErr);
+   364→            }
+   365→          }
+   366→        } catch (apiError: any) {
+   367→          // API call itself threw an error → refund
+   368→          const refundedBalance = newBalance + effectivePrice;
+   369→          try {
+   370→            await runTransaction(ref(database, `users/${user.id}/${balanceField}`), (currentVal) => {
+   371→              return (currentVal || 0) + effectivePrice;
+   372→            });
+   373→          } catch {}
+   374→          
+   375→          try {
+   376→            await update(ref(database, `orders/${orderId}`), { status: 'refunded' });
+   377→          } catch {}
+   378→          newOrder.status = 'refunded';
+   379→          updatedUser[balanceField] = refundedBalance;
+   380→          
+   381→          // Send FCM notification
+   382→          try {
+   383→            const { sendFCMDirect } = await import('@/lib/fcm-sender');
+   384→            const fcmTokenRef = ref(database, `users/${user.id}/fcmToken`);
+   385→            const tokenSnapshot = await get(fcmTokenRef);
+   386→            const fcmToken = tokenSnapshot.val();
+   387→            if (fcmToken) {
+   388→              await sendFCMDirect(
+   389→                [fcmToken],
+   390→                'فشل تنفيذ الطلب',
+   391→                'حدث خطأ في الاتصال بمزود الخدمة - تم إرجاع المبلغ',
+   392→                'transaction',
+   393→                {
+   394→                  orderId: String(orderId),
+   395→                  status: String('refunded'),
+   396→                  providerName: String(selectedProvider.name),
+   397→                  packageName: String(selectedPackage.name),
+   398→                  amount: String(effectivePrice),
+   399→                  currency: String(selectedPackage.currency),
+   400→                  errorMessage: String(apiError.message || 'API connection error'),
+   401→                }
+   402→              );
+   403→            }
+   404→          } catch (notifErr) {
+   405→            console.warn('FCM notification failed:', notifErr);
+   406→          }
+   407→        }
+   408→      } else {
+   409→        // Manual execution - send admin notification with FCM push
+   410→        try {
+   411→          const { notifyOrderCreated } = await import('@/lib/notifications');
+   412→          await notifyOrderCreated(user.id, selectedPackage.name, effectivePrice, selectedPackage.currency);
+   413→        } catch {
+   414→          // Non-critical
+   415→        }
+   416→      }
+   417→
+   418→      setUser(updatedUser);
+   419→      addOrder(newOrder);
+   420→      addTransaction(newTx);
+   421→
+   422→      // Play purchase sound
+   423→      try { const { playTransactionSound } = await import('@/lib/transaction-sounds'); playTransactionSound(newOrder.status === 'refunded' ? 'refund' : 'purchase'); } catch {}
+   424→      addNotification({
+   425→        id: generateReference(),
+   426→        title: newOrder.status === 'completed' ? 'تم تنفيذ الطلب' : newOrder.status === 'refunded' ? 'فشل تنفيذ الطلب' : 'تم إنشاء الطلب',
+   427→        body: newOrder.status === 'completed'
+   428→          ? `تم تنفيذ طلب ${selectedPackage.name} بنجاح`
+   429→          : newOrder.status === 'refunded'
+   430→          ? `فشل تنفيذ طلب ${selectedPackage.name} - تم إرجاع المبلغ`
+   431→          : `طلب ${selectedPackage.name} من ${selectedProvider.name} قيد المعالجة`,
+   432→        type: 'transaction',
+   433→        isRead: false,
+   434→        createdAt: new Date().toISOString(),
+   435→      });
+   436→
+   437→      setCompletedOrderId(orderId);
+   438→      setOrderResult('success');
+   439→    } catch {
+   440→      setOrderResult('error');
+   441→      setErrorMessage('حدث خطأ أثناء المعالجة');
+   442→    } finally {
+   443→      setIsProcessing(false);
+   444→    }
+   445→  };
+   446→
+   447→  const cardBg = isDark ? '#1E1E1E' : '#FFFFFF';
+   448→  const inputBg = isDark ? '#222' : '#F8F8F8';
+   449→  const borderColor = isDark ? '#333' : '#EEE';
+   450→
+   451→  return (
+   452→    <AnimatePresence>
+   453→      {isOrderOpen && (
+   454→        <>
+   455→          {/* Backdrop */}
+   456→          <motion.div
+   457→            initial={{ opacity: 0 }}
+   458→            animate={{ opacity: 1 }}
+   459→            exit={{ opacity: 0 }}
+   460→            transition={{ duration: 0.2 }}
+   461→            className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm"
+   462→            onClick={handleClose}
+   463→          />
+   464→
+   465→          {/* Bottom Sheet */}
+   466→          <motion.div
+   467→            initial={{ y: '100%' }}
+   468→            animate={{ y: 0 }}
+   469→            exit={{ y: '100%' }}
+   470→            transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+   471→            className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md z-50 rounded-t-3xl overflow-hidden"
+   472→            style={{
+   473→              background: isDark ? '#141414' : '#FAFAFA',
+   474→              maxHeight: '85vh',
+   475→            }}
+   476→          >
+   477→            {/* Handle */}
+   478→            <div className="flex justify-center pt-3 pb-1">
+   479→              <div className="w-10 h-1 rounded-full" style={{ background: isDark ? '#444' : '#DDD' }} />
+   480→            </div>
+   481→
+   482→            {/* Header */}
+   483→            <div className="flex items-center justify-between px-5 py-3">
+   484→              <div className="flex items-center gap-3">
+   485→                <div
+   486→                  className="w-10 h-10 rounded-xl flex items-center justify-center"
+   487→                  style={{ background: `${selectedProvider.color}18` }}
+   488→                >
+   489→                  {selectedProvider.icon && selectedProvider.icon.startsWith('data:') ? (
+   490→                    <img
+   491→                      src={selectedProvider.icon}
+   492→                      alt={selectedProvider.name}
+   493→                      className="w-8 h-8 rounded-lg object-cover"
+   494→                    />
+   495→                  ) : (
+   496→                    <span className="font-bold text-lg" style={{ color: selectedProvider.color }}>
+   497→                      {selectedProvider.name.charAt(0)}
+   498→                    </span>
+   499→                  )}
+   500→                </div>
+   501→                <div>
+   502→                  <h2 className="text-base font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
+   503→                    {selectedProvider.name}
+   504→                  </h2>
+   505→                  <p className="text-[10px]" style={{ color: isDark ? '#666' : '#AAA' }}>
+   506→                    {selectedProvider.inputLabel}
+   507→                  </p>
+   508→                </div>
+   509→              </div>
+   510→              <button
+   511→                onClick={handleClose}
+   512→                className="w-8 h-8 rounded-xl flex items-center justify-center"
+   513→                style={{ background: isDark ? '#2D2D2D' : '#F0F0F0' }}
+   514→              >
+   515→                <X size={16} strokeWidth={1.5} color={isDark ? '#FFF' : '#666'} />
+   516→              </button>
+   517→            </div>
+   518→
+   519→            {/* Content */}
+   520→            <div className="px-5 pb-6 overflow-y-auto" style={{ maxHeight: 'calc(85vh - 80px)' }}>
+   521→              <AnimatePresence mode="wait">
+   522→                {orderResult === 'success' ? (
+   523→                  <motion.div
+   524→                    key="success"
+   525→                    initial={{ opacity: 0, scale: 0.9 }}
+   526→                    animate={{ opacity: 1, scale: 1 }}
+   527→                    className="flex flex-col items-center py-6"
+   528→                  >
+   529→                    <div
+   530→                      className="w-16 h-16 rounded-full flex items-center justify-center mb-4"
+   531→                      style={{ background: 'rgba(16,185,129,0.15)' }}
+   532→                    >
+   533→                      <Check size={32} strokeWidth={2} color="#10B981" />
+   534→                    </div>
+   535→                    <h3 className="text-lg font-bold mb-2" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
+   536→                      تم إنشاء الطلب بنجاح
+   537→                    </h3>
+   538→                    <p className="text-sm text-center mb-4" style={{ color: isDark ? '#888' : '#AAA' }}>
+   539→                      سيتم تنفيذ طلبك في أقرب وقت ممكن
+   540→                    </p>
+   541→
+   542→                    {/* Receipt */}
+   543→                    {showReceipt && (
+   544→                      <motion.div
+   545→                        initial={{ opacity: 0, y: 10 }}
+   546→                        animate={{ opacity: 1, y: 0 }}
+   547→                        className="w-full rounded-2xl p-4 mb-4"
+   548→                        style={{
+   549→                          background: isDark
+   550→                            ? 'rgba(255,255,255,0.06)'
+   551→                            : 'rgba(0,0,0,0.02)',
+   552→                          backdropFilter: 'blur(20px)',
+   553→                          WebkitBackdropFilter: 'blur(20px)',
+   554→                          border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}`,
+   555→                        }}
+   556→                      >
+   557→                        <div className="flex items-center gap-2 mb-3">
+   558→                          <Receipt size={16} strokeWidth={1.5} color="#5C1A1B" />
+   559→                          <span className="text-xs font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
+   560→                            إيصال الطلب
+   561→                          </span>
+   562→                        </div>
+   563→                        <div className="space-y-2">
+   564→                          <div className="flex justify-between">
+   565→                            <span className="text-[10px]" style={{ color: isDark ? '#888' : '#AAA' }}>رقم المرجع</span>
+   566→                            <div className="flex items-center gap-1">
+   567→                              <span className="text-[10px] font-mono font-bold" style={{ color: '#5C1A1B' }} dir="ltr">{completedOrderId}</span>
+   568→                              <button
+   569→                                onClick={async () => {
+   570→                                  try { await navigator.clipboard.writeText(completedOrderId); showToast('success', 'تم النسخ', 'تم نسخ رقم المرجع'); } catch {}
+   571→                                }}
+   572→                              >
+   573→                                <Copy size={10} color="#5C1A1B" />
+   574→                              </button>
+   575→                            </div>
+   576→                          </div>
+   577→                          <div className="flex justify-between">
+   578→                            <span className="text-[10px]" style={{ color: isDark ? '#888' : '#AAA' }}>الخدمة</span>
+   579→                            <span className="text-[10px] font-medium" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>{selectedPackage?.name}</span>
+   580→                          </div>
+   581→                          <div className="flex justify-between">
+   582→                            <span className="text-[10px]" style={{ color: isDark ? '#888' : '#AAA' }}>المبلغ</span>
+   583→                            <span className="text-[10px] font-bold" style={{ color: '#5C1A1B' }}>
+   584→                              {effectivePrice.toLocaleString()} {currencySymbols[selectedPackage?.currency || 'YER']}
+   585→                            </span>
+   586→                          </div>
+   587→                          {promoApplied && promoDiscount > 0 && (
+   588→                            <div className="flex justify-between">
+   589→                              <span className="text-[10px]" style={{ color: '#10B981' }}>الخصم</span>
+   590→                              <span className="text-[10px] font-medium" style={{ color: '#10B981' }}>
+   591→                                -{promoDiscount.toLocaleString()} {currencySymbols[selectedPackage?.currency || 'YER']}
+   592→                              </span>
+   593→                            </div>
+   594→                          )}
+   595→                          <div className="flex justify-between">
+   596→                            <span className="text-[10px]" style={{ color: isDark ? '#888' : '#AAA' }}>الحالة</span>
+   597→                            <span className="text-[10px] px-2 py-0.5 rounded-full font-medium" style={{ background: 'rgba(245,158,11,0.15)', color: '#F59E0B' }}>
+   598→                              قيد الانتظار
+   599→                            </span>
+   600→                          </div>
+   601→                        </div>
+   602→                      </motion.div>
+   603→                    )}
+   604→
+   605→                    {!showReceipt && (
+   606→                      <button
+   607→                        onClick={() => setShowReceipt(true)}
+   608→                        className="w-full py-2.5 rounded-2xl text-xs font-medium mb-3"
+   609→                        style={{
+   610→                          background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.03)',
+   611→                          border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)'}`,
+   612→                          color: isDark ? '#FFF' : '#1a1a1a',
+   613→                        }}
+   614→                      >
+   615→                        <Receipt size={14} className="inline ml-1" />
+   616→                        عرض الإيصال
+   617→                      </button>
+   618→                    )}
+   619→
+   620→                    <div className="flex gap-2 w-full">
+   621→                      <button
+   622→                        onClick={handleClose}
+   623→                        className="flex-1 py-3.5 rounded-2xl font-bold text-white text-sm"
+   624→                        style={{
+   625→                          background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)',
+   626→                        }}
+   627→                      >
+   628→                        حسناً
+   629→                      </button>
+   630→                      <button
+   631→                        onClick={() => {
+   632→                          setOrderResult(null);
+   633→                          setShowReceipt(false);
+   634→                          setSelectedPackageId(null);
+   635→                          setCustomerInput('');
+   636→                          setPromoApplied(false);
+   637→                          setPromoDiscount(0);
+   638→                          setPromoCode('');
+   639→                        }}
+   640→                        className="flex-1 py-3.5 rounded-2xl font-bold text-sm flex items-center justify-center gap-1.5"
+   641→                        style={{
+   642→                          background: isDark ? '#2D2D2D' : '#F0F0F0',
+   643→                          color: isDark ? '#FFF' : '#1a1a1a',
+   644→                        }}
+   645→                      >
+   646→                        <RotateCcw size={14} strokeWidth={1.5} />
+   647→                        <span>إعادة الطلب</span>
+   648→                      </button>
+   649→                    </div>
+   650→                  </motion.div>
+   651→                ) : orderResult === 'insufficient' ? (
+   652→                  <motion.div
+   653→                    key="insufficient"
+   654→                    initial={{ opacity: 0, scale: 0.9 }}
+   655→                    animate={{ opacity: 1, scale: 1 }}
+   656→                    className="flex flex-col items-center py-8"
+   657→                  >
+   658→                    <div
+   659→                      className="w-16 h-16 rounded-full flex items-center justify-center mb-4"
+   660→                      style={{ background: 'rgba(92,26,27,0.15)' }}
+   661→                    >
+   662→                      <AlertTriangle size={32} strokeWidth={2} color="#5C1A1B" />
+   663→                    </div>
+   664→                    <h3 className="text-lg font-bold mb-2" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
+   665→                      رصيد غير كافٍ
+   666→                    </h3>
+   667→                    <p className="text-sm text-center mb-2" style={{ color: isDark ? '#888' : '#AAA' }}>
+   668→                      رصيدك الحالي لا يكفي لإتمام هذه العملية
+   669→                    </p>
+   670→                    <div className="flex items-center gap-2 mb-4">
+   671→                      <span className="text-xs" style={{ color: isDark ? '#888' : '#AAA' }}>رصيدك:</span>
+   672→                      <span className="text-sm font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
+   673→                        {getBalance(selectedPackage?.currency || 'YER').toLocaleString()} {currencySymbols[selectedPackage?.currency || 'YER']}
+   674→                      </span>
+   675→                    </div>
+   676→                    <button
+   677→                      onClick={handleClose}
+   678→                      className="w-full py-3.5 rounded-2xl font-bold text-white text-sm"
+   679→                      style={{
+   680→                        background: 'linear-gradient(135deg, #5C1A1B 0%, #B30000 100%)',
+   681→                      }}
+   682→                    >
+   683→                      حسناً
+   684→                    </button>
+   685→                  </motion.div>
+   686→                ) : (
+   687→                  <motion.div key="form" initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-4">
+   688→                    {/* Quick Recharge */}
+   689→                    {lastOrder && (
+   690→                      <button
+   691→                        onClick={handleQuickRecharge}
+   692→                        className="w-full py-3 rounded-2xl flex items-center justify-center gap-2 text-xs font-medium"
+   693→                        style={{
+   694→                          background: 'rgba(92,26,27,0.06)',
+   695→                          border: '1px solid rgba(92,26,27,0.15)',
+   696→                          color: '#5C1A1B',
+   697→                        }}
+   698→                      >
+   699→                        <RotateCcw size={14} strokeWidth={1.5} />
+   700→                        <span>إعادة آخر طلب ({lastOrder.packageName})</span>
+   701→                      </button>
+   702→                    )}
+   703→
+   704→                    {/* Customer Input */}
+   705→                    <div>
+   706→                      <label className="text-xs font-medium mb-2 block" style={{ color: isDark ? '#AAA' : '#888' }}>
+   707→                        {selectedProvider.inputLabel}
+   708→                      </label>
+   709→                      <div
+   710→                        className="flex items-center gap-2 px-4 py-3.5 rounded-2xl"
+   711→                        style={{ background: inputBg, border: `1px solid ${borderColor}` }}
+   712→                      >
+   713→                        {selectedProvider.inputPrefix && (
+   714→                          <>
+   715→                            <span
+   716→                              className="text-sm font-medium shrink-0"
+   717→                              style={{ color: isDark ? '#AAA' : '#888' }}
+   718→                              dir="ltr"
+   719→                            >
+   720→                              {selectedProvider.inputPrefix}
+   721→                            </span>
+   722→                            <div className="w-px h-5 shrink-0" style={{ background: borderColor }} />
+   723→                          </>
+   724→                        )}
+   725→                        <input
+   726→                          type={selectedProvider.inputType === 'phone' ? 'tel' : 'text'}
+   727→                          placeholder={selectedProvider.inputLabel}
+   728→                          value={customerInput}
+   729→                          onChange={(e) => {
+   730→                            if (selectedProvider.inputType === 'phone') {
+   731→                              const cleaned = e.target.value.replace(/\D/g, '').slice(0, 9);
+   732→                              setCustomerInput(cleaned);
+   733→                            } else {
+   734→                              setCustomerInput(e.target.value);
+   735→                            }
+   736→                          }}
+   737→                          className="flex-1 bg-transparent outline-none text-sm"
+   738→                          style={{ color: isDark ? '#FFF' : '#1a1a1a' }}
+   739→                          dir={selectedProvider.inputType === 'phone' ? 'ltr' : 'auto'}
+   740→                        />
+   741→                      </div>
+   742→                    </div>
+   743→
+   744→                    {/* Package Selection */}
+   745→                    <div>
+   746→                      <label className="text-xs font-medium mb-2 block" style={{ color: isDark ? '#AAA' : '#888' }}>
+   747→                        اختر الباقة
+   748→                      </label>
+   749→                      <div className="space-y-2 max-h-[200px] overflow-y-auto scrollbar-thin">
+   750→                        {providerPackages.map((pkg) => (
+   751→                          <button
+   752→                            key={pkg.id}
+   753→                            onClick={() => {
+   754→                              setSelectedPackageId(pkg.id);
+   755→                              setOrderResult(null);
+   756→                              setErrorMessage('');
+   757→                              setPromoApplied(false);
+   758→                              setPromoDiscount(0);
+   759→                            }}
+   760→                            className="w-full flex items-center justify-between px-4 py-3.5 rounded-2xl transition-all active:scale-[0.98]"
+   761→                            style={{
+   762→                              background: selectedPackageId === pkg.id
+   763→                                ? isDark ? '#222' : '#FFF'
+   764→                                : inputBg,
+   765→                              border: selectedPackageId === pkg.id
+   766→                                ? `2px solid ${selectedProvider.color}`
+   767→                                : `1px solid ${borderColor}`,
+   768→                              boxShadow: selectedPackageId === pkg.id
+   769→                                ? `0 2px 12px ${selectedProvider.color}20`
+   770→                                : 'none',
+   771→                            }}
+   772→                          >
+   773→                            <div className="flex items-center gap-3">
+   774→                              <div
+   775→                                className="w-5 h-5 rounded-full flex items-center justify-center shrink-0"
+   776→                                style={{
+   777→                                  border: selectedPackageId === pkg.id
+   778→                                    ? `2px solid ${selectedProvider.color}`
+   779→                                    : `2px solid ${borderColor}`,
+   780→                                  background: selectedPackageId === pkg.id
+   781→                                    ? selectedProvider.color
+   782→                                    : 'transparent',
+   783→                                }}
+   784→                              >
+   785→                                {selectedPackageId === pkg.id && (
+   786→                                  <Check size={12} strokeWidth={3} color="#FFF" />
+   787→                                )}
+   788→                              </div>
+   789→                              <span
+   790→                                className="text-sm font-medium text-right"
+   791→                                style={{ color: isDark ? '#FFF' : '#1a1a1a' }}
+   792→                              >
+   793→                                {pkg.name}
+   794→                              </span>
+   795→                            </div>
+   796→                            <div className="flex items-center gap-1.5">
+   797→                              <span className="text-sm font-bold" style={{ color: selectedProvider.color }}>
+   798→                                {pkg.price.toLocaleString()}
+   799→                              </span>
+   800→                              <span
+   801→                                className="text-[10px] px-1.5 py-0.5 rounded font-bold text-white"
+   802→                                style={{ background: currencyBadgeColors[pkg.currency] }}
+   803→                              >
+   804→                                {currencySymbols[pkg.currency]}
+   805→                              </span>
+   806→                            </div>
+   807→                          </button>
+   808→                        ))}
+   809→                      </div>
+   810→                    </div>
+   811→
+   812→                    {/* Promo Code */}
+   813→                    {selectedPackage && (
+   814→                      <div>
+   815→                        <label className="text-xs font-medium mb-2 block" style={{ color: isDark ? '#AAA' : '#888' }}>
+   816→                          كود ترويجي
+   817→                        </label>
+   818→                        <div className="flex gap-2">
+   819→                          <div
+   820→                            className="flex items-center gap-2 px-4 py-2.5 rounded-2xl flex-1"
+   821→                            style={{
+   822→                              background: inputBg,
+   823→                              border: promoApplied ? '1px solid #10B981' : `1px solid ${borderColor}`,
+   824→                            }}
+   825→                          >
+   826→                            <Tag size={16} strokeWidth={1.5} color={promoApplied ? '#10B981' : '#5C1A1B'} />
+   827→                            <input
+   828→                              type="text"
+   829→                              placeholder="أدخل الكود"
+   830→                              value={promoCode}
+   831→                              onChange={(e) => setPromoCode(e.target.value.toUpperCase())}
+   832→                              disabled={promoApplied}
+   833→                              className="flex-1 bg-transparent outline-none text-xs"
+   834→                              style={{ color: promoApplied ? '#10B981' : isDark ? '#FFF' : '#1a1a1a' }}
+   835→                              dir="ltr"
+   836→                            />
+   837→                            {promoApplied && <CheckCircle2 size={14} color="#10B981" strokeWidth={1.5} />}
+   838→                          </div>
+   839→                          <button
+   840→                            onClick={handleApplyPromo}
+   841→                            disabled={promoApplied || !promoCode.trim()}
+   842→                            className="px-4 rounded-2xl text-[10px] font-medium text-white disabled:opacity-40"
+   843→                            style={{ background: promoApplied ? '#10B981' : '#5C1A1B' }}
+   844→                          >
+   845→                            {promoApplied ? 'مطبق' : 'تطبيق'}
+   846→                          </button>
+   847→                        </div>
+   848→                      </div>
+   849→                    )}
+   850→
+   851→                    {/* Balance Check */}
+   852→                    {selectedPackage && (
+   853→                      <div
+   854→                        className="rounded-2xl p-4"
+   855→                        style={{
+   856→                          background: isDark ? '#1A1A1A' : '#F8F8F8',
+   857→                        }}
+   858→                      >
+   859→                        <div className="flex items-center justify-between mb-2">
+   860→                          <span className="text-xs" style={{ color: isDark ? '#888' : '#AAA' }}>رصيدك الحالي</span>
+   861→                          <span className="text-xs font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
+   862→                            {getBalance(selectedPackage.currency).toLocaleString()} {currencySymbols[selectedPackage.currency]}
+   863→                          </span>
+   864→                        </div>
+   865→                        <div className="flex items-center justify-between mb-2">
+   866→                          <span className="text-xs" style={{ color: isDark ? '#888' : '#AAA' }}>سعر الباقة</span>
+   867→                          <span className="text-xs font-bold" style={{ color: '#5C1A1B' }}>
+   868→                            -{effectivePrice.toLocaleString()} {currencySymbols[selectedPackage.currency]}
+   869→                          </span>
+   870→                        </div>
+   871→                        {promoApplied && promoDiscount > 0 && (
+   872→                          <div className="flex items-center justify-between mb-2">
+   873→                            <span className="text-xs" style={{ color: '#10B981' }}>الخصم</span>
+   874→                            <span className="text-xs font-bold" style={{ color: '#10B981' }}>
+   875→                              +{promoDiscount.toLocaleString()} {currencySymbols[selectedPackage.currency]}
+   876→                            </span>
+   877→                          </div>
+   878→                        )}
+   879→                        <div className="h-px my-2" style={{ background: borderColor }} />
+   880→                        <div className="flex items-center justify-between">
+   881→                          <span className="text-xs font-medium" style={{ color: isDark ? '#AAA' : '#888' }}>الرصيد بعد الشراء</span>
+   882→                          <span
+   883→                            className="text-sm font-bold"
+   884→                            style={{
+   885→                              color: getBalance(selectedPackage.currency) - effectivePrice >= 0
+   886→                                ? '#10B981'
+   887→                                : '#5C1A1B',
+   888→                            }}
+   889→                          >
+   890→                            {(getBalance(selectedPackage.currency) - effectivePrice).toLocaleString()} {currencySymbols[selectedPackage.currency]}
+   891→                          </span>
+   892→                        </div>
+   893→                      </div>
+   894→                    )}
+   895→
+   896→                    {/* Error Message */}
+   897→                    {errorMessage && (
+   898→                      <motion.p
+   899→                        initial={{ opacity: 0, y: -5 }}
+   900→                        animate={{ opacity: 1, y: 0 }}
+   901→                        className="text-xs text-center"
+   902→                        style={{ color: '#5C1A1B' }}
+   903→                      >
+   904→                        {errorMessage}
+   905→                      </motion.p>
+   906→                    )}
+   907→
+   908→                    {/* Confirm Button */}
+   909→                    <button
+   910→                      onClick={handleConfirm}
+   911→                      disabled={isProcessing || !selectedPackageId || !customerInput.trim()}
+   912→                      className="w-full py-4 rounded-2xl flex items-center justify-center gap-2 font-bold text-white text-sm transition-all active:scale-[0.98] disabled:opacity-40"
+   913→                      style={{
+   914→                        background: `linear-gradient(135deg, ${selectedProvider.color} 0%, ${selectedProvider.color}CC 100%)`,
+   915→                        boxShadow: `0 4px 16px ${selectedProvider.color}40`,
+   916→                      }}
+   917→                    >
+   918→                      {isProcessing ? (
+   919→                        <Loader2 size={20} className="animate-spin" />
+   920→                      ) : (
+   921→                        <>
+   922→                          <span>تأكيد الشراء</span>
+   923→                          {selectedPackage && (
+   924→                            <span className="opacity-70">
+   925→                              ({effectivePrice.toLocaleString()} {currencySymbols[selectedPackage.currency]})
+   926→                            </span>
+   927→                          )}
+   928→                        </>
+   929→                      )}
+   930→                    </button>
+   931→                  </motion.div>
+   932→                )}
+   933→              </AnimatePresence>
+   934→            </div>
+   935→          </motion.div>
+   936→        </>
+   937→      )}
+   938→    </AnimatePresence>
+   939→  );
+   940→}
+   941→

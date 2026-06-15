@@ -1,0 +1,1141 @@
+     1→'use client';
+     2→
+     3→import { useState, useEffect, useCallback } from 'react';
+     4→import { useTheme } from 'next-themes';
+     5→import { motion, AnimatePresence } from 'framer-motion';
+     6→import {
+     7→  ChevronLeft,
+     8→  User,
+     9→  Shield,
+    10→  Bell,
+    11→  Settings,
+    12→  Fingerprint,
+    13→  Eye,
+    14→  Lock,
+    15→  FileText,
+    16→  Share2,
+    17→  Trash2,
+    18→  LogOut,
+    19→  ChevronDown,
+    20→  ChevronUp,
+    21→  MessageCircle,
+    22→  CreditCard,
+    23→  Globe,
+    24→  HelpCircle,
+    25→  Info,
+    26→  Sun,
+    27→  Moon,
+    28→  Volume2,
+    29→  VolumeX,
+    30→  Check,
+    31→  X,
+    32→  LockIcon,
+    33→  Clock,
+    34→  Download,
+    35→  Type,
+    36→  Activity,
+    37→  ShieldCheck,
+    38→  Code,
+    39→  Wrench,
+    40→} from 'lucide-react';
+    41→import { useAppStore } from '@/lib/store';
+    42→import { database } from '@/lib/firebase';
+    43→import { ref, get } from 'firebase/database';
+    44→import {
+    45→  isBiometricAvailable,
+    46→  authenticateWithBiometric,
+    47→  authenticateWithBiometricDetailed,
+    48→  setBiometricEnabled as setBiometricEnabledRemote,
+    49→  isBiometricLoginEnabled,
+    50→  storeBiometricCredentials,
+    51→  checkBiometricAvailability,
+    52→  setBiometricEnabledForUser,
+    53→  setLastLoggedInUser,
+    54→  type BiometricAvailability,
+    55→} from '@/lib/biometric';
+    56→
+    57→interface SettingsItem {
+    58→  id: string;
+    59→  label: string;
+    60→  icon: typeof User;
+    61→  color: string;
+    62→  toggle?: boolean;
+    63→  screen?: string;
+    64→  badge?: string;
+    65→  adminOnly?: boolean;
+    66→  danger?: boolean;
+    67→}
+    68→
+    69→interface SettingsSection {
+    70→  id: string;
+    71→  title: string;
+    72→  icon: typeof User;
+    73→  iconColor: string;
+    74→  items: SettingsItem[];
+    75→}
+    76→
+    77→// ── Activity Log Entry ──────────────────────────────────────────────
+    78→interface ActivityLogEntry {
+    79→  id: string;
+    80→  action: string;
+    81→  timestamp: string;
+    82→  type: 'security' | 'account' | 'settings' | 'transaction';
+    83→}
+    84→
+    85→// ── Default Activity Log ────────────────────────────────────────────
+    86→function getActivityLog(): ActivityLogEntry[] {
+    87→  if (typeof window === 'undefined') return [];
+    88→  try {
+    89→    const stored = localStorage.getItem('activity-log');
+    90→    if (stored) return JSON.parse(stored);
+    91→  } catch { /* ignore */ }
+    92→  return [];
+    93→}
+    94→
+    95→function addActivityLogEntry(entry: Omit<ActivityLogEntry, 'id'>) {
+    96→  if (typeof window === 'undefined') return;
+    97→  const log = getActivityLog();
+    98→  const newEntry: ActivityLogEntry = {
+    99→    ...entry,
+   100→    id: `log-${Date.now()}`,
+   101→  };
+   102→  log.unshift(newEntry);
+   103→  // Keep only last 50 entries
+   104→  if (log.length > 50) log.length = 50;
+   105→  localStorage.setItem('activity-log', JSON.stringify(log));
+   106→}
+   107→
+   108→const settingsSections: SettingsSection[] = [
+   109→  {
+   110→    id: 'account-settings',
+   111→    title: 'إعدادات الحساب',
+   112→    icon: User,
+   113→    iconColor: '#5C1A1B',
+   114→    items: [
+   115→      { id: 'my-account', label: 'حسابي', icon: User, color: '#5C1A1B', screen: 'edit-profile' },
+   116→      { id: 'account-settings-sub', label: 'إعدادات الحساب', icon: Settings, color: '#666', screen: 'edit-profile' },
+   117→    ],
+   118→  },
+   119→  {
+   120→    id: 'privacy-security',
+   121→    title: 'الخصوصية والأمان',
+   122→    icon: Shield,
+   123→    iconColor: '#5C1A1B',
+   124→    items: [
+   125→      { id: 'biometric', label: 'تفعيل البصمة', icon: Fingerprint, color: '#8B5CF6', toggle: true },
+   126→      { id: 'pin-code', label: 'رقم التعريف الشخصي', icon: Lock, color: '#F59E0B', screen: 'pin-setup' },
+   127→      { id: 'change-password', label: 'تغيير كلمة المرور', icon: Shield, color: '#5C1A1B' },
+   128→      { id: 'notif-alerts', label: 'الإشعارات والتنبيهات', icon: Bell, color: '#2563EB', screen: 'notifications' },
+   129→    ],
+   130→  },
+   131→  {
+   132→    id: 'app-settings',
+   133→    title: 'إعدادات التطبيق',
+   134→    icon: Settings,
+   135→    iconColor: '#666',
+   136→    items: [
+   137→      { id: 'general', label: 'الإعدادات العامة', icon: Settings, color: '#666', screen: 'general-settings' },
+   138→      { id: 'account-history', label: 'تاريخ الحساب', icon: Clock, color: '#059669' },
+   139→      { id: 'export-data', label: 'تصدير البيانات', icon: Download, color: '#8B5CF6' },
+   140→      { id: 'font-size', label: 'حجم الخط', icon: Type, color: '#F59E0B' },
+   141→      { id: 'clear-cache', label: 'مسح التخزين المؤقت', icon: Trash2, color: '#DC2626' },
+   142→      { id: 'maintenance-mode', label: 'وضع الصيانة', icon: Wrench, color: '#6B7280', adminOnly: true },
+   143→    ],
+   144→  },
+   145→  {
+   146→    id: 'advanced',
+   147→    title: 'الإعدادات المتقدمة',
+   148→    icon: ShieldCheck,
+   149→    iconColor: '#8B5CF6',
+   150→    items: [
+   151→      { id: 'activity-log', label: 'سجل النشاط', icon: Activity, color: '#059669' },
+   152→      { id: 'advanced-security', label: 'الأمان المتقدم', icon: ShieldCheck, color: '#5C1A1B' },
+   153→      { id: 'developer-settings', label: 'إعدادات المطور', icon: Code, color: '#6B7280', toggle: true },
+   154→    ],
+   155→  },
+   156→  {
+   157→    id: 'legal',
+   158→    title: 'الشروط والأحكام',
+   159→    icon: FileText,
+   160→    iconColor: '#2563EB',
+   161→    items: [
+   162→      { id: 'terms', label: 'الشروط والأحكام', icon: FileText, color: '#2563EB', screen: 'legal' },
+   163→      { id: 'privacy-policy', label: 'سياسة الخصوصية', icon: Shield, color: '#8B5CF6', screen: 'legal' },
+   164→      { id: 'faq', label: 'الأسئلة الشائعة', icon: HelpCircle, color: '#F59E0B', screen: 'legal' },
+   165→      { id: 'about', label: 'لمحة عن التطبيق', icon: Info, color: '#10B981', screen: 'legal' },
+   166→    ],
+   167→  },
+   168→  {
+   169→    id: 'social',
+   170→    title: 'مشاركة التطبيق',
+   171→    icon: Share2,
+   172→    iconColor: '#10B981',
+   173→    items: [
+   174→      { id: 'share', label: 'شارك مع أصدقائك', icon: Share2, color: '#10B981' },
+   175→      { id: 'support', label: 'الدعم والمساعدة', icon: MessageCircle, color: '#2563EB', screen: 'support' },
+   176→    ],
+   177→  },
+   178→];
+   179→
+   180→// ── General Settings Modal Component ────────────────────────────────
+   181→function GeneralSettingsModal({ isDark, onClose }: { isDark: boolean; onClose: () => void }) {
+   182→  const { theme, setTheme } = useTheme();
+   183→  const [language, setLanguage] = useState(() => {
+   184→    if (typeof window === 'undefined') return 'ar';
+   185→    return localStorage.getItem('app-language') || 'ar';
+   186→  });
+   187→  const [currency, setCurrency] = useState<'YER' | 'SAR' | 'USD'>(() => {
+   188→    if (typeof window === 'undefined') return 'YER';
+   189→    return (localStorage.getItem('app-currency') as 'YER' | 'SAR' | 'USD') || 'YER';
+   190→  });
+   191→  const [notifications, setNotifications] = useState(() => {
+   192→    if (typeof window === 'undefined') return true;
+   193→    const saved = localStorage.getItem('app-notifications');
+   194→    return saved === null ? true : saved === 'true';
+   195→  });
+   196→  const [autoLogin, setAutoLogin] = useState(() => {
+   197→    if (typeof window === 'undefined') return true;
+   198→    const saved = localStorage.getItem('auto-login');
+   199→    return saved === null ? true : saved === 'true';
+   200→  });
+   201→
+   202→  const handleLanguageChange = (lang: string) => {
+   203→    setLanguage(lang);
+   204→    localStorage.setItem('app-language', lang);
+   205→    // Update the global i18n store so the entire app switches language
+   206→    const { useI18nStore } = require('@/lib/i18n');
+   207→    useI18nStore.getState().setLanguage(lang as 'ar' | 'en');
+   208→  };
+   209→
+   210→  const handleCurrencyChange = (cur: 'YER' | 'SAR' | 'USD') => {
+   211→    setCurrency(cur);
+   212→    localStorage.setItem('app-currency', cur);
+   213→  };
+   214→
+   215→  const handleNotifToggle = () => {
+   216→    const newVal = !notifications;
+   217→    setNotifications(newVal);
+   218→    localStorage.setItem('app-notifications', String(newVal));
+   219→  };
+   220→
+   221→  const handleAutoLoginToggle = () => {
+   222→    const newVal = !autoLogin;
+   223→    setAutoLogin(newVal);
+   224→    localStorage.setItem('auto-login', String(newVal));
+   225→  };
+   226→
+   227→  const handleThemeToggle = () => {
+   228→    setTheme(theme === 'dark' ? 'light' : 'dark');
+   229→  };
+   230→
+   231→  const sectionStyle = {
+   232→    background: isDark ? '#1A1A1A' : '#FFFFFF',
+   233→    border: `1px solid ${isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)'}`,
+   234→  };
+   235→
+   236→  return (
+   237→    <motion.div
+   238→      initial={{ opacity: 0 }}
+   239→      animate={{ opacity: 1 }}
+   240→      exit={{ opacity: 0 }}
+   241→      className="fixed inset-0 z-50 flex items-end justify-center"
+   242→      onClick={onClose}
+   243→    >
+   244→      <div className="absolute inset-0 bg-black/50" />
+   245→      <motion.div
+   246→        initial={{ y: '100%' }}
+   247→        animate={{ y: 0 }}
+   248→        exit={{ y: '100%' }}
+   249→        transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+   250→        className="relative w-full max-w-md rounded-t-3xl overflow-hidden"
+   251→        style={{ background: isDark ? '#0F0F0F' : '#F5F5F5', maxHeight: '85vh' }}
+   252→        onClick={(e) => e.stopPropagation()}
+   253→      >
+   254→        <div className="flex items-center justify-between px-5 pt-5 pb-3">
+   255→          <h2 className="text-lg font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>الإعدادات العامة</h2>
+   256→          <button
+   257→            onClick={onClose}
+   258→            className="w-8 h-8 rounded-full flex items-center justify-center"
+   259→            style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}
+   260→          >
+   261→            <X size={16} strokeWidth={1.5} color={isDark ? '#FFF' : '#666'} />
+   262→          </button>
+   263→        </div>
+   264→
+   265→        <div className="px-5 pb-8 overflow-y-auto max-h-[70vh] space-y-3">
+   266→          {/* Language */}
+   267→          <div className="rounded-2xl overflow-hidden" style={sectionStyle}>
+   268→            <div className="flex items-center gap-3 px-4 py-3.5">
+   269→              <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: 'rgba(37,99,235,0.12)' }}>
+   270→                <Globe size={18} strokeWidth={1.5} color="#2563EB" />
+   271→              </div>
+   272→              <span className="flex-1 text-right text-sm font-medium" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>اللغة</span>
+   273→            </div>
+   274→            <div className="flex gap-2 px-4 pb-3">
+   275→              {[
+   276→                { key: 'ar', label: 'العربية' },
+   277→                { key: 'en', label: 'English' },
+   278→              ].map((lang) => (
+   279→                <button
+   280→                  key={lang.key}
+   281→                  onClick={() => handleLanguageChange(lang.key)}
+   282→                  className="flex-1 py-2.5 rounded-xl text-sm font-medium flex items-center justify-center gap-2 transition-all"
+   283→                  style={{
+   284→                    background: language === lang.key ? 'rgba(92,26,27,0.1)' : isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+   285→                    border: language === lang.key ? '1.5px solid #5C1A1B' : `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'}`,
+   286→                    color: language === lang.key ? '#5C1A1B' : isDark ? '#AAA' : '#666',
+   287→                  }}
+   288→                >
+   289→                  {language === lang.key && <Check size={14} strokeWidth={2} color="#5C1A1B" />}
+   290→                  {lang.label}
+   291→                </button>
+   292→              ))}
+   293→            </div>
+   294→          </div>
+   295→
+   296→          {/* Theme */}
+   297→          <div className="rounded-2xl overflow-hidden" style={sectionStyle}>
+   298→            <div className="flex items-center gap-3 px-4 py-3.5">
+   299→              <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: theme === 'dark' ? 'rgba(139,92,246,0.12)' : 'rgba(245,158,11,0.12)' }}>
+   300→                {theme === 'dark' ? <Moon size={18} strokeWidth={1.5} color="#8B5CF6" /> : <Sun size={18} strokeWidth={1.5} color="#F59E0B" />}
+   301→              </div>
+   302→              <span className="flex-1 text-right text-sm font-medium" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>المظهر</span>
+   303→              <button
+   304→                onClick={handleThemeToggle}
+   305→                className="w-11 h-6 rounded-full flex items-center transition-all duration-200 px-0.5"
+   306→                style={{
+   307→                  background: theme === 'dark' ? '#8B5CF6' : '#F59E0B',
+   308→                  justifyContent: theme === 'dark' ? 'flex-end' : 'flex-start',
+   309→                }}
+   310→              >
+   311→                <div className="w-5 h-5 rounded-full bg-white" style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
+   312→              </button>
+   313→            </div>
+   314→            <div className="px-4 pb-3">
+   315→              <p className="text-[10px]" style={{ color: isDark ? '#666' : '#AAA' }}>
+   316→                {theme === 'dark' ? 'الوضع الداكن مفعّل' : 'الوضع الفاتح مفعّل'}
+   317→              </p>
+   318→            </div>
+   319→          </div>
+   320→
+   321→          {/* Currency */}
+   322→          <div className="rounded-2xl overflow-hidden" style={sectionStyle}>
+   323→            <div className="flex items-center gap-3 px-4 py-3.5">
+   324→              <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: 'rgba(92,26,27,0.12)' }}>
+   325→                <CreditCard size={18} strokeWidth={1.5} color="#5C1A1B" />
+   326→              </div>
+   327→              <span className="flex-1 text-right text-sm font-medium" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>العملة الافتراضية</span>
+   328→            </div>
+   329→            <div className="flex gap-2 px-4 pb-3">
+   330→              {(['YER', 'SAR', 'USD'] as const).map((cur) => (
+   331→                <button
+   332→                  key={cur}
+   333→                  onClick={() => handleCurrencyChange(cur)}
+   334→                  className="flex-1 py-2.5 rounded-xl text-sm font-medium flex items-center justify-center gap-1.5 transition-all"
+   335→                  style={{
+   336→                    background: currency === cur ? 'rgba(92,26,27,0.1)' : isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+   337→                    border: currency === cur ? '1.5px solid #5C1A1B' : `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'}`,
+   338→                    color: currency === cur ? '#5C1A1B' : isDark ? '#AAA' : '#666',
+   339→                  }}
+   340→                >
+   341→                  {currency === cur && <Check size={14} strokeWidth={2} color="#5C1A1B" />}
+   342→                  {cur}
+   343→                </button>
+   344→              ))}
+   345→            </div>
+   346→          </div>
+   347→
+   348→          {/* Notifications */}
+   349→          <div className="rounded-2xl overflow-hidden" style={sectionStyle}>
+   350→            <div className="flex items-center gap-3 px-4 py-3.5">
+   351→              <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: notifications ? 'rgba(37,99,235,0.12)' : 'rgba(156,163,175,0.12)' }}>
+   352→                {notifications ? <Volume2 size={18} strokeWidth={1.5} color="#2563EB" /> : <VolumeX size={18} strokeWidth={1.5} color="#9CA3AF" />}
+   353→              </div>
+   354→              <div className="flex-1">
+   355→                <span className="text-sm font-medium block text-right" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>الإشعارات</span>
+   356→                <span className="text-[10px] block text-right" style={{ color: isDark ? '#666' : '#AAA' }}>
+   357→                  {notifications ? 'الإشعارات مفعّلة' : 'الإشعارات معطّلة'}
+   358→                </span>
+   359→              </div>
+   360→              <button
+   361→                onClick={handleNotifToggle}
+   362→                className="w-11 h-6 rounded-full flex items-center transition-all duration-200 px-0.5"
+   363→                style={{
+   364→                  background: notifications ? '#5C1A1B' : (isDark ? '#333' : '#DDD'),
+   365→                  justifyContent: notifications ? 'flex-end' : 'flex-start',
+   366→                }}
+   367→              >
+   368→                <div className="w-5 h-5 rounded-full bg-white" style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
+   369→              </button>
+   370→            </div>
+   371→          </div>
+   372→
+   373→          {/* Auto-Login */}
+   374→          <div className="rounded-2xl overflow-hidden" style={sectionStyle}>
+   375→            <div className="flex items-center gap-3 px-4 py-3.5">
+   376→              <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: autoLogin ? 'rgba(16,185,129,0.12)' : 'rgba(156,163,175,0.12)' }}>
+   377→                <Shield size={18} strokeWidth={1.5} color={autoLogin ? '#10B981' : '#9CA3AF'} />
+   378→              </div>
+   379→              <div className="flex-1">
+   380→                <span className="text-sm font-medium block text-right" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>تسجيل الدخول تلقائياً</span>
+   381→                <span className="text-[10px] block text-right" style={{ color: isDark ? '#666' : '#AAA' }}>
+   382→                  {autoLogin ? 'سيتم تسجيل دخولك تلقائياً' : 'يتطلب تسجيل الدخول في كل مرة'}
+   383→                </span>
+   384→              </div>
+   385→              <button
+   386→                onClick={handleAutoLoginToggle}
+   387→                className="w-11 h-6 rounded-full flex items-center transition-all duration-200 px-0.5"
+   388→                style={{
+   389→                  background: autoLogin ? '#10B981' : (isDark ? '#333' : '#DDD'),
+   390→                  justifyContent: autoLogin ? 'flex-end' : 'flex-start',
+   391→                }}
+   392→              >
+   393→                <div className="w-5 h-5 rounded-full bg-white" style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
+   394→              </button>
+   395→            </div>
+   396→          </div>
+   397→        </div>
+   398→      </motion.div>
+   399→    </motion.div>
+   400→  );
+   401→}
+   402→
+   403→// ── Font Size Modal ─────────────────────────────────────────────────
+   404→function FontSizeModal({ isDark, onClose }: { isDark: boolean; onClose: () => void }) {
+   405→  const [fontSize, setFontSize] = useState<'small' | 'medium' | 'large'>(() => {
+   406→    if (typeof window === 'undefined') return 'medium';
+   407→    const saved = localStorage.getItem('app-font-size');
+   408→    if (saved === 'small' || saved === 'medium' || saved === 'large') return saved;
+   409→    return 'medium';
+   410→  });
+   411→
+   412→  const handleSelect = (size: 'small' | 'medium' | 'large') => {
+   413→    setFontSize(size);
+   414→    localStorage.setItem('app-font-size', size);
+   415→    document.documentElement.setAttribute('data-font-size', size);
+   416→  };
+   417→
+   418→  const labels: Record<string, string> = { small: 'صغير', medium: 'متوسط', large: 'كبير' };
+   419→
+   420→  return (
+   421→    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-end justify-center" onClick={onClose}>
+   422→      <div className="absolute inset-0 bg-black/50" />
+   423→      <motion.div
+   424→        initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
+   425→        transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+   426→        className="relative w-full max-w-md rounded-t-3xl overflow-hidden"
+   427→        style={{ background: isDark ? '#0F0F0F' : '#F5F5F5' }}
+   428→        onClick={(e) => e.stopPropagation()}
+   429→      >
+   430→        <div className="flex items-center justify-between px-5 pt-5 pb-3">
+   431→          <h2 className="text-lg font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>حجم الخط</h2>
+   432→          <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
+   433→            <X size={16} strokeWidth={1.5} color={isDark ? '#FFF' : '#666'} />
+   434→          </button>
+   435→        </div>
+   436→        <div className="px-5 pb-8 space-y-2">
+   437→          {(['small', 'medium', 'large'] as const).map((size) => (
+   438→            <button
+   439→              key={size}
+   440→              onClick={() => handleSelect(size)}
+   441→              className="w-full flex items-center gap-3 p-4 rounded-2xl transition-all"
+   442→              style={{
+   443→                background: fontSize === size ? 'rgba(92,26,27,0.08)' : isDark ? '#1A1A1A' : '#FFFFFF',
+   444→                border: fontSize === size ? '1.5px solid #5C1A1B' : `1px solid ${isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)'}`,
+   445→              }}
+   446→            >
+   447→              <div className="flex-1 text-right">
+   448→                <span className="text-sm font-medium" style={{ color: fontSize === size ? '#5C1A1B' : isDark ? '#DDD' : '#444' }}>{labels[size]}</span>
+   449→              </div>
+   450→              {fontSize === size && <Check size={18} strokeWidth={2} color="#5C1A1B" />}
+   451→            </button>
+   452→          ))}
+   453→        </div>
+   454→      </motion.div>
+   455→    </motion.div>
+   456→  );
+   457→}
+   458→
+   459→// ── Activity Log Modal ──────────────────────────────────────────────
+   460→function ActivityLogModal({ isDark, onClose }: { isDark: boolean; onClose: () => void }) {
+   461→  const [logs] = useState<ActivityLogEntry[]>(() => getActivityLog());
+   462→
+   463→  const typeColors: Record<string, string> = {
+   464→    security: '#5C1A1B',
+   465→    account: '#2563EB',
+   466→    settings: '#F59E0B',
+   467→    transaction: '#10B981',
+   468→  };
+   469→
+   470→  const typeLabels: Record<string, string> = {
+   471→    security: 'أمان',
+   472→    account: 'حساب',
+   473→    settings: 'إعدادات',
+   474→    transaction: 'معاملة',
+   475→  };
+   476→
+   477→  return (
+   478→    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-end justify-center" onClick={onClose}>
+   479→      <div className="absolute inset-0 bg-black/50" />
+   480→      <motion.div
+   481→        initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
+   482→        transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+   483→        className="relative w-full max-w-md rounded-t-3xl overflow-hidden"
+   484→        style={{ background: isDark ? '#0F0F0F' : '#F5F5F5', maxHeight: '80vh' }}
+   485→        onClick={(e) => e.stopPropagation()}
+   486→      >
+   487→        <div className="flex items-center justify-between px-5 pt-5 pb-3">
+   488→          <h2 className="text-lg font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>سجل النشاط</h2>
+   489→          <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
+   490→            <X size={16} strokeWidth={1.5} color={isDark ? '#FFF' : '#666'} />
+   491→          </button>
+   492→        </div>
+   493→        <div className="px-5 pb-8 overflow-y-auto max-h-[65vh]">
+   494→          {logs.length === 0 ? (
+   495→            <div className="text-center py-8">
+   496→              <Activity size={40} strokeWidth={1} color={isDark ? '#444' : '#CCC'} className="mx-auto mb-3" />
+   497→              <p className="text-sm" style={{ color: isDark ? '#666' : '#AAA' }}>لا يوجد سجل نشاط بعد</p>
+   498→            </div>
+   499→          ) : (
+   500→            <div className="space-y-2">
+   501→              {logs.map((log) => (
+   502→                <div key={log.id} className="flex items-center gap-3 p-3 rounded-xl" style={{ background: isDark ? '#1A1A1A' : '#FFF', border: `1px solid ${isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)'}` }}>
+   503→                  <div className="w-2 h-2 rounded-full shrink-0" style={{ background: typeColors[log.type] || '#666' }} />
+   504→                  <div className="flex-1 min-w-0">
+   505→                    <p className="text-sm truncate text-right" style={{ color: isDark ? '#DDD' : '#444' }}>{log.action}</p>
+   506→                    <p className="text-[10px] text-right" style={{ color: isDark ? '#666' : '#AAA' }}>{new Date(log.timestamp).toLocaleString('ar-SA')}</p>
+   507→                  </div>
+   508→                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full shrink-0" style={{ background: `${typeColors[log.type]}15`, color: typeColors[log.type] }}>
+   509→                    {typeLabels[log.type]}
+   510→                  </span>
+   511→                </div>
+   512→              ))}
+   513→            </div>
+   514→          )}
+   515→        </div>
+   516→      </motion.div>
+   517→    </motion.div>
+   518→  );
+   519→}
+   520→
+   521→// ── Advanced Security Modal ─────────────────────────────────────────
+   522→function AdvancedSecurityModal({ isDark, onClose, user }: { isDark: boolean; onClose: () => void; user: { id: string; kycStatus: string; role: string } | null }) {
+   523→  const securityScore = (() => {
+   524→    let score = 0;
+   525→    if (typeof window !== 'undefined') {
+   526→      const hasPin = !!localStorage.getItem('fahed-net-store');
+   527→      const biometricPref = localStorage.getItem('biometric-login-enabled');
+   528→      if (hasPin) score += 25;
+   529→      if (biometricPref === 'true') score += 25;
+   530→      if (user?.kycStatus === 'verified') score += 30;
+   531→      if (user?.role === 'admin' || user?.role === 'owner') score += 20;
+   532→    }
+   533→    return Math.min(score, 100);
+   534→  })();
+   535→
+   536→  const getScoreColor = () => {
+   537→    if (securityScore >= 80) return '#10B981';
+   538→    if (securityScore >= 50) return '#F59E0B';
+   539→    return '#5C1A1B';
+   540→  };
+   541→
+   542→  const getScoreLabel = () => {
+   543→    if (securityScore >= 80) return 'ممتاز';
+   544→    if (securityScore >= 50) return 'جيد';
+   545→    if (securityScore >= 25) return 'متوسط';
+   546→    return 'ضعيف';
+   547→  };
+   548→
+   549→  const recommendations = [
+   550→    { key: 'pin', label: 'تعيين رمز PIN', done: securityScore >= 25 },
+   551→    { key: 'biometric', label: 'تفعيل البصمة', done: securityScore >= 50 },
+   552→    { key: 'kyc', label: 'توثيق الحساب', done: user?.kycStatus === 'verified' },
+   553→    { key: '2fa', label: 'المصادقة الثنائية', done: false },
+   554→  ];
+   555→
+   556→  return (
+   557→    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-end justify-center" onClick={onClose}>
+   558→      <div className="absolute inset-0 bg-black/50" />
+   559→      <motion.div
+   560→        initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
+   561→        transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+   562→        className="relative w-full max-w-md rounded-t-3xl overflow-hidden"
+   563→        style={{ background: isDark ? '#0F0F0F' : '#F5F5F5' }}
+   564→        onClick={(e) => e.stopPropagation()}
+   565→      >
+   566→        <div className="flex items-center justify-between px-5 pt-5 pb-3">
+   567→          <h2 className="text-lg font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>الأمان المتقدم</h2>
+   568→          <button onClick={onClose} className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
+   569→            <X size={16} strokeWidth={1.5} color={isDark ? '#FFF' : '#666'} />
+   570→          </button>
+   571→        </div>
+   572→        <div className="px-5 pb-8 space-y-4">
+   573→          {/* Score Circle */}
+   574→          <div className="flex flex-col items-center py-4">
+   575→            <div className="relative w-28 h-28">
+   576→              <svg className="w-28 h-28 -rotate-90" viewBox="0 0 100 100">
+   577→                <circle cx="50" cy="50" r="42" fill="none" stroke={isDark ? '#222' : '#EEE'} strokeWidth="8" />
+   578→                <circle cx="50" cy="50" r="42" fill="none" stroke={getScoreColor()} strokeWidth="8" strokeLinecap="round"
+   579→                  strokeDasharray={`${securityScore * 2.64} 264`}
+   580→                  style={{ transition: 'stroke-dasharray 1s ease' }}
+   581→                />
+   582→              </svg>
+   583→              <div className="absolute inset-0 flex flex-col items-center justify-center">
+   584→                <span className="text-2xl font-bold" style={{ color: getScoreColor() }}>{securityScore}%</span>
+   585→                <span className="text-[10px]" style={{ color: isDark ? '#888' : '#AAA' }}>{getScoreLabel()}</span>
+   586→              </div>
+   587→            </div>
+   588→          </div>
+   589→
+   590→          {/* Recommendations */}
+   591→          <div className="space-y-2">
+   592→            <h3 className="text-sm font-bold text-right" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>توصيات الأمان</h3>
+   593→            {recommendations.map((rec) => (
+   594→              <div key={rec.key} className="flex items-center gap-3 p-3 rounded-xl" style={{ background: isDark ? '#1A1A1A' : '#FFF', border: `1px solid ${isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)'}` }}>
+   595→                <div className="w-6 h-6 rounded-full flex items-center justify-center shrink-0" style={{ background: rec.done ? 'rgba(16,185,129,0.12)' : 'rgba(156,163,175,0.12)' }}>
+   596→                  {rec.done ? <Check size={12} strokeWidth={2} color="#10B981" /> : <X size={12} strokeWidth={2} color="#9CA3AF" />}
+   597→                </div>
+   598→                <span className="flex-1 text-right text-sm" style={{ color: rec.done ? (isDark ? '#888' : '#AAA') : (isDark ? '#DDD' : '#444'), textDecoration: rec.done ? 'line-through' : 'none' }}>{rec.label}</span>
+   599→              </div>
+   600→            ))}
+   601→          </div>
+   602→        </div>
+   603→      </motion.div>
+   604→    </motion.div>
+   605→  );
+   606→}
+   607→
+   608→// ── Main Settings Screen ────────────────────────────────────────────
+   609→export default function SettingsScreen() {
+   610→  const { theme } = useTheme();
+   611→  const isDark = theme === 'dark';
+   612→  const { setActiveScreen, logout, user, biometricEnabled, setBiometricEnabled, pinCode } = useAppStore();
+   613→
+   614→  const [showGeneralSettings, setShowGeneralSettings] = useState(false);
+   615→  const [showFontSize, setShowFontSize] = useState(false);
+   616→  const [showActivityLog, setShowActivityLog] = useState(false);
+   617→  const [showAdvancedSecurity, setShowAdvancedSecurity] = useState(false);
+   618→  const [expandedSections, setExpandedSections] = useState<string[]>(['account-settings', 'privacy-security']);
+   619→  const [toggleStates, setToggleStates] = useState<Record<string, boolean>>({
+   620→    'auto-login': true,
+   621→    'biometric': biometricEnabled,
+   622→    'developer-settings': false,
+   623→  });
+   624→  const [biometricStatus, setBiometricStatus] = useState<BiometricAvailability | null>(null);
+   625→  const [biometricLoading, setBiometricLoading] = useState(false);
+   626→  const [toastMsg, setToastMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+   627→
+   628→  // Check biometric availability on mount
+   629→  useEffect(() => {
+   630→    checkBiometricAvailability().then(setBiometricStatus);
+   631→  }, []);
+   632→
+   633→  // Sync biometric toggle with store
+   634→  useEffect(() => {
+   635→    setToggleStates(prev => ({ ...prev, 'biometric': biometricEnabled }));
+   636→  }, [biometricEnabled]);
+   637→
+   638→  // Load biometric preference from Firebase on mount
+   639→  useEffect(() => {
+   640→    if (user?.id) {
+   641→      isBiometricLoginEnabled(user.id).then((enabled) => {
+   642→        setBiometricEnabled(enabled);
+   643→        setToggleStates(prev => ({ ...prev, 'biometric': enabled }));
+   644→      });
+   645→    }
+   646→  }, [user?.id, setBiometricEnabled]);
+   647→
+   648→  const showToast = useCallback((text: string, type: 'success' | 'error' = 'success') => {
+   649→    setToastMsg({ text, type });
+   650→    setTimeout(() => setToastMsg(null), 3000);
+   651→  }, []);
+   652→
+   653→  const toggleSection = (sectionId: string) => {
+   654→    setExpandedSections(prev =>
+   655→      prev.includes(sectionId) ? prev.filter(id => id !== sectionId) : [...prev, sectionId]
+   656→    );
+   657→  };
+   658→
+   659→  // ── Biometric Toggle Handler ──────────────────────────────────────
+   660→  const handleBiometricToggle = useCallback(async () => {
+   661→    if (!user?.id) {
+   662→      showToast('يرجى تسجيل الدخول أولاً', 'error');
+   663→      return;
+   664→    }
+   665→
+   666→    const newEnabled = !toggleStates['biometric'];
+   667→    setBiometricLoading(true);
+   668→
+   669→    try {
+   670→      if (newEnabled) {
+   671→        // Enabling biometric — first check if available
+   672→        const avail = await checkBiometricAvailability();
+   673→        if (!avail.available) {
+   674→          // Show specific reason why biometric is not available
+   675→          const reason = avail.errorCode === 'biometryNotEnrolled'
+   676→            ? 'لم يتم تسجيل بصمة على هذا الجهاز. سجل بصمة من إعدادات الهاتف أولاً'
+   677→            : avail.errorCode === 'noDeviceCredential'
+   678→              ? 'يجب تعيين رمز PIN أو كلمة مرور للجهاز أولاً'
+   679→              : avail.reason || 'البصمة غير متاحة على هذا الجهاز';
+   680→          showToast(reason, 'error');
+   681→          setBiometricLoading(false);
+   682→          return;
+   683→        }
+   684→        // Verify biometrics work before enabling — use detailed version for better error messages
+   685→        const result = await authenticateWithBiometricDetailed('يرجى التحقق لتفعيل البصمة');
+   686→        if (!result.success) {
+   687→          // Show specific error message from the biometric system
+   688→          const errorMsg = result.errorMessage || 'فشل التحقق بالبصمة';
+   689→          showToast(errorMsg, 'error');
+   690→          setBiometricLoading(false);
+   691→          return;
+   692→        }
+   693→        // Store credentials for biometric login
+   694→        await storeBiometricCredentials(user.id, user.email);
+   695→      }
+   696→
+   697→      // Save preference
+   698→      await setBiometricEnabledRemote(user.id, newEnabled);
+   699→
+   700→      // Update per-user localStorage flag (persists across logout)
+   701→      setBiometricEnabledForUser(user.id, newEnabled);
+   702→
+   703→      // If enabling, also store as last logged-in user
+   704→      if (newEnabled) {
+   705→        setLastLoggedInUser(user.id);
+   706→      }
+   707→
+   708→      setBiometricEnabled(newEnabled);
+   709→      setToggleStates(prev => ({ ...prev, 'biometric': newEnabled }));
+   710→
+   711→      addActivityLogEntry({
+   712→        action: newEnabled ? 'تم تفعيل البصمة' : 'تم تعطيل البصمة',
+   713→        timestamp: new Date().toISOString(),
+   714→        type: 'security',
+   715→      });
+   716→
+   717→      showToast(newEnabled ? 'تم تفعيل البصمة بنجاح' : 'تم تعطيل البصمة');
+   718→    } catch {
+   719→      showToast('حدث خطأ، يرجى المحاولة لاحقاً', 'error');
+   720→    } finally {
+   721→      setBiometricLoading(false);
+   722→    }
+   723→  }, [user, toggleStates, setBiometricEnabled, showToast]);
+   724→
+   725→  // ── Developer Settings Toggle ─────────────────────────────────────
+   726→  const handleDeveloperToggle = useCallback(() => {
+   727→    const newVal = !toggleStates['developer-settings'];
+   728→    setToggleStates(prev => ({ ...prev, 'developer-settings': newVal }));
+   729→    if (typeof window !== 'undefined') {
+   730→      localStorage.setItem('debug-mode', String(newVal));
+   731→    }
+   732→    showToast(newVal ? 'تم تفعيل وضع المطور' : 'تم تعطيل وضع المطور');
+   733→    addActivityLogEntry({
+   734→      action: newVal ? 'تم تفعيل وضع المطور' : 'تم تعطيل وضع المطور',
+   735→      timestamp: new Date().toISOString(),
+   736→      type: 'settings',
+   737→    });
+   738→  }, [toggleStates, showToast]);
+   739→
+   740→  // ── Export Data ───────────────────────────────────────────────────
+   741→  const handleExportData = useCallback(async () => {
+   742→    if (!user) return;
+   743→    try {
+   744→      const userData = { ...user };
+   745→      // Remove sensitive fields from export
+   746→      const exportData = {
+   747→        exportDate: new Date().toISOString(),
+   748→        user: userData,
+   749→        preferences: {
+   750→          language: localStorage.getItem('app-language') || 'ar',
+   751→          currency: localStorage.getItem('app-currency') || 'YER',
+   752→          notifications: localStorage.getItem('app-notifications') !== 'false',
+   753→          autoLogin: localStorage.getItem('auto-login') !== 'false',
+   754→          biometricEnabled: biometricEnabled,
+   755→          fontSize: localStorage.getItem('app-font-size') || 'medium',
+   756→        },
+   757→      };
+   758→
+   759→      const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+   760→      const url = URL.createObjectURL(blob);
+   761→      const a = document.createElement('a');
+   762→      a.href = url;
+   763→      a.download = `jaib-data-${user.userId || 'user'}-${new Date().toISOString().slice(0, 10)}.json`;
+   764→      document.body.appendChild(a);
+   765→      a.click();
+   766→      document.body.removeChild(a);
+   767→      URL.revokeObjectURL(url);
+   768→
+   769→      addActivityLogEntry({
+   770→        action: 'تم تصدير البيانات',
+   771→        timestamp: new Date().toISOString(),
+   772→        type: 'account',
+   773→      });
+   774→      showToast('تم تصدير البيانات بنجاح');
+   775→    } catch {
+   776→      showToast('فشل تصدير البيانات', 'error');
+   777→    }
+   778→  }, [user, biometricEnabled, showToast]);
+   779→
+   780→  // ── Clear Cache ───────────────────────────────────────────────────
+   781→  const handleClearCache = useCallback(() => {
+   782→    if (typeof window === 'undefined') return;
+   783→    // Keep essential keys — including biometric_enabled_<uid> and last_logged_in_uid for persistence
+   784→    const keepKeys = ['fahed-net-store', 'app-language', 'app-currency', 'app-font-size', 'biometric-login-enabled', 'last_logged_in_uid'];
+   785→    const keysToKeep = new Set(keepKeys);
+   786→    if (user?.id) {
+   787→      keysToKeep.add(`biometric-login-enabled-${user.id}`);
+   788→      keysToKeep.add(`biometric-cred-${user.id}`);
+   789→      keysToKeep.add(`biometric_enabled_${user.id}`);
+   790→    }
+   791→    const keysToRemove: string[] = [];
+   792→    for (let i = 0; i < localStorage.length; i++) {
+   793→      const key = localStorage.key(i);
+   794→      if (key && !keysToKeep.has(key) && !key.startsWith('fahed-net-store')) {
+   795→        keysToRemove.push(key);
+   796→      }
+   797→    }
+   798→    keysToRemove.forEach(key => localStorage.removeItem(key));
+   799→    addActivityLogEntry({
+   800→      action: 'تم مسح التخزين المؤقت',
+   801→      timestamp: new Date().toISOString(),
+   802→      type: 'settings',
+   803→    });
+   804→    showToast('تم مسح التخزين المؤقت بنجاح');
+   805→  }, [user, showToast]);
+   806→
+   807→  // ── Account History ───────────────────────────────────────────────
+   808→  const [accountHistory, setAccountHistory] = useState<string>('');
+   809→  const [showAccountHistory, setShowAccountHistory] = useState(false);
+   810→
+   811→  useEffect(() => {
+   812→    if (user?.id) {
+   813→      const userRef = ref(database, `users/${user.id}`);
+   814→      get(userRef).then((snapshot) => {
+   815→        if (snapshot.exists()) {
+   816→          const data = snapshot.val();
+   817→          const createdAt = data.createdAt || data.created_at || '';
+   818→          setAccountHistory(createdAt);
+   819→        }
+   820→      }).catch(() => {});
+   821→    }
+   822→  }, [user?.id]);
+   823→
+   824→  // ── Item Click Handler ────────────────────────────────────────────
+   825→  const handleItemClick = useCallback((item: SettingsItem) => {
+   826→    if (item.id === 'biometric') {
+   827→      handleBiometricToggle();
+   828→      return;
+   829→    }
+   830→    if (item.id === 'developer-settings') {
+   831→      handleDeveloperToggle();
+   832→      return;
+   833→    }
+   834→    if (item.toggle) {
+   835→      setToggleStates(prev => ({ ...prev, [item.id]: !prev[item.id] }));
+   836→      return;
+   837→    }
+   838→    if (item.id === 'general' || item.id === 'language') {
+   839→      setShowGeneralSettings(true);
+   840→    } else if (item.id === 'pin-code') {
+   841→      setActiveScreen('pin-setup');
+   842→    } else if (item.id === 'font-size') {
+   843→      setShowFontSize(true);
+   844→    } else if (item.id === 'export-data') {
+   845→      handleExportData();
+   846→    } else if (item.id === 'clear-cache') {
+   847→      handleClearCache();
+   848→    } else if (item.id === 'account-history') {
+   849→      setShowAccountHistory(true);
+   850→    } else if (item.id === 'activity-log') {
+   851→      setShowActivityLog(true);
+   852→    } else if (item.id === 'advanced-security') {
+   853→      setShowAdvancedSecurity(true);
+   854→    } else if (item.screen) {
+   855→      setActiveScreen(item.screen);
+   856→    }
+   857→  }, [handleBiometricToggle, handleDeveloperToggle, handleExportData, handleClearCache, setActiveScreen]);
+   858→
+   859→  const isVerified = user?.kycStatus === 'verified';
+   860→  const isAdmin = user?.role === 'admin' || user?.role === 'owner';
+   861→
+   862→  return (
+   863→    <div className="min-h-screen pb-4">
+   864→      {/* Toast */}
+   865→      <AnimatePresence>
+   866→        {toastMsg && (
+   867→          <motion.div
+   868→            initial={{ opacity: 0, y: -20 }}
+   869→            animate={{ opacity: 1, y: 0 }}
+   870→            exit={{ opacity: 0, y: -20 }}
+   871→            className="fixed top-4 left-4 right-4 z-[60] flex justify-center"
+   872→          >
+   873→            <div className="px-4 py-3 rounded-2xl flex items-center gap-2 shadow-lg" style={{
+   874→              background: toastMsg.type === 'success' ? 'rgba(16,185,129,0.95)' : 'rgba(92,26,27,0.95)',
+   875→              color: '#FFF',
+   876→            }}>
+   877→              {toastMsg.type === 'success' ? <Check size={16} /> : <X size={16} />}
+   878→              <span className="text-sm font-medium">{toastMsg.text}</span>
+   879→            </div>
+   880→          </motion.div>
+   881→        )}
+   882→      </AnimatePresence>
+   883→
+   884→      {/* Header */}
+   885→      <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} className="px-4 pt-4 pb-3">
+   886→        <div className="flex items-center gap-3">
+   887→          <button
+   888→            onClick={() => useAppStore.getState().setActiveTab('account')}
+   889→            className="w-10 h-10 rounded-xl flex items-center justify-center"
+   890→            style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}
+   891→          >
+   892→            <ChevronLeft size={20} strokeWidth={1.5} color={isDark ? '#FFF' : '#666'} />
+   893→          </button>
+   894→          <h1 className="text-xl font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>الإعدادات</h1>
+   895→        </div>
+   896→      </motion.div>
+   897→
+   898→      {/* Verified User Banner */}
+   899→      {isVerified && (
+   900→        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="px-4 mb-3">
+   901→          <div className="rounded-2xl p-3 flex items-center gap-2" style={{ background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.15)' }}>
+   902→            <LockIcon size={14} strokeWidth={1.5} color="#10B981" />
+   903→            <p className="text-[11px] flex-1" style={{ color: isDark ? '#AAA' : '#666' }}>
+   904→              حسابك موثق - البيانات الشخصية مجمدة ولا يمكن تعديلها
+   905→            </p>
+   906→          </div>
+   907→        </motion.div>
+   908→      )}
+   909→
+   910→      {/* Settings Sections */}
+   911→      <div className="px-4 space-y-3">
+   912→        {settingsSections.map((section, sectionIndex) => {
+   913→          // Hide admin-only sections/items
+   914→          const visibleItems = section.items.filter(item => !item.adminOnly || isAdmin);
+   915→          if (visibleItems.length === 0) return null;
+   916→
+   917→          const SectionIcon = section.icon;
+   918→          const isExpanded = expandedSections.includes(section.id);
+   919→
+   920→          return (
+   921→            <motion.div
+   922→              key={section.id}
+   923→              initial={{ opacity: 0, y: 12 }}
+   924→              animate={{ opacity: 1, y: 0 }}
+   925→              transition={{ delay: 0.04 * sectionIndex }}
+   926→              className="rounded-2xl overflow-hidden"
+   927→              style={{
+   928→                background: isDark ? '#1A1A1A' : '#FFFFFF',
+   929→                border: `1px solid ${isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)'}`,
+   930→              }}
+   931→            >
+   932→              {/* Section Header */}
+   933→              <button
+   934→                onClick={() => toggleSection(section.id)}
+   935→                className="w-full flex items-center gap-3 px-4 py-3.5"
+   936→              >
+   937→                <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: `${section.iconColor}12` }}>
+   938→                  <SectionIcon size={18} strokeWidth={1.5} color={section.iconColor} />
+   939→                </div>
+   940→                <span className="flex-1 text-right text-sm font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
+   941→                  {section.title}
+   942→                </span>
+   943→                {isExpanded ? (
+   944→                  <ChevronUp size={18} strokeWidth={1.5} color={isDark ? '#555' : '#AAA'} />
+   945→                ) : (
+   946→                  <ChevronDown size={18} strokeWidth={1.5} color={isDark ? '#555' : '#AAA'} />
+   947→                )}
+   948→              </button>
+   949→
+   950→              {/* Section Items */}
+   951→              <AnimatePresence>
+   952→                {isExpanded && (
+   953→                  <motion.div
+   954→                    initial={{ height: 0, opacity: 0 }}
+   955→                    animate={{ height: 'auto', opacity: 1 }}
+   956→                    exit={{ height: 0, opacity: 0 }}
+   957→                    transition={{ duration: 0.2 }}
+   958→                    className="overflow-hidden"
+   959→                  >
+   960→                    {visibleItems.map((item) => {
+   961→                      const ItemIcon = item.icon;
+   962→                      const isFrozenField = isVerified && ['my-account'].includes(item.id);
+   963→                      const isBiometricItem = item.id === 'biometric';
+   964→                      const isDeveloperItem = item.id === 'developer-settings';
+   965→                      const isLoadingItem = isBiometricItem && biometricLoading;
+   966→
+   967→                      return (
+   968→                        <button
+   969→                          key={item.id}
+   970→                          onClick={() => !isLoadingItem && handleItemClick(item)}
+   971→                          disabled={isLoadingItem}
+   972→                          className="w-full flex items-center gap-3 px-4 py-3 active:scale-[0.99] transition-transform"
+   973→                          style={{
+   974→                            borderTop: `1px solid ${isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)'}`,
+   975→                            opacity: isLoadingItem ? 0.6 : 1,
+   976→                          }}
+   977→                        >
+   978→                          <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0" style={{ background: `${item.color}12` }}>
+   979→                            <ItemIcon size={16} strokeWidth={1.5} color={item.color} />
+   980→                          </div>
+   981→
+   982→                          <div className="flex-1 min-w-0">
+   983→                            <span className="text-sm block text-right" style={{ color: isDark ? '#DDD' : '#444' }}>
+   984→                              {item.label}
+   985→                            </span>
+   986→                            {/* Biometric availability hint */}
+   987→                            {isBiometricItem && biometricStatus && (
+   988→                              <span className="text-[10px] block text-right" style={{ color: biometricStatus.available ? '#10B981' : '#5C1A1B' }}>
+   989→                                {biometricStatus.available
+   990→                                  ? biometricStatus.biometryType === 'face' ? 'Face ID متاح' : 'البصمة متاحة'
+   991→                                  : 'غير متاح على هذا الجهاز'}
+   992→                              </span>
+   993→                            )}
+   994→                          </div>
+   995→
+   996→                          {isFrozenField && (
+   997→                            <div className="flex items-center gap-1.5">
+   998→                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={{ background: 'rgba(16,185,129,0.1)', color: '#10B981' }}>بيانات موثقة</span>
+   999→                              <Lock size={12} strokeWidth={1.5} color={isDark ? '#555' : '#CCC'} />
+  1000→                            </div>
+  1001→                          )}
+  1002→
+  1003→                          {item.toggle ? (
+  1004→                            isLoadingItem ? (
+  1005→                              <motion.div
+  1006→                                animate={{ rotate: 360 }}
+  1007→                                transition={{ repeat: Infinity, duration: 1, ease: 'linear' }}
+  1008→                                className="w-5 h-5 border-2 border-gray-300 border-t-gray-600 rounded-full"
+  1009→                              />
+  1010→                            ) : (
+  1011→                              <div
+  1012→                                className="w-11 h-6 rounded-full flex items-center transition-all duration-200 px-0.5"
+  1013→                                style={{
+  1014→                                  background: toggleStates[item.id] ? '#5C1A1B' : (isDark ? '#333' : '#DDD'),
+  1015→                                  justifyContent: toggleStates[item.id] ? 'flex-end' : 'flex-start',
+  1016→                                }}
+  1017→                              >
+  1018→                                <div className="w-5 h-5 rounded-full bg-white" style={{ boxShadow: '0 1px 3px rgba(0,0,0,0.2)' }} />
+  1019→                              </div>
+  1020→                            )
+  1021→                          ) : (
+  1022→                            <ChevronLeft size={16} strokeWidth={1.5} color={isDark ? '#444' : '#CCC'} />
+  1023→                          )}
+  1024→                        </button>
+  1025→                      );
+  1026→                    })}
+  1027→                  </motion.div>
+  1028→                )}
+  1029→              </AnimatePresence>
+  1030→            </motion.div>
+  1031→          );
+  1032→        })}
+  1033→      </div>
+  1034→
+  1035→      {/* Delete Account */}
+  1036→      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }} className="px-4 mt-4">
+  1037→        <button
+  1038→          className="w-full flex items-center gap-3 p-4 rounded-2xl"
+  1039→          style={{
+  1040→            background: isDark ? '#1A1A1A' : '#FFFFFF',
+  1041→            border: `1px solid ${isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)'}`,
+  1042→          }}
+  1043→        >
+  1044→          <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: 'rgba(92,26,27,0.08)' }}>
+  1045→            <Trash2 size={18} strokeWidth={1.5} color="#5C1A1B" />
+  1046→          </div>
+  1047→          <span className="flex-1 text-right text-sm font-bold" style={{ color: '#5C1A1B' }}>
+  1048→            حذف حسابي نهائياً
+  1049→          </span>
+  1050→        </button>
+  1051→      </motion.div>
+  1052→
+  1053→      {/* Logout */}
+  1054→      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.35 }} className="px-4 mt-3">
+  1055→        <button
+  1056→          onClick={logout}
+  1057→          className="w-full flex items-center justify-center gap-2 py-4 rounded-2xl"
+  1058→          style={{
+  1059→            background: isDark ? '#1A1A1A' : '#FFFFFF',
+  1060→            border: `1px solid ${isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)'}`,
+  1061→            color: '#5C1A1B',
+  1062→          }}
+  1063→        >
+  1064→          <LogOut size={18} strokeWidth={1.5} />
+  1065→          <span className="text-sm font-bold">الخروج من التطبيق</span>
+  1066→        </button>
+  1067→      </motion.div>
+  1068→
+  1069→      {/* Version */}
+  1070→      <p className="text-center text-[10px] mt-3" style={{ color: isDark ? '#444' : '#CCC' }}>
+  1071→        v 0.4.6.5
+  1072→      </p>
+  1073→
+  1074→      {/* Modals */}
+  1075→      <AnimatePresence>
+  1076→        {showGeneralSettings && <GeneralSettingsModal isDark={isDark} onClose={() => setShowGeneralSettings(false)} />}
+  1077→      </AnimatePresence>
+  1078→      <AnimatePresence>
+  1079→        {showFontSize && <FontSizeModal isDark={isDark} onClose={() => setShowFontSize(false)} />}
+  1080→      </AnimatePresence>
+  1081→      <AnimatePresence>
+  1082→        {showActivityLog && <ActivityLogModal isDark={isDark} onClose={() => setShowActivityLog(false)} />}
+  1083→      </AnimatePresence>
+  1084→      <AnimatePresence>
+  1085→        {showAdvancedSecurity && <AdvancedSecurityModal isDark={isDark} onClose={() => setShowAdvancedSecurity(false)} user={user} />}
+  1086→      </AnimatePresence>
+  1087→
+  1088→      {/* Account History Modal */}
+  1089→      <AnimatePresence>
+  1090→        {showAccountHistory && (
+  1091→          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-end justify-center" onClick={() => setShowAccountHistory(false)}>
+  1092→            <div className="absolute inset-0 bg-black/50" />
+  1093→            <motion.div
+  1094→              initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
+  1095→              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+  1096→              className="relative w-full max-w-md rounded-t-3xl overflow-hidden p-6"
+  1097→              style={{ background: isDark ? '#0F0F0F' : '#F5F5F5' }}
+  1098→              onClick={(e) => e.stopPropagation()}
+  1099→            >
+  1100→              <div className="flex items-center justify-between mb-4">
+  1101→                <h2 className="text-lg font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>تاريخ الحساب</h2>
+  1102→                <button onClick={() => setShowAccountHistory(false)} className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
+  1103→                  <X size={16} strokeWidth={1.5} color={isDark ? '#FFF' : '#666'} />
+  1104→                </button>
+  1105→              </div>
+  1106→              <div className="space-y-3">
+  1107→                <div className="p-4 rounded-2xl" style={{ background: isDark ? '#1A1A1A' : '#FFF', border: `1px solid ${isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)'}` }}>
+  1108→                  <div className="flex items-center gap-3">
+  1109→                    <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: 'rgba(5,150,105,0.12)' }}>
+  1110→                      <Clock size={18} strokeWidth={1.5} color="#059669" />
+  1111→                    </div>
+  1112→                    <div className="flex-1">
+  1113→                      <p className="text-sm font-medium text-right" style={{ color: isDark ? '#DDD' : '#444' }}>تاريخ التسجيل</p>
+  1114→                      <p className="text-xs text-right" style={{ color: isDark ? '#888' : '#AAA' }}>
+  1115→                        {accountHistory ? new Date(accountHistory).toLocaleDateString('ar-SA', { year: 'numeric', month: 'long', day: 'numeric' }) : 'غير متوفر'}
+  1116→                      </p>
+  1117→                    </div>
+  1118→                  </div>
+  1119→                </div>
+  1120→                {user?.userId && (
+  1121→                  <div className="p-4 rounded-2xl" style={{ background: isDark ? '#1A1A1A' : '#FFF', border: `1px solid ${isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)'}` }}>
+  1122→                    <div className="flex items-center gap-3">
+  1123→                      <div className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0" style={{ background: 'rgba(92,26,27,0.12)' }}>
+  1124→                        <User size={18} strokeWidth={1.5} color="#5C1A1B" />
+  1125→                      </div>
+  1126→                      <div className="flex-1">
+  1127→                        <p className="text-sm font-medium text-right" style={{ color: isDark ? '#DDD' : '#444' }}>رقم الحساب</p>
+  1128→                        <p className="text-xs text-right font-mono" style={{ color: isDark ? '#888' : '#AAA' }} dir="ltr">{user.userId}</p>
+  1129→                      </div>
+  1130→                    </div>
+  1131→                  </div>
+  1132→                )}
+  1133→              </div>
+  1134→            </motion.div>
+  1135→          </motion.div>
+  1136→        )}
+  1137→      </AnimatePresence>
+  1138→    </div>
+  1139→  );
+  1140→}
+  1141→

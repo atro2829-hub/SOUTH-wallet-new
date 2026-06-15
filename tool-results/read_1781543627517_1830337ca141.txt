@@ -1,0 +1,804 @@
+     1→// Entertainment Services Data - محفظة الجنوب
+     2→// 400+ services with real game icons and USD pricing
+     3→// Commission: 3% default (configurable from admin)
+     4→
+     5→export interface EntertainmentPackage {
+     6→  id: string;
+     7→  name: string;
+     8→  nameAr: string;
+     9→  nameEn: string;
+    10→  priceUSD: number;
+    11→  description: string;
+    12→  descriptionAr: string;
+    13→  descriptionEn: string;
+    14→  active: boolean;
+    15→}
+    16→
+    17→export interface EntertainmentService {
+    18→  id: string;
+    19→  name: string;
+    20→  nameAr: string;
+    21→  nameEn: string;
+    22→  icon: string;
+    23→  category: 'games' | 'streaming' | 'social' | 'music' | 'gift-cards' | 'digital-wallets';
+    24→  subCategory: string;
+    25→  packages: EntertainmentPackage[];
+    26→  active: boolean;
+    27→  commissionRate: number;
+    28→  steamAppId?: number;
+    29→}
+    30→
+    31→export interface EntertainmentCategory {
+    32→  id: string;
+    33→  nameAr: string;
+    34→  nameEn: string;
+    35→  icon: string;
+    36→  color: string;
+    37→}
+    38→
+    39→const STEAM_ICON = (appId: number) =>
+    40→  `https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${appId}/capsule_231x87.jpg`;
+    41→
+    42→const PLACEHOLDER = (text: string) =>
+    43→  `https://placehold.co/80x80/1B3A5C/FFFFFF?text=${encodeURIComponent(text)}`;
+    44→
+    45→export const ENTERTAINMENT_CATEGORIES: EntertainmentCategory[] = [
+    46→  { id: 'games', nameAr: 'الألعاب', nameEn: 'Games', icon: '🎮', color: 'bg-red-500' },
+    47→  { id: 'streaming', nameAr: 'البث المباشر', nameEn: 'Streaming', icon: '📺', color: 'bg-purple-500' },
+    48→  { id: 'social', nameAr: 'التواصل الاجتماعي', nameEn: 'Social', icon: '💬', color: 'bg-blue-500' },
+    49→  { id: 'music', nameAr: 'الموسيقى', nameEn: 'Music', icon: '🎵', color: 'bg-green-500' },
+    50→  { id: 'gift-cards', nameAr: 'بطاقات الهدايا', nameEn: 'Gift Cards', icon: '🎁', color: 'bg-amber-500' },
+    51→  { id: 'digital-wallets', nameAr: 'المحافظ الرقمية', nameEn: 'Digital Wallets', icon: '💳', color: 'bg-teal-500' },
+    52→];
+    53→
+    54→function pkg(id: string, nameAr: string, nameEn: string, price: number, descAr: string, descEn: string): EntertainmentPackage {
+    55→  return { id, name: nameAr, nameAr, nameEn, priceUSD: price, description: descAr, descriptionAr: descAr, descriptionEn: descEn, active: true };
+    56→}
+    57→
+    58→// ============================================================
+    59→// GAMES - BATTLE ROYALE
+    60→// ============================================================
+    61→const BATTLE_ROYALE_GAMES: EntertainmentService[] = [
+    62→  {
+    63→    id: 'pubg-mobile', name: 'PUBG Mobile', nameAr: 'PUBG Mobile', nameEn: 'PUBG Mobile',
+    64→    icon: PLACEHOLDER('PUBG'), category: 'games', subCategory: 'battle-royale', active: true, commissionRate: 3,
+    65→    packages: [
+    66→      pkg('pubg-60', '60 UC', '60 UC', 0.99, '60 وحدة غير مسبوقة', '60 Unknown Cash'),
+    67→      pkg('pubg-325', '325 UC', '325 UC', 4.99, '325 وحدة غير مسبوقة', '325 Unknown Cash'),
+    68→      pkg('pubg-660', '660 UC', '660 UC', 9.99, '660 وحدة غير مسبوقة', '660 Unknown Cash'),
+    69→      pkg('pubg-1800', '1800 UC', '1800 UC', 24.99, '1800 وحدة غير مسبوقة', '1800 Unknown Cash'),
+    70→      pkg('pubg-3850', '3850 UC', '3850 UC', 49.99, '3850 وحدة غير مسبوقة', '3850 Unknown Cash'),
+    71→      pkg('pubg-8100', '8100 UC', '8100 UC', 99.99, '8100 وحدة غير مسبوقة', '8100 Unknown Cash'),
+    72→    ],
+    73→  },
+    74→  {
+    75→    id: 'free-fire', name: 'Free Fire', nameAr: 'فري فاير', nameEn: 'Free Fire',
+    76→    icon: PLACEHOLDER('FF'), category: 'games', subCategory: 'battle-royale', active: true, commissionRate: 3,
+    77→    packages: [
+    78→      pkg('ff-100', '100 جوهرة', '100 Diamonds', 0.99, '100 جوهرة', '100 Diamonds'),
+    79→      pkg('ff-310', '310 جوهرة', '310 Diamonds', 2.99, '310 جوهرة', '310 Diamonds'),
+    80→      pkg('ff-520', '520 جوهرة', '520 Diamonds', 4.99, '520 جوهرة', '520 Diamonds'),
+    81→      pkg('ff-1060', '1060 جوهرة', '1060 Diamonds', 9.99, '1060 جوهرة', '1060 Diamonds'),
+    82→      pkg('ff-2180', '2180 جوهرة', '2180 Diamonds', 19.99, '2180 جوهرة', '2180 Diamonds'),
+    83→      pkg('ff-5600', '5600 جوهرة', '5600 Diamonds', 49.99, '5600 جوهرة', '5600 Diamonds'),
+    84→    ],
+    85→  },
+    86→  {
+    87→    id: 'fortnite', name: 'Fortnite', nameAr: 'فورتنايت', nameEn: 'Fortnite',
+    88→    icon: STEAM_ICON(2406020), category: 'games', subCategory: 'battle-royale', active: true, commissionRate: 3, steamAppId: 2406020,
+    89→    packages: [
+    90→      pkg('fort-1000', '1000 V-Bucks', '1000 V-Bucks', 7.99, '1000 V-Bucks', '1000 V-Bucks'),
+    91→      pkg('fort-2800', '2800 V-Bucks', '2800 V-Bucks', 19.99, '2800 V-Bucks', '2800 V-Bucks'),
+    92→      pkg('fort-5000', '5000 V-Bucks', '5000 V-Bucks', 31.99, '5000 V-Bucks', '5000 V-Bucks'),
+    93→      pkg('fort-13500', '13500 V-Bucks', '13500 V-Bucks', 79.99, '13500 V-Bucks', '13500 V-Bucks'),
+    94→    ],
+    95→  },
+    96→  {
+    97→    id: 'apex-legends', name: 'Apex Legends', nameAr: 'Apex Legends', nameEn: 'Apex Legends',
+    98→    icon: STEAM_ICON(1172470), category: 'games', subCategory: 'battle-royale', active: true, commissionRate: 3, steamAppId: 1172470,
+    99→    packages: [
+   100→      pkg('apex-1000', '1000 عملة', '1000 Coins', 9.99, '1000 عملة Apex', '1000 Apex Coins'),
+   101→      pkg('apex-2150', '2150 عملة', '2150 Coins', 19.99, '2150 عملة Apex', '2150 Apex Coins'),
+   102→      pkg('apex-4350', '4350 عملة', '4350 Coins', 39.99, '4350 عملة Apex', '4350 Apex Coins'),
+   103→      pkg('apex-6700', '6700 عملة', '6700 Coins', 59.99, '6700 عملة Apex', '6700 Apex Coins'),
+   104→      pkg('apex-11500', '11500 عملة', '11500 Coins', 99.99, '11500 عملة Apex', '11500 Apex Coins'),
+   105→    ],
+   106→  },
+   107→  {
+   108→    id: 'naraka-bladepoint', name: 'Naraka: Bladepoint', nameAr: 'ناراكا', nameEn: 'Naraka: Bladepoint',
+   109→    icon: STEAM_ICON(1203220), category: 'games', subCategory: 'battle-royale', active: true, commissionRate: 3, steamAppId: 1203220,
+   110→    packages: [
+   111→      pkg('naraka-400', '400 عملة ذهبية', '400 Gold', 4.99, '400 عملة ذهبية', '400 Gold'),
+   112→      pkg('naraka-980', '980 عملة ذهبية', '980 Gold', 9.99, '980 عملة ذهبية', '980 Gold'),
+   113→      pkg('naraka-2100', '2100 عملة ذهبية', '2100 Gold', 19.99, '2100 عملة ذهبية', '2100 Gold'),
+   114→      pkg('naraka-5600', '5600 عملة ذهبية', '5600 Gold', 49.99, '5600 عملة ذهبية', '5600 Gold'),
+   115→    ],
+   116→  },
+   117→  {
+   118→    id: 'warzone', name: 'Call of Duty: Warzone', nameAr: 'كول أوف ديوتي وورزون', nameEn: 'CoD: Warzone',
+   119→    icon: PLACEHOLDER('COD'), category: 'games', subCategory: 'battle-royale', active: true, commissionRate: 3,
+   120→    packages: [
+   121→      pkg('wz-200', '200 نقطة CP', '200 CP', 1.99, '200 نقطة Call of Duty', '200 Call of Duty Points'),
+   122→      pkg('wz-500', '500 نقطة CP', '500 CP', 4.99, '500 نقطة Call of Duty', '500 Call of Duty Points'),
+   123→      pkg('wz-1100', '1100 نقطة CP', '1100 CP', 9.99, '1100 نقطة Call of Duty', '1100 Call of Duty Points'),
+   124→      pkg('wz-2400', '2400 نقطة CP', '2400 CP', 19.99, '2400 نقطة Call of Duty', '2400 Call of Duty Points'),
+   125→      pkg('wz-5000', '5000 نقطة CP', '5000 CP', 39.99, '5000 نقطة Call of Duty', '5000 Call of Duty Points'),
+   126→    ],
+   127→  },
+   128→];
+   129→
+   130→// ============================================================
+   131→// GAMES - FPS / SHOOTER
+   132→// ============================================================
+   133→const FPS_GAMES: EntertainmentService[] = [
+   134→  {
+   135→    id: 'valorant', name: 'Valorant', nameAr: 'فالورانت', nameEn: 'Valorant',
+   136→    icon: PLACEHOLDER('VAL'), category: 'games', subCategory: 'fps', active: true, commissionRate: 3,
+   137→    packages: [
+   138→      pkg('val-125', '125 VP', '125 VP', 4.99, '125 نقطة فالورانت', '125 Valorant Points'),
+   139→      pkg('val-420', '420 VP', '420 VP', 14.99, '420 نقطة فالورانت', '420 Valorant Points'),
+   140→      pkg('val-700', '700 VP', '700 VP', 24.99, '700 نقطة فالورانت', '700 Valorant Points'),
+   141→      pkg('val-1375', '1375 VP', '1375 VP', 49.99, '1375 نقطة فالورانت', '1375 Valorant Points'),
+   142→      pkg('val-2400', '2400 VP', '2400 VP', 79.99, '2400 نقطة فالورانت', '2400 Valorant Points'),
+   143→      pkg('val-4000', '4000 VP', '4000 VP', 99.99, '4000 نقطة فالورانت', '4000 Valorant Points'),
+   144→    ],
+   145→  },
+   146→  {
+   147→    id: 'cs2', name: 'Counter-Strike 2', nameAr: 'كاونتر سترايك 2', nameEn: 'Counter-Strike 2',
+   148→    icon: STEAM_ICON(730), category: 'games', subCategory: 'fps', active: true, commissionRate: 3, steamAppId: 730,
+   149→    packages: [
+   150→      pkg('cs2-5', 'محفظة Steam 5$', 'Steam Wallet $5', 5.00, 'رصيد Steam بقيمة 5$', 'Steam Wallet $5'),
+   151→      pkg('cs2-10', 'محفظة Steam 10$', 'Steam Wallet $10', 10.00, 'رصيد Steam بقيمة 10$', 'Steam Wallet $10'),
+   152→      pkg('cs2-25', 'محفظة Steam 25$', 'Steam Wallet $25', 25.00, 'رصيد Steam بقيمة 25$', 'Steam Wallet $25'),
+   153→      pkg('cs2-50', 'محفظة Steam 50$', 'Steam Wallet $50', 50.00, 'رصيد Steam بقيمة 50$', 'Steam Wallet $50'),
+   154→    ],
+   155→  },
+   156→  {
+   157→    id: 'r6-siege', name: 'Rainbow Six Siege', nameAr: 'رينبو سيكس سيج', nameEn: 'Rainbow Six Siege',
+   158→    icon: STEAM_ICON(359550), category: 'games', subCategory: 'fps', active: true, commissionRate: 3, steamAppId: 359550,
+   159→    packages: [
+   160→      pkg('r6-600', '600 نقطة R6', '600 R6 Credits', 4.99, '600 نقطة رينبو سيكس', '600 R6 Credits'),
+   161→      pkg('r6-1200', '1200 نقطة R6', '1200 R6 Credits', 9.99, '1200 نقطة رينبو سيكس', '1200 R6 Credits'),
+   162→      pkg('r6-2670', '2670 نقطة R6', '2670 R6 Credits', 19.99, '2670 نقطة رينبو سيكس', '2670 R6 Credits'),
+   163→      pkg('r6-4920', '4920 نقطة R6', '4920 R6 Credits', 34.99, '4920 نقطة رينبو سيكس', '4920 R6 Credits'),
+   164→    ],
+   165→  },
+   166→  {
+   167→    id: 'overwatch2', name: 'Overwatch 2', nameAr: 'أوفرووتش 2', nameEn: 'Overwatch 2',
+   168→    icon: PLACEHOLDER('OW2'), category: 'games', subCategory: 'fps', active: true, commissionRate: 3,
+   169→    packages: [
+   170→      pkg('ow2-200', '200 عملة أوفر', '200 Overwatch Coins', 1.99, '200 عملة أوفر ووتش', '200 Overwatch Coins'),
+   171→      pkg('ow2-500', '500 عملة أوفر', '500 Overwatch Coins', 4.99, '500 عملة أوفر ووتش', '500 Overwatch Coins'),
+   172→      pkg('ow2-1000', '1000 عملة أوفر', '1000 Overwatch Coins', 9.99, '1000 عملة أوفر ووتش', '1000 Overwatch Coins'),
+   173→      pkg('ow2-2200', '2200 عملة أوفر', '2200 Overwatch Coins', 19.99, '2200 عملة أوفر ووتش', '2200 Overwatch Coins'),
+   174→      pkg('ow2-5700', '5700 عملة أوفر', '5700 Overwatch Coins', 49.99, '5700 عملة أوفر ووتش', '5700 Overwatch Coins'),
+   175→    ],
+   176→  },
+   177→  {
+   178→    id: 'cod-mobile', name: 'Call of Duty Mobile', nameAr: 'كول أوف ديوتي موبايل', nameEn: 'Call of Duty Mobile',
+   179→    icon: PLACEHOLDER('CODM'), category: 'games', subCategory: 'fps', active: true, commissionRate: 3,
+   180→    packages: [
+   181→      pkg('codm-80', '80 CP', '80 CP', 0.99, '80 نقطة كول أوف ديوتي', '80 CP'),
+   182→      pkg('codm-400', '400 CP', '400 CP', 4.99, '400 نقطة كول أوف ديوتي', '400 CP'),
+   183→      pkg('codm-800', '800 CP', '800 CP', 9.99, '800 نقطة كول أوف ديوتي', '800 CP'),
+   184→      pkg('codm-2000', '2000 CP', '2000 CP', 24.99, '2000 نقطة كول أوف ديوتي', '2000 CP'),
+   185→      pkg('codm-4000', '4000 CP', '4000 CP', 49.99, '4000 نقطة كول أوف ديوتي', '4000 CP'),
+   186→    ],
+   187→  },
+   188→];
+   189→
+   190→// ============================================================
+   191→// GAMES - MOBA
+   192→// ============================================================
+   193→const MOBA_GAMES: EntertainmentService[] = [
+   194→  {
+   195→    id: 'mobile-legends', name: 'Mobile Legends', nameAr: 'موبايل ليجندز', nameEn: 'Mobile Legends',
+   196→    icon: PLACEHOLDER('ML'), category: 'games', subCategory: 'moba', active: true, commissionRate: 3,
+   197→    packages: [
+   198→      pkg('ml-86', '86 ماسة', '86 Diamonds', 0.99, '86 ماسة', '86 Diamonds'),
+   199→      pkg('ml-172', '172 ماسة', '172 Diamonds', 1.99, '172 ماسة', '172 Diamonds'),
+   200→      pkg('ml-257', '257 ماسة', '257 Diamonds', 2.99, '257 ماسة', '257 Diamonds'),
+   201→      pkg('ml-344', '344 ماسة', '344 Diamonds', 4.99, '344 ماسة', '344 Diamonds'),
+   202→      pkg('ml-514', '514 ماسة', '514 Diamonds', 7.99, '514 ماسة', '514 Diamonds'),
+   203→      pkg('ml-706', '706 ماسة', '706 Diamonds', 9.99, '706 ماسة', '706 Diamonds'),
+   204→      pkg('ml-2195', '2195 ماسة', '2195 Diamonds', 29.99, '2195 ماسة', '2195 Diamonds'),
+   205→    ],
+   206→  },
+   207→  {
+   208→    id: 'league-of-legends', name: 'League of Legends', nameAr: 'ليغ أوف ليجندز', nameEn: 'League of Legends',
+   209→    icon: PLACEHOLDER('LOL'), category: 'games', subCategory: 'moba', active: true, commissionRate: 3,
+   210→    packages: [
+   211→      pkg('lol-650', '650 RP', '650 RP', 5.00, '650 نقطة Riot', '650 Riot Points'),
+   212→      pkg('lol-1380', '1380 RP', '1380 RP', 10.00, '1380 نقطة Riot', '1380 Riot Points'),
+   213→      pkg('lol-2800', '2800 RP', '2800 RP', 20.00, '2800 نقطة Riot', '2800 Riot Points'),
+   214→      pkg('lol-5000', '5000 RP', '5000 RP', 35.00, '5000 نقطة Riot', '5000 Riot Points'),
+   215→      pkg('lol-7200', '7200 RP', '7200 RP', 50.00, '7200 نقطة Riot', '7200 Riot Points'),
+   216→    ],
+   217→  },
+   218→  {
+   219→    id: 'dota2', name: 'Dota 2', nameAr: 'دوتا 2', nameEn: 'Dota 2',
+   220→    icon: STEAM_ICON(570), category: 'games', subCategory: 'moba', active: true, commissionRate: 3, steamAppId: 570,
+   221→    packages: [
+   222→      pkg('dota-5', 'محفظة Steam 5$', 'Steam Wallet $5', 5.00, 'رصيد Steam 5$', 'Steam Wallet $5'),
+   223→      pkg('dota-10', 'محفظة Steam 10$', 'Steam Wallet $10', 10.00, 'رصيد Steam 10$', 'Steam Wallet $10'),
+   224→      pkg('dota-25', 'محفظة Steam 25$', 'Steam Wallet $25', 25.00, 'رصيد Steam 25$', 'Steam Wallet $25'),
+   225→      pkg('dota-50', 'محفظة Steam 50$', 'Steam Wallet $50', 50.00, 'رصيد Steam 50$', 'Steam Wallet $50'),
+   226→    ],
+   227→  },
+   228→  {
+   229→    id: 'smite', name: 'Smite', nameAr: 'سمايت', nameEn: 'Smite',
+   230→    icon: STEAM_ICON(386360), category: 'games', subCategory: 'moba', active: true, commissionRate: 3, steamAppId: 386360,
+   231→    packages: [
+   232→      pkg('smite-200', '200 جوهرة', '200 Gems', 2.99, '200 جوهرة سمايت', '200 Gems'),
+   233→      pkg('smite-400', '400 جوهرة', '400 Gems', 5.99, '400 جوهرة سمايت', '400 Gems'),
+   234→      pkg('smite-800', '800 جوهرة', '800 Gems', 11.99, '800 جوهرة سمايت', '800 Gems'),
+   235→      pkg('smite-1600', '1600 جوهرة', '1600 Gems', 23.99, '1600 جوهرة سمايت', '1600 Gems'),
+   236→    ],
+   237→  },
+   238→  {
+   239→    id: 'pokemon-unite', name: 'Pokemon Unite', nameAr: 'بوكيمون يونايت', nameEn: 'Pokemon Unite',
+   240→    icon: PLACEHOLDER('PKU'), category: 'games', subCategory: 'moba', active: true, commissionRate: 3,
+   241→    packages: [
+   242→      pkg('pku-100', '100 عملة Aeos', '100 Aeos Gems', 0.99, '100 عملة Aeos', '100 Aeos Gems'),
+   243→      pkg('pku-550', '550 عملة Aeos', '550 Aeos Gems', 4.99, '550 عملة Aeos', '550 Aeos Gems'),
+   244→      pkg('pku-1200', '1200 عملة Aeos', '1200 Aeos Gems', 9.99, '1200 عملة Aeos', '1200 Aeos Gems'),
+   245→      pkg('pku-2600', '2600 عملة Aeos', '2600 Aeos Gems', 19.99, '2600 عملة Aeos', '2600 Aeos Gems'),
+   246→    ],
+   247→  },
+   248→];
+   249→
+   250→// ============================================================
+   251→// GAMES - ANIME / GACHA
+   252→// ============================================================
+   253→const GACHA_GAMES: EntertainmentService[] = [
+   254→  {
+   255→    id: 'genshin-impact', name: 'Genshin Impact', nameAr: 'غينشين إمباكت', nameEn: 'Genshin Impact',
+   256→    icon: PLACEHOLDER('GI'), category: 'games', subCategory: 'gacha', active: true, commissionRate: 3,
+   257→    packages: [
+   258→      pkg('gi-60', '60 كريستال', '60 Genesis Crystals', 0.99, '60 كريستال التكوين', '60 Genesis Crystals'),
+   259→      pkg('gi-300', '300 كريستال', '300 Genesis Crystals', 4.99, '300 كريستال التكوين', '300 Genesis Crystals'),
+   260→      pkg('gi-980', '980 كريستال', '980 Genesis Crystals', 14.99, '980 كريستال التكوين', '980 Genesis Crystals'),
+   261→      pkg('gi-1980', '1980 كريستال', '1980 Genesis Crystals', 29.99, '1980 كريستال التكوين', '1980 Genesis Crystals'),
+   262→      pkg('gi-3280', '3280 كريستال', '3280 Genesis Crystals', 49.99, '3280 كريستال التكوين', '3280 Genesis Crystals'),
+   263→      pkg('gi-6480', '6480 كريستال', '6480 Genesis Crystals', 99.99, '6480 كريستال التكوين', '6480 Genesis Crystals'),
+   264→    ],
+   265→  },
+   266→  {
+   267→    id: 'honkai-star-rail', name: 'Honkai: Star Rail', nameAr: 'هنكاي ستار ريل', nameEn: 'Honkai: Star Rail',
+   268→    icon: PLACEHOLDER('HSR'), category: 'games', subCategory: 'gacha', active: true, commissionRate: 3,
+   269→    packages: [
+   270→      pkg('hsr-60', '60 عملة واحدة', '60 Oneiric Shard', 0.99, '60 شظية حلم', '60 Oneiric Shards'),
+   271→      pkg('hsr-300', '300 عملة واحدة', '300 Oneiric Shard', 4.99, '300 شظية حلم', '300 Oneiric Shards'),
+   272→      pkg('hsr-980', '980 عملة واحدة', '980 Oneiric Shard', 14.99, '980 شظية حلم', '980 Oneiric Shards'),
+   273→      pkg('hsr-1980', '1980 عملة واحدة', '1980 Oneiric Shard', 29.99, '1980 شظية حلم', '1980 Oneiric Shards'),
+   274→      pkg('hsr-3280', '3280 عملة واحدة', '3280 Oneiric Shard', 49.99, '3280 شظية حلم', '3280 Oneiric Shards'),
+   275→      pkg('hsr-6480', '6480 عملة واحدة', '6480 Oneiric Shard', 99.99, '6480 شظية حلم', '6480 Oneiric Shards'),
+   276→    ],
+   277→  },
+   278→  {
+   279→    id: 'wuthering-waves', name: 'Wuthering Waves', nameAr: 'وذرينغ ويفز', nameEn: 'Wuthering Waves',
+   280→    icon: PLACEHOLDER('WW'), category: 'games', subCategory: 'gacha', active: true, commissionRate: 3,
+   281→    packages: [
+   282→      pkg('ww-60', '60 لونيت', '60 Lunite', 0.99, '60 لونيت', '60 Lunite'),
+   283→      pkg('ww-300', '300 لونيت', '300 Lunite', 4.99, '300 لونيت', '300 Lunite'),
+   284→      pkg('ww-980', '980 لونيت', '980 Lunite', 14.99, '980 لونيت', '980 Lunite'),
+   285→      pkg('ww-1980', '1980 لونيت', '1980 Lunite', 29.99, '1980 لونيت', '1980 Lunite'),
+   286→      pkg('ww-3280', '3280 لونيت', '3280 Lunite', 49.99, '3280 لونيت', '3280 Lunite'),
+   287→      pkg('ww-6480', '6480 لونيت', '6480 Lunite', 99.99, '6480 لونيت', '6480 Lunite'),
+   288→    ],
+   289→  },
+   290→  {
+   291→    id: 'honkai-impact-3rd', name: 'Honkai Impact 3rd', nameAr: 'هنكاي إمباكت 3', nameEn: 'Honkai Impact 3rd',
+   292→    icon: PLACEHOLDER('HI3'), category: 'games', subCategory: 'gacha', active: true, commissionRate: 3,
+   293→    packages: [
+   294→      pkg('hi3-60', '60 كريستال', '60 Crystals', 0.99, '60 كريستال', '60 Crystals'),
+   295→      pkg('hi3-330', '330 كريستال', '330 Crystals', 4.99, '330 كريستال', '330 Crystals'),
+   296→      pkg('hi3-660', '660 كريستال', '660 Crystals', 9.99, '660 كريستال', '660 Crystals'),
+   297→      pkg('hi3-1320', '1320 كريستال', '1320 Crystals', 19.99, '1320 كريستال', '1320 Crystals'),
+   298→      pkg('hi3-3300', '3300 كريستال', '3300 Crystals', 49.99, '3300 كريستال', '3300 Crystals'),
+   299→    ],
+   300→  },
+   301→  {
+   302→    id: 'arknights', name: 'Arknights', nameAr: 'أركنايتس', nameEn: 'Arknights',
+   303→    icon: PLACEHOLDER('AK'), category: 'games', subCategory: 'gacha', active: true, commissionRate: 3,
+   304→    packages: [
+   305→      pkg('ak-130', '130 أوريجينيوم', '130 Orundum Pack', 0.99, '130 أوريجينيوم', '130 Orundum Pack'),
+   306→      pkg('ak-680', '680 أوريجينيوم', '680 Orundum Pack', 4.99, '680 أوريجينيوم', '680 Orundum Pack'),
+   307→      pkg('ak-1380', '1380 أوريجينيوم', '1380 Orundum Pack', 9.99, '1380 أوريجينيوم', '1380 Orundum Pack'),
+   308→      pkg('ak-3420', '3420 أوريجينيوم', '3420 Orundum Pack', 24.99, '3420 أوريجينيوم', '3420 Orundum Pack'),
+   309→    ],
+   310→  },
+   311→  {
+   312→    id: 'nikke', name: 'Goddess of Victory: Nikke', nameAr: 'نيكي', nameEn: 'NIKKE',
+   313→    icon: PLACEHOLDER('NIK'), category: 'games', subCategory: 'gacha', active: true, commissionRate: 3,
+   314→    packages: [
+   315→      pkg('nik-100', '100 جوهرة', '100 Gems', 0.99, '100 جوهرة', '100 Gems'),
+   316→      pkg('nik-400', '400 جوهرة', '400 Gems', 3.99, '400 جوهرة', '400 Gems'),
+   317→      pkg('nik-800', '800 جوهرة', '800 Gems', 7.99, '800 جوهرة', '800 Gems'),
+   318→      pkg('nik-1600', '1600 جوهرة', '1600 Gems', 14.99, '1600 جوهرة', '1600 Gems'),
+   319→      pkg('nik-4000', '4000 جوهرة', '4000 Gems', 39.99, '4000 جوهرة', '4000 Gems'),
+   320→    ],
+   321→  },
+   322→  {
+   323→    id: 'blue-archive', name: 'Blue Archive', nameAr: 'بلو أرشيف', nameEn: 'Blue Archive',
+   324→    icon: PLACEHOLDER('BA'), category: 'games', subCategory: 'gacha', active: true, commissionRate: 3,
+   325→    packages: [
+   326→      pkg('ba-120', '120 بيرأكيت', '120 Pyroxene Pack', 0.99, '120 بيرأكيت', '120 Pyroxene Pack'),
+   327→      pkg('ba-720', '720 بيرأكيت', '720 Pyroxene Pack', 4.99, '720 بيرأكيت', '720 Pyroxene Pack'),
+   328→      pkg('ba-1440', '1440 بيرأكيت', '1440 Pyroxene Pack', 9.99, '1440 بيرأكيت', '1440 Pyroxene Pack'),
+   329→      pkg('ba-3600', '3600 بيرأكيت', '3600 Pyroxene Pack', 24.99, '3600 بيرأكيت', '3600 Pyroxene Pack'),
+   330→    ],
+   331→  },
+   332→  {
+   333→    id: 'fate-grand-order', name: 'Fate/Grand Order', nameAr: 'فيت غراند أوردر', nameEn: 'Fate/Grand Order',
+   334→    icon: PLACEHOLDER('FGO'), category: 'games', subCategory: 'gacha', active: true, commissionRate: 3,
+   335→    packages: [
+   336→      pkg('fgo-25', '25 حجر مقدس', '25 Saint Quartz', 0.99, '25 حجر مقدس', '25 Saint Quartz'),
+   337→      pkg('fgo-55', '55 حجر مقدس', '55 Saint Quartz', 3.99, '55 حجر مقدس', '55 Saint Quartz'),
+   338→      pkg('fgo-86', '86 حجر مقدس', '86 Saint Quartz', 7.99, '86 حجر مقدس', '86 Saint Quartz'),
+   339→      pkg('fgo-168', '168 حجر مقدس', '168 Saint Quartz', 15.99, '168 حجر مقدس', '168 Saint Quartz'),
+   340→    ],
+   341→  },
+   342→  {
+   343→    id: 'azur-lane', name: 'Azur Lane', nameAr: 'أزور لين', nameEn: 'Azur Lane',
+   344→    icon: PLACEHOLDER('AL'), category: 'games', subCategory: 'gacha', active: true, commissionRate: 3,
+   345→    packages: [
+   346→      pkg('al-60', '60 جوهرة', '60 Gems', 0.99, '60 جوهرة', '60 Gems'),
+   347→      pkg('al-300', '300 جوهرة', '300 Gems', 4.99, '300 جوهرة', '300 Gems'),
+   348→      pkg('al-600', '600 جوهرة', '600 Gems', 9.99, '600 جوهرة', '600 Gems'),
+   349→      pkg('al-1500', '1500 جوهرة', '1500 Gems', 24.99, '1500 جوهرة', '1500 Gems'),
+   350→    ],
+   351→  },
+   352→  {
+   353→    id: 'epic-seven', name: 'Epic Seven', nameAr: 'إيبك سفن', nameEn: 'Epic Seven',
+   354→    icon: PLACEHOLDER('E7'), category: 'games', subCategory: 'gacha', active: true, commissionRate: 3,
+   355→    packages: [
+   356→      pkg('e7-100', '100 سكايستون', '100 Skystone Pack', 0.99, '100 سكايستون', '100 Skystone Pack'),
+   357→      pkg('e7-400', '400 سكايستون', '400 Skystone Pack', 3.99, '400 سكايستون', '400 Skystone Pack'),
+   358→      pkg('e7-900', '900 سكايستون', '900 Skystone Pack', 7.99, '900 سكايستون', '900 Skystone Pack'),
+   359→      pkg('e7-1800', '1800 سكايستون', '1800 Skystone Pack', 14.99, '1800 سكايستون', '1800 Skystone Pack'),
+   360→    ],
+   361→  },
+   362→];
+   363→
+   364→// Helper to generate bulk games with standard packages
+   365→function makeGame(id: string, name: string, nameAr: string, icon: string, subCat: string, steamId?: number): EntertainmentService {
+   366→  return {
+   367→    id, name, nameAr, nameEn: name, icon, category: 'games', subCategory: subCat, active: true, commissionRate: 3,
+   368→    steamAppId: steamId,
+   369→    packages: [
+   370→      pkg(`${id}-small`, 'حزمة صغيرة', 'Small Pack', 0.99, `حزمة صغيرة ${name}`, `Small Pack - ${name}`),
+   371→      pkg(`${id}-medium`, 'حزمة متوسطة', 'Medium Pack', 4.99, `حزمة متوسطة ${name}`, `Medium Pack - ${name}`),
+   372→      pkg(`${id}-large`, 'حزمة كبيرة', 'Large Pack', 9.99, `حزمة كبيرة ${name}`, `Large Pack - ${name}`),
+   373→      pkg(`${id}-mega`, 'حزمة ضخمة', 'Mega Pack', 24.99, `حزمة ضخمة ${name}`, `Mega Pack - ${name}`),
+   374→      pkg(`${id}-ultra`, 'حزمة ألترا', 'Ultra Pack', 49.99, `حزمة ألترا ${name}`, `Ultra Pack - ${name}`),
+   375→    ],
+   376→  };
+   377→}
+   378→
+   379→// ============================================================
+   380→// GAMES - SURVIVAL
+   381→// ============================================================
+   382→const SURVIVAL_GAMES: EntertainmentService[] = [
+   383→  makeGame('rust', 'Rust', 'راست', STEAM_ICON(252490), 'survival', 252490),
+   384→  makeGame('ark', 'ARK: Survival Ascended', 'آرك', STEAM_ICON(2399830), 'survival', 2399830),
+   385→  makeGame('palworld', 'Palworld', 'بالورلد', STEAM_ICON(1623730), 'survival', 1623730),
+   386→  makeGame('valheim', 'Valheim', 'فالهيم', STEAM_ICON(892970), 'survival', 892970),
+   387→  makeGame('dayz', 'DayZ', 'دايز', STEAM_ICON(221100), 'survival', 221100),
+   388→  makeGame('the-forest', 'The Forest', 'ذا فورست', STEAM_ICON(242760), 'survival', 242760),
+   389→  makeGame('sons-of-forest', 'Sons Of The Forest', 'أبناء الغابة', STEAM_ICON(1326470), 'survival', 1326470),
+   390→  makeGame('subnautica', 'Subnautica', 'سبنوتيكا', STEAM_ICON(264710), 'survival', 264710),
+   391→  makeGame('dont-starve', "Don't Starve Together", 'دون ستارف', STEAM_ICON(322330), 'survival', 322330),
+   392→  makeGame('conan-exiles', 'Conan Exiles', 'كونان إكسايلز', STEAM_ICON(440900), 'survival', 440900),
+   393→  makeGame('7-days', '7 Days to Die', '7 أيام للموت', STEAM_ICON(251570), 'survival', 251570),
+   394→  makeGame('project-zomboid', 'Project Zomboid', 'بروجيكت زومبويد', STEAM_ICON(108600), 'survival', 108600),
+   395→  makeGame('grounded', 'Grounded', 'غراوندد', STEAM_ICON(1307870), 'survival', 1307870),
+   396→  makeGame('no-mans-sky', 'No Man\'s Sky', 'نو مانز سكاي', STEAM_ICON(275850), 'survival', 275850),
+   397→  makeGame('raft', 'Raft', 'رافت', STEAM_ICON(648800), 'survival', 648800),
+   398→  makeGame('green-hell', 'Green Hell', 'غرين هيل', STEAM_ICON(515760), 'survival', 515760),
+   399→  makeGame('v-rising', 'V Rising', 'في رايزينغ', STEAM_ICON(1604030), 'survival', 1604030),
+   400→  makeGame('the-long-dark', 'The Long Dark', 'ذا لونغ دارك', STEAM_ICON(305620), 'survival', 305620),
+   401→  makeGame('mist-survival', 'Mist Survival', 'ميست سرفايفل', STEAM_ICON(914620), 'survival', 914620),
+   402→  makeGame('stranded-deep', 'Stranded Deep', 'ستراندد ديب', STEAM_ICON(313120), 'survival', 313120),
+   403→];
+   404→
+   405→// ============================================================
+   406→// GAMES - MMORPG
+   407→// ============================================================
+   408→const MMORPG_GAMES: EntertainmentService[] = [
+   409→  makeGame('wow', 'World of Warcraft', 'وورلد أوف ووركرافت', PLACEHOLDER('WoW'), 'mmorpg'),
+   410→  makeGame('ff14', 'Final Fantasy XIV', 'فاينل فانتاسي 14', STEAM_ICON(39210), 'mmorpg', 39210),
+   411→  makeGame('black-desert', 'Black Desert Online', 'بلاك ديزرت', STEAM_ICON(582660), 'mmorpg', 582660),
+   412→  makeGame('lost-ark', 'Lost Ark', 'لوست أرك', STEAM_ICON(1599340), 'mmorpg', 1599340),
+   413→  makeGame('gw2', 'Guild Wars 2', 'غيلد وورز 2', PLACEHOLDER('GW2'), 'mmorpg'),
+   414→  makeGame('eso', 'Elder Scrolls Online', 'إلدر سكرولز أونلاين', STEAM_ICON(306130), 'mmorpg', 306130),
+   415→  makeGame('new-world', 'New World', 'نيو وورلد', STEAM_ICON(1063730), 'mmorpg', 1063730),
+   416→  makeGame('swtor', 'Star Wars: The Old Republic', 'ستار وورز', PLACEHOLDER('SWTOR'), 'mmorpg'),
+   417→  makeGame('runescape', 'Old School RuneScape', 'رونسكيب', PLACEHOLDER('RS'), 'mmorpg'),
+   418→  makeGame('tera', 'TERA', 'تيرا', PLACEHOLDER('TERA'), 'mmorpg'),
+   419→  makeGame('aion', 'Aion', 'أيون', PLACEHOLDER('AION'), 'mmorpg'),
+   420→  makeGame('eve-online', 'EVE Online', 'إيف أونلاين', STEAM_ICON(8500), 'mmorpg', 8500),
+   421→  makeGame('albion', 'Albion Online', 'ألبيون أونلاين', STEAM_ICON(761890), 'mmorpg', 761890),
+   422→  makeGame('bdo-mobile', 'Black Desert Mobile', 'بلاك ديزرت موبايل', PLACEHOLDER('BDM'), 'mmorpg'),
+   423→  makeGame('lineage2m', 'Lineage 2M', 'لينيج 2M', PLACEHOLDER('L2M'), 'mmorpg'),
+   424→  makeGame('diablo-immortal', 'Diablo Immortal', 'ديابلو إيمورتال', PLACEHOLDER('DI'), 'mmorpg'),
+   425→  makeGame('torchlight-infinite', 'Torchlight Infinite', 'تورشلايت إنفينيت', PLACEHOLDER('TLI'), 'mmorpg'),
+   426→  makeGame('warframe', 'Warframe', 'وورفرايم', STEAM_ICON(230410), 'mmorpg', 230410),
+   427→  makeGame('destiny2', 'Destiny 2', 'ديستني 2', STEAM_ICON(1085660), 'mmorpg', 1085660),
+   428→  makeGame('path-of-exile', 'Path of Exile', 'باث أوف إكسايل', STEAM_ICON(238960), 'mmorpg', 238960),
+   429→  makeGame('path-of-exile-2', 'Path of Exile 2', 'باث أوف إكسايل 2', STEAM_ICON(2694490), 'mmorpg', 2694490),
+   430→];
+   431→
+   432→// ============================================================
+   433→// GAMES - RACING
+   434→// ============================================================
+   435→const RACING_GAMES: EntertainmentService[] = [
+   436→  makeGame('forza-horizon5', 'Forza Horizon 5', 'فورزا هورايزن 5', STEAM_ICON(1551360), 'racing', 1551360),
+   437→  makeGame('forza-horizon4', 'Forza Horizon 4', 'فورزا هورايزن 4', STEAM_ICON(1293830), 'racing', 1293830),
+   438→  makeGame('need-for-speed', 'Need for Speed Heat', 'نيد فور سبيد', STEAM_ICON(1222680), 'racing', 1222680),
+   439→  makeGame('gran-turismo7', 'Gran Turismo 7', 'غران توريزمو 7', PLACEHOLDER('GT7'), 'racing'),
+   440→  makeGame('assetto-corsa', 'Assetto Corsa', 'أسيتو كورسا', STEAM_ICON(244210), 'racing', 244210),
+   441→  makeGame('beamng', 'BeamNG.drive', 'بيم إن جي', STEAM_ICON(284160), 'racing', 284160),
+   442→  makeGame('dirt-rally2', 'Dirt Rally 2.0', 'ديرت رالي', STEAM_ICON(690790), 'racing', 690790),
+   443→  makeGame('f1-23', 'F1 23', 'إف 1 23', STEAM_ICON(2108330), 'racing', 2108330),
+   444→  makeGame('wreckfest', 'Wreckfest', 'ريكفيست', STEAM_ICON(228380), 'racing', 228380),
+   445→  makeGame('the-crew2', 'The Crew 2', 'ذا كرو 2', STEAM_ICON(646910), 'racing', 646910),
+   446→  makeGame('carx-drift', 'CarX Drift Racing Online', 'كار إكس دريفت', STEAM_ICON(635260), 'racing', 635260),
+   447→  makeGame('forza-motorsport', 'Forza Motorsport', 'فورزا موتورسبورت', PLACEHOLDER('FM'), 'racing'),
+   448→];
+   449→
+   450→// ============================================================
+   451→// GAMES - SPORTS
+   452→// ============================================================
+   453→const SPORTS_GAMES: EntertainmentService[] = [
+   454→  makeGame('ea-fc25', 'EA FC 25', 'إي إف سي 25', PLACEHOLDER('FC25'), 'sports'),
+   455→  makeGame('ea-fc24', 'EA FC 24', 'إي إف سي 24', STEAM_ICON(2195250), 'sports', 2195250),
+   456→  makeGame('nba2k25', 'NBA 2K25', 'إن بي إيه 2K25', PLACEHOLDER('NBA25'), 'sports'),
+   457→  makeGame('madden25', 'Madden NFL 25', 'مادين NFL 25', PLACEHOLDER('M25'), 'sports'),
+   458→  makeGame('pes2024', 'eFootball 2024', 'إفوتبول 2024', STEAM_ICON(1695850), 'sports', 1695850),
+   459→  makeGame('rocket-league', 'Rocket League', 'روكيت ليج', STEAM_ICON(252950), 'sports', 252950),
+   460→  makeGame('ufc5', 'UFC 5', 'يو إف سي 5', PLACEHOLDER('UFC5'), 'sports'),
+   461→  makeGame('wwe2k24', 'WWE 2K24', 'دبليو دبليو إي 2K24', PLACEHOLDER('WWE'), 'sports'),
+   462→  makeGame('cricket24', 'Cricket 24', 'كريكيت 24', PLACEHOLDER('CR24'), 'sports'),
+   463→  makeGame('fishing-planet', 'Fishing Planet', 'فيشينغ بلانيت', STEAM_ICON(380600), 'sports', 380600),
+   464→];
+   465→
+   466→// ============================================================
+   467→// GAMES - STRATEGY
+   468→// ============================================================
+   469→const STRATEGY_GAMES: EntertainmentService[] = [
+   470→  makeGame('civ6', 'Civilization VI', 'سيفيليزيشن 6', STEAM_ICON(289070), 'strategy', 289070),
+   471→  makeGame('civ7', 'Civilization VII', 'سيفيليزيشن 7', PLACEHOLDER('C7'), 'strategy'),
+   472→  makeGame('aoe4', 'Age of Empires IV', 'إيج أوف إمبايرز 4', STEAM_ICON(1466860), 'strategy', 1466860),
+   473→  makeGame('aoe2-de', 'Age of Empires II: DE', 'إيج أوف إمبايرز 2', STEAM_ICON(813780), 'strategy', 813780),
+   474→  makeGame('total-war-wh3', 'Total War: Warhammer III', 'توتال وور وورهامر 3', STEAM_ICON(1142710), 'strategy', 1142710),
+   475→  makeGame('stellaris', 'Stellaris', 'ستيلاريس', STEAM_ICON(281990), 'strategy', 281990),
+   476→  makeGame('ck3', 'Crusader Kings III', 'كروزيدر كينغز 3', STEAM_ICON(1158310), 'strategy', 1158310),
+   477→  makeGame('eu4', 'Europa Universalis IV', 'يوروبا يونيفرساليس 4', STEAM_ICON(236850), 'strategy', 236850),
+   478→  makeGame('hoi4', 'Hearts of Iron IV', 'هارتس أوف آيرون 4', STEAM_ICON(394360), 'strategy', 394360),
+   479→  makeGame('xcom2', 'XCOM 2', 'إكس كوم 2', STEAM_ICON(268500), 'strategy', 268500),
+   480→  makeGame('humankind', 'Humankind', 'هيومن كايند', STEAM_ICON(1124300), 'strategy', 1124300),
+   481→  makeGame('endless-legend', 'Endless Legend', 'إندليس ليجند', STEAM_ICON(289130), 'strategy', 289130),
+   482→  makeGame('northgard', 'Northgard', 'نورثغارد', STEAM_ICON(466560), 'strategy', 466560),
+   483→  makeGame('they-are-billions', 'They Are Billions', 'ذاي آر بيليونز', STEAM_ICON(744380), 'strategy', 744380),
+   484→  makeGame('frostpunk', 'Frostpunk', 'فروست بانك', STEAM_ICON(323190), 'strategy', 323190),
+   485→  makeGame('cities-skylines2', 'Cities: Skylines II', 'سيتيز سكايلاينز 2', STEAM_ICON(949230), 'strategy', 949230),
+   486→  makeGame('rimworld', 'RimWorld', 'ريم وورلد', STEAM_ICON(294100), 'strategy', 294100),
+   487→  makeGame('oxygen-not-included', 'Oxygen Not Included', 'أوكسيجن نوت إنكلودد', STEAM_ICON(457140), 'strategy', 457140),
+   488→  makeGame('factorio', 'Factorio', 'فاكتوريو', STEAM_ICON(427520), 'strategy', 427520),
+   489→  makeGame('satisfactory', 'Satisfactory', 'ساتيسفاكتوري', STEAM_ICON(526870), 'strategy', 526870),
+   490→];
+   491→
+   492→// ============================================================
+   493→// GAMES - SANDBOX / CREATIVE
+   494→// ============================================================
+   495→const SANDBOX_GAMES: EntertainmentService[] = [
+   496→  makeGame('minecraft', 'Minecraft', 'ماينكرافت', PLACEHOLDER('MC'), 'sandbox'),
+   497→  makeGame('minecraft-bedrock', 'Minecraft Bedrock', 'ماينكرافت بدروك', PLACEHOLDER('MCB'), 'sandbox'),
+   498→  makeGame('roblox', 'Roblox', 'روبلوكس', PLACEHOLDER('RBLX'), 'sandbox'),
+   499→  makeGame('terraria', 'Terraria', 'تيراريا', STEAM_ICON(105600), 'sandbox', 105600),
+   500→  makeGame('stardew-valley', 'Stardew Valley', 'ستاردو فالي', STEAM_ICON(413150), 'sandbox', 413150),
+   501→  makeGame('animal-crossing', 'Animal Crossing: NH', 'أنيمال كروسينغ', PLACEHOLDER('AC'), 'sandbox'),
+   502→  makeGame('the-sims4', 'The Sims 4', 'ذا سيمز 4', STEAM_ICON(1222670), 'sandbox', 1222670),
+   503→  makeGame('planet-crafter', 'The Planet Crafter', 'ذا بلانيت كرافتر', STEAM_ICON(1284190), 'sandbox', 1284190),
+   504→  makeGame('core-keeper', 'Core Keeper', 'كور كيبر', STEAM_ICON(1621690), 'sandbox', 1621690),
+   505→  makeGame('dragon-quest-builders', 'Dragon Quest Builders 2', 'دراغون كويست', PLACEHOLDER('DQB'), 'sandbox'),
+   506→];
+   507→
+   508→// ============================================================
+   509→// GAMES - HORROR
+   510→// ============================================================
+   511→const HORROR_GAMES: EntertainmentService[] = [
+   512→  makeGame('lethal-company', 'Lethal Company', 'ليثل كمباني', STEAM_ICON(1966720), 'horror', 1966720),
+   513→  makeGame('phasmophobia', 'Phasmophobia', 'فازموفوبيا', STEAM_ICON(739630), 'horror', 739630),
+   514→  makeGame('the-outlast-trials', 'The Outlast Trials', 'آوت لاست ترايلز', STEAM_ICON(1304930), 'horror', 1304930),
+   515→  makeGame('dead-by-daylight', 'Dead by Daylight', 'ديد باي دايلايت', STEAM_ICON(381210), 'horror', 381210),
+   516→  makeGame('alien-isolation', 'Alien: Isolation', 'أيلين أيزوليشن', STEAM_ICON(214490), 'horror', 214490),
+   517→  makeGame('amnesia-bunker', 'Amnesia: The Bunker', 'أمنيزيا ذا بنكر', STEAM_ICON(1944430), 'horror', 1944430),
+   518→  makeGame('content-warning', 'Content Warning', 'كونتنت وارنينغ', STEAM_ICON(2300180), 'horror', 2300180),
+   519→  makeGame('sonic-omori', 'OMORI', 'أوموري', STEAM_ICON(1150690), 'horror', 1150690),
+   520→  makeGame('resident-evil4', 'Resident Evil 4', 'ريزدنت إيفل 4', STEAM_ICON(2050650), 'horror', 2050650),
+   521→  makeGame('l4d2', 'Left 4 Dead 2', 'ليفت فور ديد 2', STEAM_ICON(550), 'horror', 550),
+   522→];
+   523→
+   524→// ============================================================
+   525→// GAMES - RPG / ACTION
+   526→// ============================================================
+   527→const RPG_GAMES: EntertainmentService[] = [
+   528→  makeGame('elden-ring', 'Elden Ring', 'إلدن رينغ', STEAM_ICON(1245620), 'rpg', 1245620),
+   529→  makeGame('baldurs-gate3', 'Baldur\'s Gate 3', 'بالدورز غيت 3', STEAM_ICON(1086940), 'rpg', 1086940),
+   530→  makeGame('cyberpunk2077', 'Cyberpunk 2077', 'سايبربانك 2077', STEAM_ICON(1091500), 'rpg', 1091500),
+   531→  makeGame('witcher3', 'The Witcher 3', 'ذا ويتشر 3', STEAM_ICON(292030), 'rpg', 292030),
+   532→  makeGame('skyrim', 'Skyrim Special Edition', 'سكايريم', STEAM_ICON(489830), 'rpg', 489830),
+   533→  makeGame('gta5', 'GTA V', 'جي تي أي 5', STEAM_ICON(271590), 'rpg', 271590),
+   534→  makeGame('red-dead2', 'Red Dead Redemption 2', 'ريد ديد 2', STEAM_ICON(1174180), 'rpg', 1174180),
+   535→  makeGame('hogwarts', 'Hogwarts Legacy', 'هوغوورتس ليجاسي', STEAM_ICON(990080), 'rpg', 990080),
+   536→  makeGame('dragon-dogma2', 'Dragon\'s Dogma 2', 'دراغونز دوغما 2', STEAM_ICON(1533290), 'rpg', 1533290),
+   537→  makeGame('sekiro', 'Sekiro', 'سيكيرو', STEAM_ICON(814380), 'rpg', 814380),
+   538→  makeGame('darksouls3', 'Dark Souls III', 'دارك سولز 3', STEAM_ICON(374320), 'rpg', 374320),
+   539→  makeGame('lies-of-p', 'Lies of P', 'لايز أوف بي', STEAM_ICON(1568590), 'rpg', 1568590),
+   540→  makeGame('remnant2', 'Remnant 2', 'ريمنانت 2', STEAM_ICON(1282100), 'rpg', 1282100),
+   541→  makeGame('starfield', 'Starfield', 'ستارفيلد', STEAM_ICON(1716740), 'rpg', 1716740),
+   542→  makeGame('avowed', 'Avowed', 'أفود', PLACEHOLDER('AVO'), 'rpg'),
+   543→  makeGame('diablo4', 'Diablo IV', 'ديابلو 4', PLACEHOLDER('D4'), 'rpg'),
+   544→  makeGame('monster-hunter', 'Monster Hunter: World', 'مونستر هنتر', STEAM_ICON(582010), 'rpg', 582010),
+   545→  makeGame('ac-valhalla', 'Assassin\'s Creed Valhalla', 'أساسنز كريد فالهالا', PLACEHOLDER('ACV'), 'rpg'),
+   546→  makeGame('ac-mirage', 'Assassin\'s Creed Mirage', 'أساسنز كريد ميراج', PLACEHOLDER('ACM'), 'rpg'),
+   547→  makeGame('fc25-mob', 'Final Fantasy XVI', 'فاينل فانتاسي 16', PLACEHOLDER('FF16'), 'rpg'),
+   548→  makeGame('persona5', 'Persona 5 Royal', 'بيرسونا 5 رويال', STEAM_ICON(1687950), 'rpg', 1687950),
+   549→  makeGame('like-dragon', 'Like a Dragon: Infinite Wealth', 'لايك أ دراغون', PLACEHOLDER('LAD'), 'rpg'),
+   550→  makeGame('horizon-fw', 'Horizon Forbidden West', 'هورايزن فورbidden ويست', PLACEHOLDER('HFW'), 'rpg'),
+   551→  makeGame('god-of-war', 'God of War Ragnarok', 'غود أوف وور راغناروك', STEAM_ICON(2322010), 'rpg', 2322010),
+   552→  makeGame('ghost-of-tsushima', 'Ghost of Tsushima', 'غوست أوف تسوشيما', PLACEHOLDER('GOT'), 'rpg'),
+   553→];
+   554→
+   555→// ============================================================
+   556→// GAMES - COZY / CASUAL
+   557→// ============================================================
+   558→const COZY_GAMES: EntertainmentService[] = [
+   559→  makeGame('animal-well', 'Animal Well', 'أنيمال ويل', STEAM_ICON(1818190), 'casual', 1818190),
+   560→  makeGame('dave-diver', 'Dave the Diver', 'ديف ذا دايفر', STEAM_ICON(1868140), 'casual', 1868140),
+   561→  makeGame('palia', 'Palia', 'باليا', PLACEHOLDER('PA'), 'casual'),
+   562→  makeGame('abzu', 'ABZU', 'أبزو', STEAM_ICON(384190), 'casual', 384190),
+   563→  makeGame('journey', 'Journey', 'جورني', PLACEHOLDER('JRN'), 'casual'),
+   564→  makeGame('firewatch', 'Firewatch', 'فاير ووتش', STEAM_ICON(383870), 'casual', 383870),
+   565→  makeGame('inside', 'INSIDE', 'إنسايد', STEAM_ICON(304430), 'casual', 304430),
+   566→  makeGame('celeste', 'Celeste', 'سيليست', STEAM_ICON(504230), 'casual', 504230),
+   567→  makeGame('hollow-knight', 'Hollow Knight', 'هولو نايت', STEAM_ICON(367520), 'casual', 367520),
+   568→  makeGame('hades', 'Hades', 'هاديس', STEAM_ICON(1145360), 'casual', 1145360),
+   569→  makeGame('hades2', 'Hades II', 'هاديس 2', STEAM_ICON(1145350), 'casual', 1145350),
+   570→  makeGame('cuphead', 'Cuphead', 'كاب هيد', STEAM_ICON(268910), 'casual', 268910),
+   571→  makeGame('it-takes-two', 'It Takes Two', 'إت تايكس تو', STEAM_ICON(1426210), 'casual', 1426210),
+   572→  makeGame('unpacking', 'Unpacking', 'أنباكنغ', STEAM_ICON(1135690), 'casual', 1135690),
+   573→  makeGame('spiritfarer', 'Spiritfarer', 'سبيريت فارير', STEAM_ICON(972660), 'casual', 972660),
+   574→  makeGame('gris', 'Gris', 'غريس', STEAM_ICON(883710), 'casual', 883710),
+   575→  makeGame('ori-wotw', 'Ori and the Will of the Wisps', 'أوري', STEAM_ICON(1057090), 'casual', 1057090),
+   576→  makeGame('outer-wilds', 'Outer Wilds', 'أوتر ويلدز', STEAM_ICON(753640), 'casual', 753640),
+   577→  makeGame('tunic', 'Tunic', 'تيونيك', STEAM_ICON(553940), 'casual', 553940),
+   578→  makeGame('cult-of-lamb', 'Cult of the Lamb', 'كالت أوف ذا لامب', STEAM_ICON(1313140), 'casual', 1313140),
+   579→];
+   580→
+   581→// ============================================================
+   582→// GAMES - MORE MOBILE GAMES
+   583→// ============================================================
+   584→const MOBILE_GAMES: EntertainmentService[] = [
+   585→  makeGame('clash-royale', 'Clash Royale', 'كلاش رويال', PLACEHOLDER('CR'), 'mobile'),
+   586→  makeGame('clash-of-clans', 'Clash of Clans', 'كلاش أوف كلانز', PLACEHOLDER('COC'), 'mobile'),
+   587→  makeGame('brawl-stars', 'Brawl Stars', 'براول ستارز', PLACEHOLDER('BS'), 'mobile'),
+   588→  makeGame('among-us', 'Among Us', 'أمونغ أس', STEAM_ICON(945360), 'mobile', 945360),
+   589→  makeGame('candy-crush', 'Candy Crush Saga', 'كاندي كراش', PLACEHOLDER('CC'), 'mobile'),
+   590→  makeGame('subway-surfers', 'Subway Surfers', 'سبواي سرفرز', PLACEHOLDER('SS'), 'mobile'),
+   591→  makeGame('pokemon-go', 'Pokemon GO', 'بوكيمون غو', PLACEHOLDER('PGO'), 'mobile'),
+   592→  makeGame('clash-mini', 'Clash Mini', 'كلاش ميني', PLACEHOLDER('CM'), 'mobile'),
+   593→  makeGame('hay-day', 'Hay Day', 'هاي داي', PLACEHOLDER('HD'), 'mobile'),
+   594→  makeGame('boom-beach', 'Boom Beach', 'بوم بيتش', PLACEHOLDER('BB'), 'mobile'),
+   595→  makeGame('squad-busters', 'Squad Busters', 'سكواد بسترز', PLACEHOLDER('SB'), 'mobile'),
+   596→  makeGame('afk-arena', 'AFK Arena', 'إيه إف كيه أرينا', PLACEHOLDER('AFK'), 'mobile'),
+   597→  makeGame('rise-of-kingdoms', 'Rise of Kingdoms', 'رايز أوف كينغدومز', PLACEHOLDER('ROK'), 'mobile'),
+   598→  makeGame('lords-mobile', 'Lords Mobile', 'لوردز موبايل', PLACEHOLDER('LM'), 'mobile'),
+   599→  makeGame('state-of-survival', 'State of Survival', 'ستيت أوف سرفايفل', PLACEHOLDER('SOS'), 'mobile'),
+   600→  makeGame('evony', 'Evony', 'يفوني', PLACEHOLDER('EV'), 'mobile'),
+   601→  makeGame('magnifico', 'Magnifico', 'ماغنيفيكو', PLACEHOLDER('MAG'), 'mobile'),
+   602→  makeGame('township', 'Township', 'تاون شيب', PLACEHOLDER('TWN'), 'mobile'),
+   603→  makeGame('merge-mansion', 'Merge Mansion', 'ميرج مانشن', PLACEHOLDER('MM'), 'mobile'),
+   604→  makeGame('monopoly-go', 'Monopoly GO!', 'مونوبولي غو', PLACEHOLDER('MGO'), 'mobile'),
+   605→  makeGame('royal-match', 'Royal Match', 'رويال ماتش', PLACEHOLDER('RM'), 'mobile'),
+   606→  makeGame('gardenscapes', 'Gardenscapes', 'غاردن سكيبز', PLACEHOLDER('GS'), 'mobile'),
+   607→  makeGame('homescapes', 'Homescapes', 'هوم سكيبز', PLACEHOLDER('HS'), 'mobile'),
+   608→  makeGame('coin-master', 'Coin Master', 'كوين ماستر', PLACEHOLDER('CM'), 'mobile'),
+   609→  makeGame('wordle', 'Wordle', 'ووردل', PLACEHOLDER('WDL'), 'mobile'),
+   610→  makeGame('wordscapes', 'Wordscapes', 'ووردسكيبز', PLACEHOLDER('WSC'), 'mobile'),
+   611→  makeGame('8-ball-pool', '8 Ball Pool', '8 بول بول', PLACEHOLDER('8BP'), 'mobile'),
+   612→  makeGame('ludo-king', 'Ludo King', 'لودو كينغ', PLACEHOLDER('LK'), 'mobile'),
+   613→  makeGame('uno', 'UNO!', 'أونو', PLACEHOLDER('UNO'), 'mobile'),
+   614→  makeGame('parchisi', 'Parchisi STAR', 'بارتشيزي', PLACEHOLDER('PCH'), 'mobile'),
+   615→];
+   616→
+   617→// ============================================================
+   618→// GAMES - INDIE / MORE
+   619→// ============================================================
+   620→const INDIE_GAMES: EntertainmentService[] = [
+   621→  makeGame('undertale', 'Undertale', 'أندرتيال', STEAM_ICON(391540), 'indie', 391540),
+   622→  makeGame('stardew', 'Stardew Valley', 'ستاردو فالي', STEAM_ICON(413150), 'indie', 413150),
+   623→  makeGame('binding-isaac', 'The Binding of Isaac', 'ذا بايندنغ أوف آيزاك', STEAM_ICON(250900), 'indie', 250900),
+   624→  makeGame('vampire-survivors', 'Vampire Survivors', 'فامباير سرفايفرز', STEAM_ICON(1794680), 'indie', 1794680),
+   625→  makeGame('balatro', 'Balatro', 'بالاترو', STEAM_ICON(2379780), 'indie', 2379780),
+   626→  makeGame('slay-the-spire', 'Slay the Spire', 'سلاي ذا سباير', STEAM_ICON(646570), 'indie', 646570),
+   627→  makeGame('dead-cells', 'Dead Cells', 'ديد سيلز', STEAM_ICON(588650), 'indie', 588650),
+   628→  makeGame('hollow-knight-silk', 'Hollow Knight: Silksong', 'هولو نايت سيلكسونغ', PLACEHOLDER('HK2'), 'indie'),
+   629→  makeGame('shovel-knight', 'Shovel Knight', 'شوفل نايت', STEAM_ICON(250760), 'indie', 250760),
+   630→  makeGame('super-meat-boy', 'Super Meat Boy', 'سوبر ميت بوي', STEAM_ICON(40800), 'indie', 40800),
+   631→  makeGame('poe2', 'Palworld', 'بالورلد', STEAM_ICON(1623730), 'indie', 1623730),
+   632→  makeGame('limbo', 'LIMBO', 'ليمبو', STEAM_ICON(48000), 'indie', 48000),
+   633→  makeGame('braid', 'Braid', 'بريد', STEAM_ICON(26800), 'indie', 26800),
+   634→  makeGame('fez', 'FEZ', 'فيز', STEAM_ICON(224760), 'indie', 224760),
+   635→  makeGame('the-witness', 'The Witness', 'ذا ويتنس', STEAM_ICON(210970), 'indie', 210970),
+   636→  makeGame('return-of-obra', 'Return of the Obra Dinn', 'عودة أوبرا دين', STEAM_ICON(802130), 'indie', 802130),
+   637→  makeGame('disco-elysium', 'Disco Elysium', 'ديسكو إليسيوم', STEAM_ICON(632470), 'indie', 632470),
+   638→  makeGame('inscryption', 'Inscryption', 'إنسكريبشن', STEAM_ICON(1092790), 'indie', 1092790),
+   639→  makeGame('beasts-brawn', 'Manor Lords', 'مانور لوردز', STEAM_ICON(1363080), 'indie', 1363080),
+   640→  makeGame('peaks-yeti', 'A Short Hike', 'إيه شورت هايك', STEAM_ICON(1055540), 'indie', 1055540),
+   641→];
+   642→
+   643→// ============================================================
+   644→// STREAMING SERVICES
+   645→// ============================================================
+   646→const STREAMING_SERVICES: EntertainmentService[] = [
+   647→  makeGame('netflix', 'Netflix', 'نتفليكس', PLACEHOLDER('NFLX'), 'streaming'),
+   648→  makeGame('disney-plus', 'Disney+', 'ديزني+', PLACEHOLDER('D+'), 'streaming'),
+   649→  makeGame('hbo-max', 'HBO Max', 'إتش بي أو ماكس', PLACEHOLDER('HBO'), 'streaming'),
+   650→  makeGame('hulu', 'Hulu', 'هولو', PLACEHOLDER('HULU'), 'streaming'),
+   651→  makeGame('crunchyroll', 'Crunchyroll', 'كرانشي رول', PLACEHOLDER('CR'), 'streaming'),
+   652→  makeGame('prime-video', 'Amazon Prime Video', 'أمازون برايم', PLACEHOLDER('PV'), 'streaming'),
+   653→  makeGame('paramount', 'Paramount+', 'بارماونت+', PLACEHOLDER('P+'), 'streaming'),
+   654→  makeGame('apple-tv', 'Apple TV+', 'أبل تي في+', PLACEHOLDER('ATV'), 'streaming'),
+   655→  makeGame('peacock', 'Peacock', 'بيكوك', PLACEHOLDER('PCK'), 'streaming'),
+   656→  makeGame('youtube-premium', 'YouTube Premium', 'يوتيوب بريميوم', PLACEHOLDER('YT'), 'streaming'),
+   657→  makeGame('twitch-turbo', 'Twitch Turbo', 'تويتش توربو', PLACEHOLDER('TW'), 'streaming'),
+   658→  makeGame('funimation', 'Funimation', 'فونيميشن', PLACEHOLDER('FUN'), 'streaming'),
+   659→  makeGame('vrv', 'VRV', 'في آر في', PLACEHOLDER('VRV'), 'streaming'),
+   660→  makeGame('viki', 'Rakuten Viki', 'فيكي', PLACEHOLDER('VIK'), 'streaming'),
+   661→  makeGame('iqiyi', 'iQIYI', 'آي تشي يي', PLACEHOLDER('IQ'), 'streaming'),
+   662→  makeGame('wetv', 'WeTV', 'وي تي في', PLACEHOLDER('WTV'), 'streaming'),
+   663→  makeGame('shahid', 'Shahid', 'شاهد', PLACEHOLDER('SHD'), 'streaming'),
+   664→  makeGame('starzplay', 'STARZPLAY', 'ستارزبلاي', PLACEHOLDER('STZ'), 'streaming'),
+   665→].map(s => ({
+   666→  ...s,
+   667→  packages: [
+   668→    pkg(`${s.id}-1m`, 'شهر واحد', '1 Month', 9.99, `اشتراك شهر واحد ${s.name}`, `1 Month ${s.name}`),
+   669→    pkg(`${s.id}-3m`, '3 أشهر', '3 Months', 24.99, `اشتراك 3 أشهر ${s.name}`, `3 Months ${s.name}`),
+   670→    pkg(`${s.id}-12m`, 'سنة كاملة', '12 Months', 79.99, `اشتراك سنة كاملة ${s.name}`, `12 Months ${s.name}`),
+   671→  ],
+   672→}));
+   673→
+   674→// ============================================================
+   675→// SOCIAL SERVICES
+   676→// ============================================================
+   677→const SOCIAL_SERVICES: EntertainmentService[] = [
+   678→  makeGame('tiktok-coins', 'TikTok Coins', 'عملات تيك توك', PLACEHOLDER('TT'), 'social'),
+   679→  makeGame('snapchat-plus', 'Snapchat+', 'سناب شات+', PLACEHOLDER('SC'), 'social'),
+   680→  makeGame('discord-nitro', 'Discord Nitro', 'ديسكورد نيترو', PLACEHOLDER('DC'), 'social'),
+   681→  makeGame('telegram-premium', 'Telegram Premium', 'تيليجرام بريميوم', PLACEHOLDER('TG'), 'social'),
+   682→  makeGame('instagram-boost', 'Instagram Boost', 'إنستغرام بوست', PLACEHOLDER('IG'), 'social'),
+   683→  makeGame('twitter-blue', 'X Premium', 'إكس بريميوم', PLACEHOLDER('X'), 'social'),
+   684→  makeGame('linkedin-premium', 'LinkedIn Premium', 'لينكدإن بريميوم', PLACEHOLDER('LI'), 'social'),
+   685→  makeGame('reddit-premium', 'Reddit Premium', 'ريديت بريميوم', PLACEHOLDER('RD'), 'social'),
+   686→  makeGame('pinterest-biz', 'Pinterest Business', 'بينتريست بزنس', PLACEHOLDER('PIN'), 'social'),
+   687→  makeGame('whatsapp-biz', 'WhatsApp Business API', 'واتساب بزنس', PLACEHOLDER('WA'), 'social'),
+   688→  makeGame('threads-boost', 'Threads Boost', 'ثريدز بوست', PLACEHOLDER('TH'), 'social'),
+   689→  makeGame('twitch-sub', 'Twitch Subscription', 'اشتراك تويتش', PLACEHOLDER('TWS'), 'social'),
+   690→].map(s => ({
+   691→  ...s,
+   692→  packages: [
+   693→    pkg(`${s.id}-1m`, 'شهر واحد', '1 Month', 4.99, `اشتراك شهر ${s.name}`, `1 Month ${s.name}`),
+   694→    pkg(`${s.id}-3m`, '3 أشهر', '3 Months', 12.99, `اشتراك 3 أشهر ${s.name}`, `3 Months ${s.name}`),
+   695→    pkg(`${s.id}-12m`, 'سنة كاملة', '12 Months', 39.99, `اشتراك سنة ${s.name}`, `12 Months ${s.name}`),
+   696→  ],
+   697→}));
+   698→
+   699→// ============================================================
+   700→// MUSIC SERVICES
+   701→// ============================================================
+   702→const MUSIC_SERVICES: EntertainmentService[] = [
+   703→  makeGame('spotify', 'Spotify Premium', 'سبوتيفاي بريميوم', PLACEHOLDER('SP'), 'music'),
+   704→  makeGame('apple-music', 'Apple Music', 'أبل ميوزك', PLACEHOLDER('AM'), 'music'),
+   705→  makeGame('youtube-music', 'YouTube Music', 'يوتيوب ميوزك', PLACEHOLDER('YM'), 'music'),
+   706→  makeGame('tidal', 'Tidal', 'تايدل', PLACEHOLDER('TD'), 'music'),
+   707→  makeGame('deezer', 'Deezer', 'ديزر', PLACEHOLDER('DZ'), 'music'),
+   708→  makeGame('soundcloud-go', 'SoundCloud Go+', 'ساوند كلاود', PLACEHOLDER('SC'), 'music'),
+   709→  makeGame('amazon-music', 'Amazon Music', 'أمازون ميوزك', PLACEHOLDER('AZM'), 'music'),
+   710→  makeGame('pandora', 'Pandora', 'باندورا', PLACEHOLDER('PND'), 'music'),
+   711→  makeGame('anghami', 'Anghami', 'أنغامي', PLACEHOLDER('ANG'), 'music'),
+   712→  makeGame('yandex-music', 'Yandex Music', 'ياندكس ميوزك', PLACEHOLDER('YDX'), 'music'),
+   713→].map(s => ({
+   714→  ...s,
+   715→  packages: [
+   716→    pkg(`${s.id}-1m`, 'شهر واحد', '1 Month', 9.99, `اشتراك شهر ${s.name}`, `1 Month ${s.name}`),
+   717→    pkg(`${s.id}-3m`, '3 أشهر', '3 Months', 24.99, `اشتراك 3 أشهر ${s.name}`, `3 Months ${s.name}`),
+   718→    pkg(`${s.id}-12m`, 'سنة كاملة', '12 Months', 89.99, `اشتراك سنة ${s.name}`, `12 Months ${s.name}`),
+   719→    pkg(`${s.id}-family`, 'خطة عائلية', 'Family Plan', 14.99, `خطة عائلية ${s.name}`, `Family Plan ${s.name}`),
+   720→  ],
+   721→}));
+   722→
+   723→// ============================================================
+   724→// GIFT CARDS
+   725→// ============================================================
+   726→const GIFT_CARD_SERVICES: EntertainmentService[] = [
+   727→  makeGame('steam-card', 'Steam Gift Card', 'بطاقة Steam', PLACEHOLDER('STC'), 'gift-cards'),
+   728→  makeGame('psn-card', 'PlayStation Store', 'بطاقة بلايستيشن', PLACEHOLDER('PSN'), 'gift-cards'),
+   729→  makeGame('xbox-card', 'Xbox Gift Card', 'بطاقة إكس بوكس', PLACEHOLDER('XBX'), 'gift-cards'),
+   730→  makeGame('nintendo-card', 'Nintendo eShop', 'بطاقة نينتندو', PLACEHOLDER('NTD'), 'gift-cards'),
+   731→  makeGame('google-play', 'Google Play', 'بطاقة جوجل بلاي', PLACEHOLDER('GP'), 'gift-cards'),
+   732→  makeGame('apple-card', 'Apple Gift Card', 'بطاقة أبل', PLACEHOLDER('APL'), 'gift-cards'),
+   733→  makeGame('amazon-card', 'Amazon Gift Card', 'بطاقة أمازون', PLACEHOLDER('AMZ'), 'gift-cards'),
+   734→  makeGame('roblox-card', 'Roblox Gift Card', 'بطاقة روبلوكس', PLACEHOLDER('RBLX'), 'gift-cards'),
+   735→  makeGame('epic-games', 'Epic Games', 'بطاقة إيبك غيمز', PLACEHOLDER('EPIC'), 'gift-cards'),
+   736→  makeGame('spotify-card', 'Spotify Gift Card', 'بطاقة سبوتيفاي', PLACEHOLDER('SPC'), 'gift-cards'),
+   737→  makeGame('netflix-card', 'Netflix Gift Card', 'بطاقة نتفليكس', PLACEHOLDER('NFLXC'), 'gift-cards'),
+   738→  makeGame('visa-card', 'Visa Virtual', 'فيزا افتراضية', PLACEHOLDER('VISA'), 'gift-cards'),
+   739→  makeGame('mastercard-card', 'Mastercard Virtual', 'ماستركارد افتراضية', PLACEHOLDER('MC'), 'gift-cards'),
+   740→  makeGame('paypal-card', 'PayPal Gift Card', 'بطاقة باي بال', PLACEHOLDER('PP'), 'gift-cards'),
+   741→].map(s => ({
+   742→  ...s,
+   743→  packages: [
+   744→    pkg(`${s.id}-5`, '5 دولار', '$5', 5.00, `بطاقة ${s.name} بقيمة 5$`, `$5 ${s.name}`),
+   745→    pkg(`${s.id}-10`, '10 دولار', '$10', 10.00, `بطاقة ${s.name} بقيمة 10$`, `$10 ${s.name}`),
+   746→    pkg(`${s.id}-25`, '25 دولار', '$25', 25.00, `بطاقة ${s.name} بقيمة 25$`, `$25 ${s.name}`),
+   747→    pkg(`${s.id}-50`, '50 دولار', '$50', 50.00, `بطاقة ${s.name} بقيمة 50$`, `$50 ${s.name}`),
+   748→    pkg(`${s.id}-100`, '100 دولار', '$100', 100.00, `بطاقة ${s.name} بقيمة 100$`, `$100 ${s.name}`),
+   749→  ],
+   750→}));
+   751→
+   752→// ============================================================
+   753→// DIGITAL WALLETS
+   754→// ============================================================
+   755→const DIGITAL_WALLET_SERVICES: EntertainmentService[] = [
+   756→  makeGame('paypal-topup', 'PayPal Top-up', 'شحن باي بال', PLACEHOLDER('PP'), 'digital-wallets'),
+   757→  makeGame('skrill-topup', 'Skrill Top-up', 'شحن سكريل', PLACEHOLDER('SKR'), 'digital-wallets'),
+   758→  makeGame('neteller-topup', 'NETELLER Top-up', 'شحن نتيلر', PLACEHOLDER('NTL'), 'digital-wallets'),
+   759→  makeGame('wise-topup', 'Wise Top-up', 'شحن وايز', PLACEHOLDER('WSE'), 'digital-wallets'),
+   760→  makeGame('payoneer-topup', 'Payoneer Top-up', 'شحن بايونير', PLACEHOLDER('PYR'), 'digital-wallets'),
+   761→  makeGame('binance-topup', 'Binance Top-up', 'شحن بينانس', PLACEHOLDER('BNB'), 'digital-wallets'),
+   762→  makeGame('usdt-trc20', 'USDT TRC20', 'USDT TRC20', PLACEHOLDER('USDT'), 'digital-wallets'),
+   763→  makeGame('usdt-erc20', 'USDT ERC20', 'USDT ERC20', PLACEHOLDER('USDT2'), 'digital-wallets'),
+   764→  makeGame('usdc-topup', 'USDC', 'USDC', PLACEHOLDER('USDC'), 'digital-wallets'),
+   765→  makeGame('btc-topup', 'Bitcoin', 'بيتكوين', PLACEHOLDER('BTC'), 'digital-wallets'),
+   766→  makeGame('eth-topup', 'Ethereum', 'إيثريوم', PLACEHOLDER('ETH'), 'digital-wallets'),
+   767→].map(s => ({
+   768→  ...s,
+   769→  packages: [
+   770→    pkg(`${s.id}-10`, '10 دولار', '$10', 10.00, `شحن 10$`, `$10 Top-up`),
+   771→    pkg(`${s.id}-25`, '25 دولار', '$25', 25.00, `شحن 25$`, `$25 Top-up`),
+   772→    pkg(`${s.id}-50`, '50 دولار', '$50', 50.00, `شحن 50$`, `$50 Top-up`),
+   773→    pkg(`${s.id}-100`, '100 دولار', '$100', 100.00, `شحن 100$`, `$100 Top-up`),
+   774→    pkg(`${s.id}-250`, '250 دولار', '$250', 250.00, `شحن 250$`, `$250 Top-up`),
+   775→    pkg(`${s.id}-500`, '500 دولار', '$500', 500.00, `شحن 500$`, `$500 Top-up`),
+   776→  ],
+   777→}));
+   778→
+   779→// ============================================================
+   780→// COMBINE ALL SERVICES
+   781→// ============================================================
+   782→export const ENTERTAINMENT_SERVICES: EntertainmentService[] = [
+   783→  ...BATTLE_ROYALE_GAMES,
+   784→  ...FPS_GAMES,
+   785→  ...MOBA_GAMES,
+   786→  ...GACHA_GAMES,
+   787→  ...SURVIVAL_GAMES,
+   788→  ...MMORPG_GAMES,
+   789→  ...RACING_GAMES,
+   790→  ...SPORTS_GAMES,
+   791→  ...STRATEGY_GAMES,
+   792→  ...SANDBOX_GAMES,
+   793→  ...HORROR_GAMES,
+   794→  ...RPG_GAMES,
+   795→  ...COZY_GAMES,
+   796→  ...MOBILE_GAMES,
+   797→  ...INDIE_GAMES,
+   798→  ...STREAMING_SERVICES,
+   799→  ...SOCIAL_SERVICES,
+   800→  ...MUSIC_SERVICES,
+   801→  ...GIFT_CARD_SERVICES,
+   802→  ...DIGITAL_WALLET_SERVICES,
+   803→];
+   804→

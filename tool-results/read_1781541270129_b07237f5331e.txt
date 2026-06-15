@@ -1,0 +1,864 @@
+   899→  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+   900→  user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+   901→  
+   902→  document_type TEXT NOT NULL CHECK (document_type IN ('national_id_front', 'national_id_back', 'selfie', 'passport', 'utility_bill')),
+   903→  document_url TEXT NOT NULL,
+   904→  
+   905→  status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+   906→  rejection_reason TEXT DEFAULT '',
+   907→  
+   908→  ai_verification_result JSONB DEFAULT '{}',
+   909→  ai_confidence_score NUMERIC(5,2) DEFAULT 0,
+   910→  ai_verified_at TIMESTAMPTZ,
+   911→  
+   912→  reviewed_by UUID REFERENCES public.users(id),
+   913→  reviewed_at TIMESTAMPTZ,
+   914→  
+   915→  created_at TIMESTAMPTZ DEFAULT NOW()
+   916→);
+   917→
+   918→CREATE INDEX IF NOT EXISTS idx_kyc_user ON public.kyc_documents(user_id);
+   919→CREATE INDEX IF NOT EXISTS idx_kyc_status ON public.kyc_documents(status);
+   920→
+   921→-- =====================================================
+   922→-- 32. SOCIAL_LINKS - روابط التواصل
+   923→-- =====================================================
+   924→CREATE TABLE IF NOT EXISTS public.social_links (
+   925→  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+   926→  
+   927→  platform TEXT NOT NULL CHECK (platform IN ('whatsapp', 'telegram', 'facebook', 'twitter', 'instagram', 'tiktok', 'youtube', 'website', 'other')),
+   928→  url TEXT NOT NULL,
+   929→  label TEXT DEFAULT '',
+   930→  icon TEXT DEFAULT '',
+   931→  
+   932→  is_active BOOLEAN DEFAULT TRUE,
+   933→  sort_order INTEGER DEFAULT 0,
+   934→  
+   935→  created_at TIMESTAMPTZ DEFAULT NOW()
+   936→);
+   937→
+   938→-- =====================================================
+   939→-- 33. LEGAL_CONTENT - المحتوى القانوني
+   940→-- =====================================================
+   941→CREATE TABLE IF NOT EXISTS public.legal_content (
+   942→  id TEXT PRIMARY KEY,
+   943→  
+   944→  title TEXT NOT NULL,
+   945→  title_en TEXT DEFAULT '',
+   946→  content TEXT DEFAULT '',
+   947→  content_en TEXT DEFAULT '',
+   948→  
+   949→  is_active BOOLEAN DEFAULT TRUE,
+   950→  
+   951→  updated_at TIMESTAMPTZ DEFAULT NOW()
+   952→);
+   953→
+   954→-- =====================================================
+   955→-- 34. BRANDING - العلامة التجارية
+   956→-- =====================================================
+   957→CREATE TABLE IF NOT EXISTS public.branding (
+   958→  id TEXT PRIMARY KEY DEFAULT 'default',
+   959→  
+   960→  app_name TEXT DEFAULT 'محفظة الجنوب',
+   961→  app_name_en TEXT DEFAULT 'South Wallet',
+   962→  logo_url TEXT DEFAULT '',
+   963→  logo_dark_url TEXT DEFAULT '',
+   964→  favicon_url TEXT DEFAULT '',
+   965→  primary_color TEXT DEFAULT '#5C1A1B',
+   966→  secondary_color TEXT DEFAULT '#8B2252',
+   967→  accent_color TEXT DEFAULT '#D4547A',
+   968→  
+   969→  splash_background TEXT DEFAULT '#3D0F10',
+   970→  
+   971→  updated_at TIMESTAMPTZ DEFAULT NOW()
+   972→);
+   973→
+   974→-- =====================================================
+   975→-- 35. CURRENCY_CARDS - بطاقات العملات
+   976→-- =====================================================
+   977→CREATE TABLE IF NOT EXISTS public.currency_cards (
+   978→  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+   979→  
+   980→  currency TEXT NOT NULL CHECK (currency IN ('YER', 'SAR', 'USD')),
+   981→  card_name TEXT DEFAULT '',
+   982→  
+   983→  gradient_start TEXT DEFAULT '',
+   984→  gradient_end TEXT DEFAULT '',
+   985→  text_color TEXT DEFAULT '#FFFFFF',
+   986→  icon TEXT DEFAULT '',
+   987→  
+   988→  is_active BOOLEAN DEFAULT TRUE,
+   989→  
+   990→  created_at TIMESTAMPTZ DEFAULT NOW()
+   991→);
+   992→
+   993→-- =====================================================
+   994→-- 36. CARD_COLORS - ألوان البطاقات
+   995→-- =====================================================
+   996→CREATE TABLE IF NOT EXISTS public.card_colors (
+   997→  currency TEXT PRIMARY KEY CHECK (currency IN ('YER', 'SAR', 'USD')),
+   998→  
+   999→  primary_color TEXT NOT NULL DEFAULT '#5C1A1B',
+  1000→  secondary_color TEXT NOT NULL DEFAULT '#8B2252',
+  1001→  text_color TEXT NOT NULL DEFAULT '#FFFFFF',
+  1002→  gradient_direction TEXT DEFAULT 'to bottom right',
+  1003→  
+  1004→  updated_at TIMESTAMPTZ DEFAULT NOW()
+  1005→);
+  1006→
+  1007→-- إدخال ألوان افتراضية
+  1008→INSERT INTO public.card_colors (currency, primary_color, secondary_color, text_color) VALUES
+  1009→  ('YER', '#5C1A1B', '#3D0F10', '#FFFFFF'),
+  1010→  ('SAR', '#1A5C2B', '#0F3D1A', '#FFFFFF'),
+  1011→  ('USD', '#1A3A5C', '#0F2540', '#FFFFFF')
+  1012→ON CONFLICT (currency) DO NOTHING;
+  1013→
+  1014→-- =====================================================
+  1015→-- 37. LIMITS - الحدود والسقوف
+  1016→-- =====================================================
+  1017→CREATE TABLE IF NOT EXISTS public.limits (
+  1018→  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  1019→  
+  1020→  limit_type TEXT NOT NULL CHECK (limit_type IN ('daily_deposit', 'daily_withdraw', 'daily_transfer', 'monthly_deposit', 'monthly_withdraw', 'single_transaction', 'min_deposit', 'min_withdraw')),
+  1021→  currency TEXT NOT NULL CHECK (currency IN ('YER', 'SAR', 'USD')),
+  1022→  
+  1023→  min_amount NUMERIC(15,2) DEFAULT 0,
+  1024→  max_amount NUMERIC(15,2) DEFAULT 0,
+  1025→  
+  1026→  user_tier TEXT DEFAULT 'basic' CHECK (user_tier IN ('basic', 'verified', 'premium')),
+  1027→  
+  1028→  is_active BOOLEAN DEFAULT TRUE,
+  1029→  
+  1030→  created_at TIMESTAMPTZ DEFAULT NOW(),
+  1031→  updated_at TIMESTAMPTZ DEFAULT NOW()
+  1032→);
+  1033→
+  1034→-- =====================================================
+  1035→-- 38. USER_GIFT_CODES - قسائم الهدايا بين المستخدمين
+  1036→-- =====================================================
+  1037→CREATE TABLE IF NOT EXISTS public.user_gift_codes (
+  1038→  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  1039→  
+  1040→  sender_id UUID NOT NULL REFERENCES public.users(id),
+  1041→  receiver_id UUID REFERENCES public.users(id),
+  1042→  receiver_phone TEXT DEFAULT '',
+  1043→  
+  1044→  amount NUMERIC(15,2) NOT NULL,
+  1045→  currency TEXT NOT NULL CHECK (currency IN ('YER', 'SAR', 'USD')),
+  1046→  
+  1047→  code TEXT UNIQUE NOT NULL,
+  1048→  message TEXT DEFAULT '',
+  1049→  
+  1050→  status TEXT DEFAULT 'active' CHECK (status IN ('active', 'redeemed', 'expired', 'cancelled')),
+  1051→  expires_at TIMESTAMPTZ,
+  1052→  
+  1053→  redeemed_at TIMESTAMPTZ,
+  1054→  transaction_id UUID REFERENCES public.transactions(id),
+  1055→  
+  1056→  created_at TIMESTAMPTZ DEFAULT NOW()
+  1057→);
+  1058→
+  1059→-- =====================================================
+  1060→-- 39. BULK_CODES - أكواد الجملة
+  1061→-- =====================================================
+  1062→CREATE TABLE IF NOT EXISTS public.bulk_codes (
+  1063→  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  1064→  
+  1065→  provider_id TEXT NOT NULL,
+  1066→  package_id TEXT NOT NULL,
+  1067→  product_name TEXT DEFAULT '',
+  1068→  
+  1069→  codes JSONB NOT NULL DEFAULT '[]',
+  1070→  total_count INTEGER DEFAULT 0,
+  1071→  used_count INTEGER DEFAULT 0,
+  1072→  remaining_count INTEGER DEFAULT 0,
+  1073→  
+  1074→  cost_price NUMERIC(15,2) DEFAULT 0,
+  1075→  currency TEXT DEFAULT 'USD',
+  1076→  
+  1077→  added_by UUID REFERENCES public.users(id),
+  1078→  
+  1079→  created_at TIMESTAMPTZ DEFAULT NOW()
+  1080→);
+  1081→
+  1082→-- =====================================================
+  1083→-- 40. INVESTMENTS - الاستثمارات
+  1084→-- =====================================================
+  1085→CREATE TABLE IF NOT EXISTS public.investments (
+  1086→  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  1087→  user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+  1088→  
+  1089→  amount NUMERIC(15,2) NOT NULL,
+  1090→  currency TEXT NOT NULL CHECK (currency IN ('YER', 'SAR', 'USD')),
+  1091→  
+  1092→  plan_name TEXT DEFAULT '',
+  1093→  daily_return NUMERIC(5,2) DEFAULT 0,
+  1094→  total_return NUMERIC(15,2) DEFAULT 0,
+  1095→  
+  1096→  status TEXT DEFAULT 'active' CHECK (status IN ('active', 'matured', 'cancelled')),
+  1097→  starts_at TIMESTAMPTZ DEFAULT NOW(),
+  1098→  ends_at TIMESTAMPTZ,
+  1099→  
+  1100→  transaction_id UUID REFERENCES public.transactions(id),
+  1101→  
+  1102→  created_at TIMESTAMPTZ DEFAULT NOW()
+  1103→);
+  1104→
+  1105→CREATE INDEX IF NOT EXISTS idx_investments_user ON public.investments(user_id);
+  1106→
+  1107→-- =====================================================
+  1108→-- 41. MAINTENANCE - وضع الصيانة
+  1109→-- =====================================================
+  1110→CREATE TABLE IF NOT EXISTS public.maintenance (
+  1111→  id TEXT PRIMARY KEY DEFAULT 'main',
+  1112→  is_active BOOLEAN DEFAULT FALSE,
+  1113→  message TEXT DEFAULT 'التطبيق حالياً في وضع الصيانة، سنكون بالعودة قريباً...',
+  1114→  estimated_time TEXT DEFAULT '30 دقيقة',
+  1115→  activated_at TIMESTAMPTZ,
+  1116→  activated_by UUID REFERENCES public.users(id)
+  1117→);
+  1118→
+  1119→-- =====================================================
+  1120→-- 42. KILL_SWITCH - مفتاح التوقف الطارئ
+  1121→-- =====================================================
+  1122→CREATE TABLE IF NOT EXISTS public.kill_switch (
+  1123→  id TEXT PRIMARY KEY DEFAULT 'main',
+  1124→  is_active BOOLEAN DEFAULT FALSE,
+  1125→  message TEXT DEFAULT 'التطبيق مغلق مؤقتاً',
+  1126→  activated_at TIMESTAMPTZ,
+  1127→  activated_by UUID REFERENCES public.users(id),
+  1128→  deactivate_at TIMESTAMPTZ,
+  1129→  duration_minutes INTEGER DEFAULT 60
+  1130→);
+  1131→
+  1132→-- =====================================================
+  1133→-- 43. BOTTOM_NAV - شريط التنقل السفلي
+  1134→-- =====================================================
+  1135→CREATE TABLE IF NOT EXISTS public.bottom_nav (
+  1136→  tab_id TEXT PRIMARY KEY,
+  1137→  label TEXT NOT NULL,
+  1138→  icon TEXT DEFAULT '',
+  1139→  is_visible BOOLEAN DEFAULT TRUE,
+  1140→  sort_order INTEGER DEFAULT 0
+  1141→);
+  1142→
+  1143→INSERT INTO public.bottom_nav (tab_id, label, icon, is_visible, sort_order) VALUES
+  1144→  ('home', 'الرئيسية', 'home', TRUE, 1),
+  1145→  ('services', 'الخدمات', 'layout-grid', TRUE, 2),
+  1146→  ('wallet', 'المحفظة', 'wallet', TRUE, 3),
+  1147→  ('account', 'حسابي', 'user', TRUE, 4)
+  1148→ON CONFLICT (tab_id) DO NOTHING;
+  1149→
+  1150→-- =====================================================
+  1151→-- 44. FEATURE_FLAGS - مميزات التطبيق
+  1152→-- =====================================================
+  1153→CREATE TABLE IF NOT EXISTS public.feature_flags (
+  1154→  flag_key TEXT PRIMARY KEY,
+  1155→  is_enabled BOOLEAN DEFAULT TRUE,
+  1156→  description TEXT DEFAULT '',
+  1157→  updated_at TIMESTAMPTZ DEFAULT NOW()
+  1158→);
+  1159→
+  1160→INSERT INTO public.feature_flags (flag_key, is_enabled, description) VALUES
+  1161→  ('servicesEnabled', TRUE, 'تفعيل الخدمات'),
+  1162→  ('depositEnabled', TRUE, 'تفعيل الإيداع'),
+  1163→  ('withdrawEnabled', TRUE, 'تفعيل السحب'),
+  1164→  ('transferEnabled', TRUE, 'تفعيل التحويل'),
+  1165→  ('exchangeEnabled', TRUE, 'تفعيل الصرف'),
+  1166→  ('investmentEnabled', FALSE, 'تفعيل الاستثمار'),
+  1167→  ('giftCodesEnabled', TRUE, 'تفعيل أكواد الهدايا'),
+  1168→  ('promoEnabled', TRUE, 'تفعيل العروض'),
+  1169→  ('qrPaymentEnabled', FALSE, 'تفعيل الدفع QR')
+  1170→ON CONFLICT (flag_key) DO NOTHING;
+  1171→
+  1172→-- =====================================================
+  1173→-- 45. WALLET_SERVICES - خدمات المحفظة
+  1174→-- =====================================================
+  1175→CREATE TABLE IF NOT EXISTS public.wallet_services (
+  1176→  id TEXT PRIMARY KEY,
+  1177→  name TEXT NOT NULL,
+  1178→  name_en TEXT DEFAULT '',
+  1179→  description TEXT DEFAULT '',
+  1180→  icon TEXT DEFAULT '',
+  1181→  color TEXT DEFAULT '#5C1A1B',
+  1182→  
+  1183→  type TEXT DEFAULT 'wallet' CHECK (type IN ('wallet', 'transfer', 'exchange', 'payment', 'savings')),
+  1184→  
+  1185→  is_active BOOLEAN DEFAULT TRUE,
+  1186→  sort_order INTEGER DEFAULT 0,
+  1187→  
+  1188→  config JSONB DEFAULT '{}',
+  1189→  
+  1190→  created_at TIMESTAMPTZ DEFAULT NOW(),
+  1191→  updated_at TIMESTAMPTZ DEFAULT NOW()
+  1192→);
+  1193→
+  1194→-- =====================================================
+  1195→-- 46. VISIBILITY - إعدادات الإخفاء
+  1196→-- =====================================================
+  1197→CREATE TABLE IF NOT EXISTS public.visibility (
+  1198→  target_type TEXT NOT NULL CHECK (target_type IN ('section', 'provider', 'feature', 'service')),
+  1199→  target_id TEXT NOT NULL,
+  1200→  is_visible BOOLEAN DEFAULT TRUE,
+  1201→  
+  1202→  PRIMARY KEY (target_type, target_id)
+  1203→);
+  1204→
+  1205→-- =====================================================
+  1206→-- 47. INSTANT_RECHARGE - الشحن الفوري
+  1207→-- =====================================================
+  1208→CREATE TABLE IF NOT EXISTS public.instant_recharge (
+  1209→  id TEXT PRIMARY KEY,
+  1210→  provider_id TEXT NOT NULL,
+  1211→  name TEXT NOT NULL,
+  1212→  name_en TEXT DEFAULT '',
+  1213→  
+  1214→  price_usd NUMERIC(15,2) DEFAULT 0,
+  1215→  price_yer NUMERIC(15,2) DEFAULT 0,
+  1216→  price_sar NUMERIC(15,2) DEFAULT 0,
+  1217→  
+  1218→  data_amount TEXT DEFAULT '',
+  1219→  validity TEXT DEFAULT '',
+  1220→  
+  1221→  is_active BOOLEAN DEFAULT TRUE,
+  1222→  sort_order INTEGER DEFAULT 0,
+  1223→  
+  1224→  created_at TIMESTAMPTZ DEFAULT NOW()
+  1225→);
+  1226→
+  1227→-- =====================================================
+  1228→-- 48. BACKUP_LOG - سجل النسخ الاحتياطي
+  1229→-- =====================================================
+  1230→CREATE TABLE IF NOT EXISTS public.backup_log (
+  1231→  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  1232→  
+  1233→  backup_type TEXT DEFAULT 'manual' CHECK (backup_type IN ('manual', 'auto', 'scheduled')),
+  1234→  size_mb NUMERIC(10,2) DEFAULT 0,
+  1235→  status TEXT DEFAULT 'completed' CHECK (status IN ('started', 'completed', 'failed')),
+  1236→  
+  1237→  storage_path TEXT DEFAULT '',
+  1238→  notes TEXT DEFAULT '',
+  1239→  
+  1240→  created_by UUID REFERENCES public.users(id),
+  1241→  created_at TIMESTAMPTZ DEFAULT NOW()
+  1242→);
+  1243→
+  1244→-- =====================================================
+  1245→-- إدخال بيانات أساسية
+  1246→-- =====================================================
+  1247→
+  1248→-- سعر الصرف الافتراضي
+  1249→INSERT INTO public.exchange_rates (usd_to_yer, usd_to_sar, sar_to_yer, source) 
+  1250→VALUES (530, 3.75, 141.33, 'manual')
+  1251→ON CONFLICT DO NOTHING;
+  1252→
+  1253→-- بيانات العلامة التجارية
+  1254→INSERT INTO public.branding (id, app_name, app_name_en, primary_color, secondary_color, accent_color, splash_background)
+  1255→VALUES ('default', 'محفظة الجنوب', 'South Wallet', '#5C1A1B', '#8B2252', '#D4547A', '#3D0F10')
+  1256→ON CONFLICT (id) DO NOTHING;
+  1257→
+  1258→-- المحتوى القانوني
+  1259→INSERT INTO public.legal_content (id, title, title_en) VALUES
+  1260→  ('terms', 'شروط الاستخدام', 'Terms of Service'),
+  1261→  ('privacy', 'سياسة الخصوصية', 'Privacy Policy'),
+  1262→  ('refund', 'سياسة الاسترداد', 'Refund Policy')
+  1263→ON CONFLICT (id) DO NOTHING;
+  1264→
+  1265→-- إعدادات التطبيق الافتراضية
+  1266→INSERT INTO public.app_config (key, value, description) VALUES
+  1267→  ('forceUpdate', '{"active": false, "minVersion": "1.0.0"}', 'تحديث إجباري'),
+  1268→  ('githubToken', '""', 'توكن GitHub'),
+  1269→  ('projectConfig', '{"appName": "محفظة الجنوب", "packageName": "com.qtbm.south", "latestVersion": "1.0.0", "minVersion": "1.0.0"}', 'إعدادات المشروع')
+  1270→ON CONFLICT (key) DO NOTHING;
+  1271→
+  1272→-- مزود API الافتراضي (G2Bulk)
+  1273→INSERT INTO public.api_providers (id, name, description, website, api_url, api_key, auth_header, is_active, balance, balance_currency, default_commission, commission_type)
+  1274→VALUES (
+  1275→  'g2bulk', 'G2Bulk', 'G2Bulk Digital Products & Gift Cards API', 'https://g2bulk.com',
+  1276→  'https://api.g2bulk.com/v1/', 'API_KEY_PLACEHOLDER',
+  1277→  'X-API-Key', TRUE, 0, 'USD', 5, 'percentage'
+  1278→)
+  1279→ON CONFLICT (id) DO NOTHING;
+  1280→
+  1281→-- =====================================================
+  1282→-- FUNCTIONS - الدوال
+  1283→-- =====================================================
+  1284→
+  1285→-- دالة تحديث التاريخ تلقائياً
+  1286→CREATE OR REPLACE FUNCTION public.update_updated_at()
+  1287→RETURNS TRIGGER AS $$
+  1288→BEGIN
+  1289→  NEW.updated_at = NOW();
+  1290→  RETURN NEW;
+  1291→END;
+  1292→$$ LANGUAGE plpgsql;
+  1293→
+  1294→-- تطبيق التحديث التلقائي على كل الجداول
+  1295→DO $$
+  1296→DECLARE
+  1297→  t TEXT;
+  1298→BEGIN
+  1299→  FOR t IN 
+  1300→    SELECT table_name FROM information_schema.columns 
+  1301→    WHERE table_schema = 'public' AND column_name = 'updated_at' 
+  1302→    GROUP BY table_name
+  1303→  LOOP
+  1304→    EXECUTE format('
+  1305→      CREATE TRIGGER set_updated_at BEFORE UPDATE ON public.%I
+  1306→      FOR EACH ROW EXECUTE FUNCTION public.update_updated_at();
+  1307→    ', t);
+  1308→  END LOOP;
+  1309→END;
+  1310→$$;
+  1311→
+  1312→-- دالة تحديث الأرصدة بشكل آمن
+  1313→CREATE OR REPLACE FUNCTION public.update_user_balance(
+  1314→  p_user_id UUID,
+  1315→  p_currency TEXT,
+  1316→  p_amount NUMERIC,
+  1317→  p_operation TEXT DEFAULT 'add'
+  1318→)
+  1319→RETURNS NUMERIC AS $$
+  1320→DECLARE
+  1321→  new_balance NUMERIC;
+  1322→  col_name TEXT;
+  1323→BEGIN
+  1324→  col_name := CASE p_currency
+  1325→    WHEN 'YER' THEN 'balance_yer'
+  1326→    WHEN 'SAR' THEN 'balance_sar'
+  1327→    WHEN 'USD' THEN 'balance_usd'
+  1328→    ELSE NULL
+  1329→  END;
+  1330→  
+  1331→  IF col_name IS NULL THEN
+  1332→    RAISE EXCEPTION 'Invalid currency: %', p_currency;
+  1333→  END IF;
+  1334→  
+  1335→  EXECUTE format('
+  1336→    UPDATE public.users SET %I = %s WHERE id = $1 RETURNING %I
+  1337→  ', col_name,
+  1338→    CASE p_operation WHEN 'add' THEN format('%I + $2', col_name) ELSE format('%I - $2', col_name) END,
+  1339→    col_name
+  1340→  ) INTO new_balance USING p_user_id, ABS(p_amount);
+  1341→  
+  1342→  RETURN new_balance;
+  1343→END;
+  1344→$$ LANGUAGE plpgsql SECURITY DEFINER;
+  1345→
+  1346→-- دالة إنشاء معاملة
+  1347→CREATE OR REPLACE FUNCTION public.create_transaction(
+  1348→  p_user_id UUID,
+  1349→  p_type TEXT,
+  1350→  p_amount NUMERIC,
+  1351→  p_currency TEXT,
+  1352→  p_from_user_id UUID DEFAULT NULL,
+  1353→  p_to_user_id UUID DEFAULT NULL,
+  1354→  p_description TEXT DEFAULT '',
+  1355→  p_reference TEXT DEFAULT ''
+  1356→)
+  1357→RETURNS UUID AS $$
+  1358→DECLARE
+  1359→  tx_id UUID;
+  1360→BEGIN
+  1361→  INSERT INTO public.transactions (
+  1362→    user_id, type, amount, currency, 
+  1363→    from_user_id, to_user_id,
+  1364→    description, reference_number, status
+  1365→  ) VALUES (
+  1366→    p_user_id, p_type, p_amount, p_currency,
+  1367→    p_from_user_id, p_to_user_id,
+  1368→    p_description, p_reference, 'completed'
+  1369→  ) RETURNING id INTO tx_id;
+  1370→  
+  1371→  RETURN tx_id;
+  1372→END;
+  1373→$$ LANGUAGE plpgsql SECURITY DEFINER;
+  1374→
+  1375→-- دالة الحصول على إحصائيات لوحة التحكم
+  1376→CREATE OR REPLACE FUNCTION public.get_dashboard_stats()
+  1377→RETURNS JSON AS $$
+  1378→DECLARE
+  1379→  result JSON;
+  1380→BEGIN
+  1381→  SELECT json_build_object(
+  1382→    'total_users', (SELECT COUNT(*) FROM public.users WHERE role = 'user'),
+  1383→    'total_balance_yer', (SELECT COALESCE(SUM(balance_yer), 0) FROM public.users),
+  1384→    'total_balance_sar', (SELECT COALESCE(SUM(balance_sar), 0) FROM public.users),
+  1385→    'total_balance_usd', (SELECT COALESCE(SUM(balance_usd), 0) FROM public.users),
+  1386→    'pending_deposits', (SELECT COUNT(*) FROM public.deposit_requests WHERE status = 'pending'),
+  1387→    'pending_withdraws', (SELECT COUNT(*) FROM public.withdraw_requests WHERE status = 'pending'),
+  1388→    'pending_orders', (SELECT COUNT(*) FROM public.orders WHERE status = 'pending'),
+  1389→    'pending_kyc', (SELECT COUNT(*) FROM public.users WHERE kyc_status = 'submitted'),
+  1390→    'today_transactions', (SELECT COUNT(*) FROM public.transactions WHERE created_at >= CURRENT_DATE),
+  1391→    'today_revenue_usd', (SELECT COALESCE(SUM(commission_amount), 0) FROM public.commission_log WHERE created_at >= CURRENT_DATE)
+  1392→  ) INTO result;
+  1393→  
+  1394→  RETURN result;
+  1395→END;
+  1396→$$ LANGUAGE plpgsql SECURITY DEFINER;
+  1397→
+  1398→-- دالة تحويل العملات
+  1399→CREATE OR REPLACE FUNCTION public.convert_currency(
+  1400→  p_amount NUMERIC,
+  1401→  p_from_currency TEXT,
+  1402→  p_to_currency TEXT
+  1403→)
+  1404→RETURNS NUMERIC AS $$
+  1405→DECLARE
+  1406→  rate_usd_yer NUMERIC;
+  1407→  rate_usd_sar NUMERIC;
+  1408→  amount_usd NUMERIC;
+  1409→  result NUMERIC;
+  1410→BEGIN
+  1411→  SELECT usd_to_yer, usd_to_sar INTO rate_usd_yer, rate_usd_sar
+  1412→  FROM public.exchange_rates WHERE is_active = TRUE ORDER BY created_at DESC LIMIT 1;
+  1413→  
+  1414→  -- تحويل إلى دولار أولاً
+  1415→  amount_usd := CASE p_from_currency
+  1416→    WHEN 'USD' THEN p_amount
+  1417→    WHEN 'YER' THEN p_amount / rate_usd_yer
+  1418→    WHEN 'SAR' THEN p_amount / rate_usd_sar
+  1419→  END;
+  1420→  
+  1421→  -- تحويل من دولار إلى العملة المطلوبة
+  1422→  result := CASE p_to_currency
+  1423→    WHEN 'USD' THEN amount_usd
+  1424→    WHEN 'YER' THEN amount_usd * rate_usd_yer
+  1425→    WHEN 'SAR' THEN amount_usd * rate_usd_sar
+  1426→  END;
+  1427→  
+  1428→  RETURN ROUND(result, 2);
+  1429→END;
+  1430→$$ LANGUAGE plpgsql SECURITY DEFINER;
+  1431→
+  1432→-- =====================================================
+  1433→-- ENABLE REALTIME FOR ALL TABLES
+  1434→-- =====================================================
+  1435→ALTER PUBLICATION supabase_realtime ADD TABLE public.users;
+  1436→ALTER PUBLICATION supabase_realtime ADD TABLE public.transactions;
+  1437→ALTER PUBLICATION supabase_realtime ADD TABLE public.orders;
+  1438→ALTER PUBLICATION supabase_realtime ADD TABLE public.deposit_requests;
+  1439→ALTER PUBLICATION supabase_realtime ADD TABLE public.withdraw_requests;
+  1440→ALTER PUBLICATION supabase_realtime ADD TABLE public.notifications;
+  1441→ALTER PUBLICATION supabase_realtime ADD TABLE public.admin_notifications;
+  1442→ALTER PUBLICATION supabase_realtime ADD TABLE public.support_tickets;
+  1443→ALTER PUBLICATION supabase_realtime ADD TABLE public.support_messages;
+  1444→ALTER PUBLICATION supabase_realtime ADD TABLE public.support_livechat;
+  1445→ALTER PUBLICATION supabase_realtime ADD TABLE public.livechat_messages;
+  1446→ALTER PUBLICATION supabase_realtime ADD TABLE public.activity_log;
+  1447→ALTER PUBLICATION supabase_realtime ADD TABLE public.api_balance_log;
+  1448→ALTER PUBLICATION supabase_realtime ADD TABLE public.app_config;
+  1449→ALTER PUBLICATION supabase_realtime ADD TABLE public.kill_switch;
+  1450→ALTER PUBLICATION supabase_realtime ADD TABLE public.maintenance;
+  1451→ALTER PUBLICATION supabase_realtime ADD TABLE public.banners;
+  1452→ALTER PUBLICATION supabase_realtime ADD TABLE public.exchange_rates;
+  1453→
+  1454→-- =====================================================
+  1455→-- RLS POLICIES - سياسات الأمان
+  1456→-- =====================================================
+  1457→
+  1458→-- تفعيل RLS على جميع الجداول
+  1459→ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
+  1460→ALTER TABLE public.transactions ENABLE ROW LEVEL SECURITY;
+  1461→ALTER TABLE public.orders ENABLE ROW LEVEL SECURITY;
+  1462→ALTER TABLE public.deposit_requests ENABLE ROW LEVEL SECURITY;
+  1463→ALTER TABLE public.withdraw_requests ENABLE ROW LEVEL SECURITY;
+  1464→ALTER TABLE public.notifications ENABLE ROW LEVEL SECURITY;
+  1465→ALTER TABLE public.admin_notifications ENABLE ROW LEVEL SECURITY;
+  1466→ALTER TABLE public.support_tickets ENABLE ROW LEVEL SECURITY;
+  1467→ALTER TABLE public.support_messages ENABLE ROW LEVEL SECURITY;
+  1468→ALTER TABLE public.support_livechat ENABLE ROW LEVEL SECURITY;
+  1469→ALTER TABLE public.livechat_messages ENABLE ROW LEVEL SECURITY;
+  1470→ALTER TABLE public.gift_codes ENABLE ROW LEVEL SECURITY;
+  1471→ALTER TABLE public.promo_codes ENABLE ROW LEVEL SECURITY;
+  1472→ALTER TABLE public.kyc_documents ENABLE ROW LEVEL SECURITY;
+  1473→ALTER TABLE public.activity_log ENABLE ROW LEVEL SECURITY;
+  1474→ALTER TABLE public.investments ENABLE ROW LEVEL SECURITY;
+  1475→ALTER TABLE public.user_gift_codes ENABLE ROW LEVEL SECURITY;
+  1476→
+  1477→-- المستخدم يرى بياناته فقط
+  1478→CREATE POLICY "Users can view own data" ON public.users FOR SELECT USING (auth.uid() = id OR firebase_uid = auth.uid()::text);
+  1479→CREATE POLICY "Users can update own data" ON public.users FOR UPDATE USING (auth.uid() = id OR firebase_uid = auth.uid()::text);
+  1480→
+  1481→-- المعاملات
+  1482→CREATE POLICY "Users view own transactions" ON public.transactions FOR SELECT USING (user_id::text = auth.uid()::text OR from_user_id::text = auth.uid()::text OR to_user_id::text = auth.uid()::text);
+  1483→CREATE POLICY "Users create own transactions" ON public.transactions FOR INSERT WITH CHECK (user_id::text = auth.uid()::text);
+  1484→
+  1485→-- الطلبات
+  1486→CREATE POLICY "Users view own orders" ON public.orders FOR SELECT USING (user_id::text = auth.uid()::text);
+  1487→CREATE POLICY "Users create own orders" ON public.orders FOR INSERT WITH CHECK (user_id::text = auth.uid()::text);
+  1488→
+  1489→-- الإيداع
+  1490→CREATE POLICY "Users view own deposits" ON public.deposit_requests FOR SELECT USING (user_id::text = auth.uid()::text);
+  1491→CREATE POLICY "Users create deposits" ON public.deposit_requests FOR INSERT WITH CHECK (user_id::text = auth.uid()::text);
+  1492→
+  1493→-- السحب
+  1494→CREATE POLICY "Users view own withdraws" ON public.withdraw_requests FOR SELECT USING (user_id::text = auth.uid()::text);
+  1495→CREATE POLICY "Users create withdraws" ON public.withdraw_requests FOR INSERT WITH CHECK (user_id::text = auth.uid()::text);
+  1496→
+  1497→-- الإشعارات
+  1498→CREATE POLICY "Users view own notifications" ON public.notifications FOR SELECT USING (user_id::text = auth.uid()::text);
+  1499→CREATE POLICY "Users update own notifications" ON public.notifications FOR UPDATE USING (user_id::text = auth.uid()::text);
+  1500→
+  1501→-- الدعم
+  1502→CREATE POLICY "Users view own tickets" ON public.support_tickets FOR SELECT USING (user_id::text = auth.uid()::text);
+  1503→CREATE POLICY "Users create tickets" ON public.support_tickets FOR INSERT WITH CHECK (user_id::text = auth.uid()::text);
+  1504→
+  1505→-- KYC
+  1506→CREATE POLICY "Users view own kyc" ON public.kyc_documents FOR SELECT USING (user_id::text = auth.uid()::text);
+  1507→CREATE POLICY "Users create kyc" ON public.kyc_documents FOR INSERT WITH CHECK (user_id::text = auth.uid()::text);
+  1508→
+  1509→-- الجداول العامة - الجميع يقرأ
+  1510→CREATE POLICY "Public read sections" ON public.sections FOR SELECT USING (TRUE);
+  1511→CREATE POLICY "Public read subsections" ON public.sub_sections FOR SELECT USING (TRUE);
+  1512→CREATE POLICY "Public read providers" ON public.service_providers FOR SELECT USING (TRUE);
+  1513→CREATE POLICY "Public read packages" ON public.product_packages FOR SELECT USING (TRUE);
+  1514→CREATE POLICY "Public read api_providers" ON public.api_providers FOR SELECT USING (TRUE);
+  1515→CREATE POLICY "Public read api_categories" ON public.api_categories FOR SELECT USING (TRUE);
+  1516→CREATE POLICY "Public read api_products" ON public.api_products FOR SELECT USING (TRUE);
+  1517→CREATE POLICY "Public read exchange_rates" ON public.exchange_rates FOR SELECT USING (TRUE);
+  1518→CREATE POLICY "Public read banners" ON public.banners FOR SELECT USING (is_active = TRUE);
+  1519→CREATE POLICY "Public read wallet_addresses" ON public.wallet_addresses FOR SELECT USING (is_active = TRUE);
+  1520→CREATE POLICY "Public read branding" ON public.branding FOR SELECT USING (TRUE);
+  1521→CREATE POLICY "Public read card_colors" ON public.card_colors FOR SELECT USING (TRUE);
+  1522→CREATE POLICY "Public read bottom_nav" ON public.bottom_nav FOR SELECT USING (TRUE);
+  1523→CREATE POLICY "Public read feature_flags" ON public.feature_flags FOR SELECT USING (TRUE);
+  1524→CREATE POLICY "Public read wallet_services" ON public.wallet_services FOR SELECT USING (is_active = TRUE);
+  1525→CREATE POLICY "Public read visibility" ON public.visibility FOR SELECT USING (TRUE);
+  1526→CREATE POLICY "Public read legal_content" ON public.legal_content FOR SELECT USING (is_active = TRUE);
+  1527→CREATE POLICY "Public read social_links" ON public.social_links FOR SELECT USING (is_active = TRUE);
+  1528→CREATE POLICY "Public read limits" ON public.limits FOR SELECT USING (is_active = TRUE);
+  1529→CREATE POLICY "Public read currency_cards" ON public.currency_cards FOR SELECT USING (is_active = TRUE);
+  1530→CREATE POLICY "Public read instant_recharge" ON public.instant_recharge FOR SELECT USING (is_active = TRUE);
+  1531→CREATE POLICY "Public read maintenance" ON public.maintenance FOR SELECT USING (TRUE);
+  1532→CREATE POLICY "Public read kill_switch" ON public.kill_switch FOR SELECT USING (TRUE);
+  1533→CREATE POLICY "Public read app_config" ON public.app_config FOR SELECT USING (TRUE);
+  1534→
+  1535→-- =====================================================
+  1536→-- 49. ESCROW_TRANSACTIONS - معاملات الضمان/الوسيط
+  1537→-- =====================================================
+  1538→CREATE TABLE IF NOT EXISTS public.escrow_transactions (
+  1539→  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  1540→  
+  1541→  buyer_id UUID NOT NULL REFERENCES public.users(id),
+  1542→  seller_id UUID NOT NULL REFERENCES public.users(id),
+  1543→  
+  1544→  title TEXT NOT NULL,
+  1545→  description TEXT DEFAULT '',
+  1546→  amount NUMERIC(15,2) NOT NULL CHECK (amount > 0),
+  1547→  currency TEXT NOT NULL CHECK (currency IN ('YER', 'SAR', 'USD')),
+  1548→  
+  1549→  reference_code TEXT UNIQUE NOT NULL,
+  1550→  
+  1551→  status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'funded', 'buyer_confirmed', 'seller_confirmed', 'completed', 'disputed', 'cancelled', 'refunded')),
+  1552→  
+  1553→  buyer_confirmed BOOLEAN DEFAULT FALSE,
+  1554→  seller_confirmed BOOLEAN DEFAULT FALSE,
+  1555→  buyer_confirmed_at TIMESTAMPTZ,
+  1556→  seller_confirmed_at TIMESTAMPTZ,
+  1557→  
+  1558→  funded_at TIMESTAMPTZ,
+  1559→  completed_at TIMESTAMPTZ,
+  1560→  cancelled_at TIMESTAMPTZ,
+  1561→  
+  1562→  dispute_reason TEXT DEFAULT '',
+  1563→  dispute_opened_at TIMESTAMPTZ,
+  1564→  dispute_resolved_by UUID REFERENCES public.users(id),
+  1565→  dispute_resolution TEXT DEFAULT '',
+  1566→  dispute_resolved_at TIMESTAMPTZ,
+  1567→  
+  1568→  transaction_id UUID REFERENCES public.transactions(id),
+  1569→  
+  1570→  created_at TIMESTAMPTZ DEFAULT NOW(),
+  1571→  updated_at TIMESTAMPTZ DEFAULT NOW()
+  1572→);
+  1573→
+  1574→CREATE INDEX IF NOT EXISTS idx_escrow_buyer ON public.escrow_transactions(buyer_id);
+  1575→CREATE INDEX IF NOT EXISTS idx_escrow_seller ON public.escrow_transactions(seller_id);
+  1576→CREATE INDEX IF NOT EXISTS idx_escrow_status ON public.escrow_transactions(status);
+  1577→CREATE INDEX IF NOT EXISTS idx_escrow_ref ON public.escrow_transactions(reference_code);
+  1578→CREATE INDEX IF NOT EXISTS idx_escrow_created ON public.escrow_transactions(created_at DESC);
+  1579→
+  1580→-- =====================================================
+  1581→-- 50. BRANCHES - الفروع
+  1582→-- =====================================================
+  1583→CREATE TABLE IF NOT EXISTS public.branches (
+  1584→  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  1585→  
+  1586→  name TEXT NOT NULL,
+  1587→  name_en TEXT DEFAULT '',
+  1588→  address TEXT DEFAULT '',
+  1589→  governorate TEXT DEFAULT '',
+  1590→  phone TEXT DEFAULT '',
+  1591→  email TEXT DEFAULT '',
+  1592→  
+  1593→  manager_name TEXT DEFAULT '',
+  1594→  manager_phone TEXT DEFAULT '',
+  1595→  
+  1596→  working_hours TEXT DEFAULT 'السبت-الخميس: 8 ص - 8 م',
+  1597→  weekend TEXT DEFAULT 'الجمعة',
+  1598→  
+  1599→  latitude NUMERIC(10,7) DEFAULT 0,
+  1600→  longitude NUMERIC(10,7) DEFAULT 0,
+  1601→  
+  1602→  services TEXT[] DEFAULT '{}',
+  1603→  
+  1604→  is_active BOOLEAN DEFAULT TRUE,
+  1605→  sort_order INTEGER DEFAULT 0,
+  1606→  
+  1607→  created_at TIMESTAMPTZ DEFAULT NOW(),
+  1608→  updated_at TIMESTAMPTZ DEFAULT NOW()
+  1609→);
+  1610→
+  1611→-- =====================================================
+  1612→-- 51. USER_REVIEWS - تقييمات المستخدمين
+  1613→-- =====================================================
+  1614→CREATE TABLE IF NOT EXISTS public.user_reviews (
+  1615→  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  1616→  user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+  1617→  
+  1618→  rating INTEGER NOT NULL CHECK (rating >= 1 AND rating <= 5),
+  1619→  comment TEXT DEFAULT '',
+  1620→  category TEXT DEFAULT 'general' CHECK (category IN ('general', 'service', 'app', 'support', 'transaction')),
+  1621→  
+  1622→  service_id TEXT DEFAULT '',
+  1623→  order_id UUID REFERENCES public.orders(id),
+  1624→  
+  1625→  status TEXT DEFAULT 'active' CHECK (status IN ('active', 'hidden', 'flagged')),
+  1626→  admin_reply TEXT DEFAULT '',
+  1627→  replied_at TIMESTAMPTZ,
+  1628→  replied_by UUID REFERENCES public.users(id),
+  1629→  
+  1630→  is_featured BOOLEAN DEFAULT FALSE,
+  1631→  
+  1632→  created_at TIMESTAMPTZ DEFAULT NOW(),
+  1633→  updated_at TIMESTAMPTZ DEFAULT NOW()
+  1634→);
+  1635→
+  1636→CREATE INDEX IF NOT EXISTS idx_reviews_user ON public.user_reviews(user_id);
+  1637→CREATE INDEX IF NOT EXISTS idx_reviews_rating ON public.user_reviews(rating);
+  1638→CREATE INDEX IF NOT EXISTS idx_reviews_status ON public.user_reviews(status);
+  1639→
+  1640→-- =====================================================
+  1641→-- 52. MARKETING_CONTENT - المحتوى التسويقي
+  1642→-- =====================================================
+  1643→CREATE TABLE IF NOT EXISTS public.marketing_content (
+  1644→  id TEXT PRIMARY KEY,
+  1645→  
+  1646→  title TEXT NOT NULL,
+  1647→  title_en TEXT DEFAULT '',
+  1648→  content TEXT DEFAULT '',
+  1649→  content_en TEXT DEFAULT '',
+  1650→  
+  1651→  type TEXT DEFAULT 'general' CHECK (type IN ('welcome', 'promo', 'notification_template', 'email_template', 'referral', 'app_description', 'general')),
+  1652→  
+  1653→  is_active BOOLEAN DEFAULT TRUE,
+  1654→  
+  1655→  updated_by UUID REFERENCES public.users(id),
+  1656→  updated_at TIMESTAMPTZ DEFAULT NOW()
+  1657→);
+  1658→
+  1659→-- =====================================================
+  1660→-- 53. PRICE_OVERRIDES - تخصيص الأسعار
+  1661→-- =====================================================
+  1662→CREATE TABLE IF NOT EXISTS public.price_overrides (
+  1663→  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  1664→  
+  1665→  target_type TEXT NOT NULL CHECK (target_type IN ('global', 'provider', 'package')),
+  1666→  target_id TEXT NOT NULL DEFAULT 'global',
+  1667→  
+  1668→  markup_type TEXT NOT NULL CHECK (markup_type IN ('percentage', 'fixed')),
+  1669→  markup_value NUMERIC(15,2) NOT NULL DEFAULT 0,
+  1670→  markup_currency TEXT DEFAULT 'USD',
+  1671→  
+  1672→  min_price NUMERIC(15,2) DEFAULT 0,
+  1673→  max_price NUMERIC(15,2) DEFAULT 0,
+  1674→  
+  1675→  is_active BOOLEAN DEFAULT TRUE,
+  1676→  
+  1677→  created_by UUID REFERENCES public.users(id),
+  1678→  created_at TIMESTAMPTZ DEFAULT NOW(),
+  1679→  updated_at TIMESTAMPTZ DEFAULT NOW()
+  1680→);
+  1681→
+  1682→CREATE INDEX IF NOT EXISTS idx_priceoverride_target ON public.price_overrides(target_type, target_id);
+  1683→
+  1684→-- =====================================================
+  1685→-- 54. COMMISSION_CONFIG - إعدادات العمولة
+  1686→-- =====================================================
+  1687→CREATE TABLE IF NOT EXISTS public.commission_config (
+  1688→  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  1689→  
+  1690→  target_type TEXT NOT NULL CHECK (target_type IN ('global', 'provider', 'package')),
+  1691→  target_id TEXT NOT NULL DEFAULT 'global',
+  1692→  
+  1693→  commission_type TEXT NOT NULL CHECK (commission_type IN ('percentage', 'fixed')),
+  1694→  commission_value NUMERIC(15,2) NOT NULL DEFAULT 3,
+  1695→  commission_currency TEXT DEFAULT 'USD',
+  1696→  
+  1697→  min_commission NUMERIC(15,2) DEFAULT 0,
+  1698→  max_commission NUMERIC(15,2) DEFAULT 0,
+  1699→  
+  1700→  is_active BOOLEAN DEFAULT TRUE,
+  1701→  
+  1702→  created_by UUID REFERENCES public.users(id),
+  1703→  created_at TIMESTAMPTZ DEFAULT NOW(),
+  1704→  updated_at TIMESTAMPTZ DEFAULT NOW()
+  1705→);
+  1706→
+  1707→CREATE INDEX IF NOT EXISTS idx_commissionconfig_target ON public.commission_config(target_type, target_id);
+  1708→
+  1709→-- =====================================================
+  1710→-- 55. DATA_EXPORTS - سجل التصديرات
+  1711→-- =====================================================
+  1712→CREATE TABLE IF NOT EXISTS public.data_exports (
+  1713→  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  1714→  
+  1715→  export_type TEXT NOT NULL CHECK (export_type IN ('users', 'transactions', 'orders', 'deposits', 'withdrawals', 'commissions', 'custom')),
+  1716→  format TEXT DEFAULT 'csv' CHECK (format IN ('csv', 'xlsx', 'json')),
+  1717→  
+  1718→  date_from TIMESTAMPTZ,
+  1719→  date_to TIMESTAMPTZ,
+  1720→  filters JSONB DEFAULT '{}',
+  1721→  
+  1722→  file_path TEXT DEFAULT '',
+  1723→  file_size_mb NUMERIC(10,2) DEFAULT 0,
+  1724→  row_count INTEGER DEFAULT 0,
+  1725→  
+  1726→  status TEXT DEFAULT 'processing' CHECK (status IN ('processing', 'completed', 'failed')),
+  1727→  
+  1728→  requested_by UUID REFERENCES public.users(id),
+  1729→  created_at TIMESTAMPTZ DEFAULT NOW(),
+  1730→  completed_at TIMESTAMPTZ
+  1731→);
+  1732→
+  1733→-- RLS for new tables
+  1734→ALTER TABLE public.escrow_transactions ENABLE ROW LEVEL SECURITY;
+  1735→ALTER TABLE public.branches ENABLE ROW LEVEL SECURITY;
+  1736→ALTER TABLE public.user_reviews ENABLE ROW LEVEL SECURITY;
+  1737→ALTER TABLE public.marketing_content ENABLE ROW LEVEL SECURITY;
+  1738→ALTER TABLE public.price_overrides ENABLE ROW LEVEL SECURITY;
+  1739→ALTER TABLE public.commission_config ENABLE ROW LEVEL SECURITY;
+  1740→ALTER TABLE public.data_exports ENABLE ROW LEVEL SECURITY;
+  1741→
+  1742→-- Escrow policies
+  1743→CREATE POLICY "Users view own escrows" ON public.escrow_transactions FOR SELECT USING (buyer_id::text = auth.uid()::text OR seller_id::text = auth.uid()::text);
+  1744→CREATE POLICY "Users create escrows" ON public.escrow_transactions FOR INSERT WITH CHECK (buyer_id::text = auth.uid()::text OR seller_id::text = auth.uid()::text);
+  1745→CREATE POLICY "Users update own escrows" ON public.escrow_transactions FOR UPDATE USING (buyer_id::text = auth.uid()::text OR seller_id::text = auth.uid()::text);
+  1746→
+  1747→-- Reviews
+  1748→CREATE POLICY "Users view reviews" ON public.user_reviews FOR SELECT USING (TRUE);
+  1749→CREATE POLICY "Users create reviews" ON public.user_reviews FOR INSERT WITH CHECK (user_id::text = auth.uid()::text);
+  1750→
+  1751→-- Public read for branches, marketing, price overrides
+  1752→CREATE POLICY "Public read branches" ON public.branches FOR SELECT USING (TRUE);
+  1753→CREATE POLICY "Public read marketing" ON public.marketing_content FOR SELECT USING (is_active = TRUE);
+  1754→CREATE POLICY "Public read price_overrides" ON public.price_overrides FOR SELECT USING (TRUE);
+  1755→CREATE POLICY "Public read commission_config" ON public.commission_config FOR SELECT USING (TRUE);
+  1756→
+  1757→-- Realtime for new tables
+  1758→ALTER PUBLICATION supabase_realtime ADD TABLE public.escrow_transactions;
+  1759→ALTER PUBLICATION supabase_realtime ADD TABLE public.branches;
+  1760→ALTER PUBLICATION supabase_realtime ADD TABLE public.user_reviews;
+  1761→ALTER PUBLICATION supabase_realtime ADD TABLE public.data_exports;
+  1762→

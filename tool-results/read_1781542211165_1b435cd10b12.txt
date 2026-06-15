@@ -1,0 +1,1315 @@
+     1→'use client';
+     2→
+     3→import { useState, useRef, useEffect, useMemo } from 'react';
+     4→import { useTheme } from 'next-themes';
+     5→import { motion, AnimatePresence } from 'framer-motion';
+     6→import { ChevronRight, Search, ChevronLeft, ArrowLeft, Package, ShoppingCart, Wallet } from 'lucide-react';
+     7→import { useAppStore } from '@/lib/store';
+     8→import { productIcons, getProductIcon } from '@/lib/product-icons';
+     9→import { serviceIcons } from '@/lib/service-icons';
+    10→import { database } from '@/lib/firebase';
+    11→import { ref, onValue } from 'firebase/database';
+    12→import type { ApiProviderCategory, ApiProviderProduct, ApiProviderConfig } from '@/lib/api-provider';
+    13→
+    14→// ─── Category display names ─────────────────────────────────────────
+    15→const categoryNames: Record<string, string> = {
+    16→  'service-providers': 'مزودين الخدمات',
+    17→  'wallet-services': 'خدمات المحفظة الخاصة بنا',
+    18→  entertainment: 'خدمات ترفيهية',
+    19→  cards: 'بطاقات رقمية',
+    20→  telecom: 'خدمات الاتصالات',
+    21→  electricity: 'الكهرباء والماء',
+    22→  government: 'خدمات حكومية',
+    23→  internet: 'الإنترنت',
+    24→  crypto: 'الكريبتو',
+    25→  'crypto-invest': 'استثمار الكريبتو',
+    26→};
+    27→
+    28→// ─── Sub-section icon keys (maps to productIcons or serviceIcons) ───
+    29→const subSectionIcons: Record<string, string> = {
+    30→  shooting: 'pubg',
+    31→  strategy: 'clash-royale',
+    32→  adventure: 'roblox',
+    33→  platforms: 'steam',
+    34→  streaming: 'netflix',
+    35→  'store-cards': 'google-play',
+    36→  'gaming-cards': 'psn-card',
+    37→  'payment-cards': 'visa-virtual',
+    38→  recharge: 'yemen-mobile',
+    39→  'internet-packages': 'yemen-net',
+    40→  elec: 'electricity',
+    41→  water: 'water',
+    42→  identity: 'civil-registry',
+    43→  'traffic-municipal': 'traffic',
+    44→  providers: 'yemen-net',
+    45→  'buy-sell': 'bitcoin',
+    46→  'usdt-plans': 'usdt',
+    47→};
+    48→
+    49→// ─── Sub-sections with provider IDs (legacy fallback) ────────────────
+    50→interface SubSection {
+    51→  id: string;
+    52→  name: string;
+    53→  description: string;
+    54→  providerIds: string[];
+    55→  iconKey: string;
+    56→  color: string;
+    57→}
+    58→
+    59→const categorySubSections: Record<string, SubSection[]> = {
+    60→  'service-providers': [],
+    61→  'wallet-services': [
+    62→    { id: 'shooting', name: 'ألعاب إطلاق النار', description: 'ببجي، فري فاير، فالورانت والمزيد', providerIds: ['pubg', 'freefire', 'call-of-duty', 'fortnite', 'valorant', 'apex-legends'], iconKey: 'pubg', color: '#F59E0B' },
+    63→    { id: 'strategy', name: 'ألعاب الاستراتيجية', description: 'كلاش رويال، كلاش اوف كلانس والمزيد', providerIds: ['clash-royale', 'clash-of-clans', 'league-legends'], iconKey: 'clash-royale', color: '#3B82F6' },
+    64→    { id: 'adventure', name: 'ألعاب المغامرات', description: 'روبلوكس، ماينكرافت، جينشين والمزيد', providerIds: ['roblox', 'minecraft', 'genshin-impact', 'honkai-star'], iconKey: 'roblox', color: '#5C1A1B' },
+    65→    { id: 'platforms', name: 'منصات الألعاب', description: 'ستيم، EA FC والمزيد', providerIds: ['steam', 'ea-fc'], iconKey: 'steam', color: '#1B2838' },
+    66→    { id: 'streaming', name: 'خدمات البث', description: 'نتفلكس، سبوتيفاي، يوتيوب بريميوم', providerIds: ['netflix', 'spotify', 'youtube-premium'], iconKey: 'netflix', color: '#E50914' },
+    67→    { id: 'store-cards', name: 'بطاقات المتاجر', description: 'جوجل بلاي، آيتونز، امازون', providerIds: ['google-play', 'apple-itunes', 'amazon-gift'], iconKey: 'google-play', color: '#34A853' },
+    68→    { id: 'gaming-cards', name: 'بطاقات الألعاب', description: 'بلايستيشن، اكسبوكس، نينتندو', providerIds: ['psn-card', 'xbox-card', 'nintendo-card'], iconKey: 'psn-card', color: '#00439C' },
+    69→    { id: 'payment-cards', name: 'بطاقات الدفع', description: 'فيزا، ماستركارد، بايبال', providerIds: ['visa-virtual', 'mastercard-virtual', 'paypal'], iconKey: 'visa-virtual', color: '#1A1F71' },
+    70→  ],
+    71→  entertainment: [
+    72→    { id: 'shooting', name: 'ألعاب إطلاق النار', description: 'ببجي، فري فاير، فالورانت والمزيد', providerIds: ['pubg', 'freefire', 'call-of-duty', 'fortnite', 'valorant', 'apex-legends'], iconKey: 'pubg', color: '#F59E0B' },
+    73→    { id: 'strategy', name: 'ألعاب الاستراتيجية', description: 'كلاش رويال، كلاش اوف كلانس والمزيد', providerIds: ['clash-royale', 'clash-of-clans', 'league-legends'], iconKey: 'clash-royale', color: '#3B82F6' },
+    74→    { id: 'adventure', name: 'ألعاب المغامرات', description: 'روبلوكس، ماينكرافت، جينشين والمزيد', providerIds: ['roblox', 'minecraft', 'genshin-impact', 'honkai-star'], iconKey: 'roblox', color: '#5C1A1B' },
+    75→    { id: 'platforms', name: 'منصات الألعاب', description: 'ستيم، EA FC والمزيد', providerIds: ['steam', 'ea-fc'], iconKey: 'steam', color: '#1B2838' },
+    76→    { id: 'streaming', name: 'خدمات البث', description: 'نتفلكس، سبوتيفاي، يوتيوب بريميوم', providerIds: ['netflix', 'spotify', 'youtube-premium'], iconKey: 'netflix', color: '#E50914' },
+    77→  ],
+    78→  cards: [
+    79→    { id: 'store-cards', name: 'بطاقات المتاجر', description: 'جوجل بلاي، آيتونز، امازون', providerIds: ['google-play', 'apple-itunes', 'amazon-gift'], iconKey: 'google-play', color: '#34A853' },
+    80→    { id: 'gaming-cards', name: 'بطاقات الألعاب', description: 'بلايستيشن، اكسبوكس، نينتندو', providerIds: ['psn-card', 'xbox-card', 'nintendo-card'], iconKey: 'psn-card', color: '#00439C' },
+    81→    { id: 'payment-cards', name: 'بطاقات الدفع', description: 'فيزا، ماستركارد، بايبال', providerIds: ['visa-virtual', 'mastercard-virtual', 'paypal'], iconKey: 'visa-virtual', color: '#1A1F71' },
+    82→  ],
+    83→  telecom: [
+    84→    { id: 'recharge', name: 'شحن رصيد', description: 'يمن موبايل، يو، سبأفون، واي', providerIds: ['yemen-mobile', 'yo', 'sabafon', 'y'], iconKey: 'yemen-mobile', color: '#C41E3A' },
+    85→    { id: 'internet-packages', name: 'باقات الإنترنت', description: 'يمن نت، واي نت، سبأفون نت', providerIds: ['yemen-net', 'y-net-internet', 'sabafon-internet'], iconKey: 'yemen-net', color: '#8B5CF6' },
+    86→  ],
+    87→  electricity: [
+    88→    { id: 'elec', name: 'الكهرباء', description: 'دفع فواتير الكهرباء', providerIds: ['elec-sanaa', 'elec-aden'], iconKey: 'electricity', color: '#F59E0B' },
+    89→    { id: 'water', name: 'المياه', description: 'دفع فواتير المياه', providerIds: ['water-sanaa', 'water-aden'], iconKey: 'water', color: '#06B6D4' },
+    90→  ],
+    91→  government: [
+    92→    { id: 'identity', name: 'الأوراق الثبوتية', description: 'السجل المدني، جواز السفر', providerIds: ['civil-registry', 'passport'], iconKey: 'civil-registry', color: '#6B7280' },
+    93→    { id: 'traffic-municipal', name: 'المرور والبلدية', description: 'خدمات المرور والبلدية', providerIds: ['traffic', 'municipal'], iconKey: 'traffic', color: '#DC2626' },
+    94→  ],
+    95→  internet: [
+    96→    { id: 'providers', name: 'مزودي الإنترنت', description: 'يمن نت، واي نت، سبأفون نت', providerIds: ['yemen-net', 'y-net-internet', 'sabafon-internet'], iconKey: 'yemen-net', color: '#8B5CF6' },
+    97→  ],
+    98→  crypto: [
+    99→    { id: 'buy-sell', name: 'شراء وبيع', description: 'بيتكوين، إيثريوم، USDT والمزيد', providerIds: ['bitcoin', 'ethereum', 'usdt', 'bnb', 'solana', 'tron'], iconKey: 'bitcoin', color: '#F7931A' },
+   100→  ],
+   101→  'crypto-invest': [
+   102→    { id: 'usdt-plans', name: 'خطط USDT', description: 'خطط استثمارية يومية وأسبوعية وشهرية وربع سنوية', providerIds: ['usdt-daily', 'usdt-weekly', 'usdt-monthly', 'usdt-quarterly'], iconKey: 'usdt', color: '#26A17B' },
+   103→  ],
+   104→};
+   105→
+   106→// ─── Product image URLs from real service providers ──
+   107→const PRODUCT_IMAGES: Record<string, string> = {
+   108→  'pubg': 'https://cdn1.codashop.com/S/content/mobile/images/product-tiles/pubgm_tile_aug2024.jpg',
+   109→  'freefire': 'https://cdn1.codashop.com/S/content/mobile/images/product-tiles/free_fire_new_tile.png',
+   110→  'call-of-duty': 'https://cdn1.codashop.com/S/content/mobile/images/product-tiles/codm-wl_178x178.jpg',
+   111→  'fortnite': 'https://cdn1.codashop.com/S/content/mobile/images/product-tiles/fortnite_usa_tile.png',
+   112→  'valorant': 'https://cdn1.codashop.com/S/content/mobile/images/product-tiles/valorant_tile.jpg',
+   113→  'apex-legends': 'https://seagm-media.seagmcdn.com/game_480/3116.jpg',
+   114→  'clash-royale': 'https://img-cdn-sg.payermax.com/shoplay365/prod/upload/picture/20240412094815705_CLASH_ROYALE_icon.jpg',
+   115→  'clash-of-clans': 'https://img-cdn-sg.payermax.com/shoplay365/prod/upload/picture/20240418072604722_clashofclans_appicon.jpg',
+   116→  'league-legends': 'https://cdn1.codashop.com/S/content/mobile/images/product-tiles/LOL_tile.jpg',
+   117→  'roblox': 'https://cdn1.codashop.com/S/content/mobile/images/product-tiles/Roblox-tiles-178x178-new.jpg',
+   118→  'minecraft': 'https://cdn1.codashop.com/S/content/mobile/images/product-tiles/Minecraft-Java-Bedrock-tile_update_178x178.jpg',
+   119→  'genshin-impact': 'https://cdn1.codashop.com/S/content/mobile/images/product-tiles/genshinimpact_tile.jpg',
+   120→  'honkai-star': 'https://cdn1.codashop.com/S/content/mobile/images/product-tiles/hsr_tile.jpg',
+   121→  'steam': 'https://cdn1.codashop.com/S/content/mobile/images/product-tiles/steam_us_tile.jpg',
+   122→  'ea-fc': 'https://cdn1.codashop.com/S/content/mobile/images/product-tiles/FCMNewUpdate/new-en.jpg',
+   123→  'netflix': 'https://cdn1.codashop.com/S/content/mobile/images/product-tiles/Netflix_rebrand2_tile.png',
+   124→  'spotify': 'https://cdn1.codashop.com/S/content/mobile/images/product-tiles/spotify_usa_tile.png',
+   125→  'youtube-premium': 'https://static.eneba.games/84fba7421ae9417ec36c.jpg',
+   126→  'google-play': 'https://cdn1.codashop.com/S/content/mobile/images/product-tiles/gp_usa_tile.png',
+   127→  'apple-itunes': 'https://cdn1.codashop.com/S/content/mobile/images/product-tiles/itunes_us_tile.jpg',
+   128→  'amazon-gift': 'https://cdn1.codashop.com/S/content/mobile/images/product-tiles-plain/GC_Amazon_ae_178x178.png',
+   129→  'psn-card': 'https://cdn1.codashop.com/S/content/mobile/images/product-tiles/psn_store_tile.jpg',
+   130→  'xbox-card': 'https://cdn1.codashop.com/S/content/mobile/images/product-tiles/xboxgiftcard_tile.jpg',
+   131→  'nintendo-card': 'https://cdn1.codashop.com/S/content/mobile/images/product-tiles/US_Nintendo-eShop.jpg',
+   132→  'visa-virtual': 'https://seagm-media.seagmcdn.com/icon_400/2211.jpg',
+   133→  'mastercard-virtual': 'https://seagm-media.seagmcdn.com/icon_400/2858.jpg',
+   134→  'paypal': 'https://seagm-media.seagmcdn.com/icon_400/1818.jpg',
+   135→};
+   136→
+   137→const STARTING_PRICES: Record<string, number> = {
+   138→  'pubg': 1200, 'freefire': 800, 'call-of-duty': 1500, 'fortnite': 2000,
+   139→  'valorant': 1800, 'apex-legends': 1500, 'clash-royale': 1000, 'clash-of-clans': 1000,
+   140→  'league-legends': 2000, 'roblox': 900, 'minecraft': 2500, 'genshin-impact': 1500,
+   141→  'honkai-star': 1500, 'steam': 5000, 'ea-fc': 3000,
+   142→  'netflix': 3500, 'spotify': 2500, 'youtube-premium': 3000,
+   143→  'google-play': 3000, 'apple-itunes': 3500, 'amazon-gift': 3000,
+   144→  'psn-card': 6000, 'xbox-card': 6000, 'nintendo-card': 6000,
+   145→  'visa-virtual': 5000, 'mastercard-virtual': 5000, 'paypal': 5000,
+   146→  'yemen-mobile': 100, 'yo': 100, 'sabafon': 100, 'y': 100,
+   147→  'yemen-net': 150, 'y-net-internet': 250, 'sabafon-internet': 400,
+   148→  'elec-sanaa': 500, 'elec-aden': 500, 'water-sanaa': 300, 'water-aden': 300,
+   149→  'civil-registry': 1000, 'passport': 5000, 'traffic': 500, 'municipal': 500,
+   150→  'bitcoin': 1550, 'ethereum': 3500, 'usdt': 15500, 'bnb': 4000, 'solana': 2000, 'tron': 1500,
+   151→  'usdt-daily': 15500, 'usdt-weekly': 38750, 'usdt-monthly': 77500, 'usdt-quarterly': 155000,
+   152→};
+   153→
+   154→const iconFallbackMap: Record<string, string> = {
+   155→  'elec-sanaa': 'electricity', 'elec-aden': 'electricity',
+   156→  'water-sanaa': 'water', 'water-aden': 'water',
+   157→  'y-net-internet': 'y-net-internet', 'sabafon-internet': 'sabafon-internet',
+   158→  'bitcoin': 'bitcoin', 'ethereum': 'ethereum', 'usdt': 'usdt',
+   159→  'bnb': 'bitcoin', 'solana': 'bitcoin', 'tron': 'bitcoin',
+   160→  'usdt-daily': 'usdt', 'usdt-weekly': 'usdt', 'usdt-monthly': 'usdt', 'usdt-quarterly': 'usdt',
+   161→};
+   162→
+   163→const telecomProviderIds = ['yemen-mobile', 'yo', 'sabafon', 'y'];
+   164→
+   165→function getIconForProvider(providerId: string): string {
+   166→  if (productIcons[providerId]) return productIcons[providerId];
+   167→  const fallbackKey = iconFallbackMap[providerId];
+   168→  if (fallbackKey && productIcons[fallbackKey]) return productIcons[fallbackKey];
+   169→  if (serviceIcons[providerId]) return serviceIcons[providerId];
+   170→  if (fallbackKey && serviceIcons[fallbackKey]) return serviceIcons[fallbackKey];
+   171→  return serviceIcons['instant-pay'] || '';
+   172→}
+   173→
+   174→function getProductImage(providerId: string): { src: string; isExternal: boolean } {
+   175→  const externalUrl = PRODUCT_IMAGES[providerId];
+   176→  if (externalUrl) return { src: externalUrl, isExternal: true };
+   177→  return { src: getIconForProvider(providerId), isExternal: false };
+   178→}
+   179→
+   180→function formatPrice(price: number): string {
+   181→  return price.toLocaleString('ar-SA');
+   182→}
+   183→
+   184→function ProductImage({ providerId, providerName, size = 'sm', iconUrl }: { providerId: string; providerName: string; size?: 'sm' | 'md' | 'lg'; iconUrl?: string }) {
+   185→  const { src: defaultSrc, isExternal } = getProductImage(providerId);
+   186→  const src = iconUrl || defaultSrc;
+   187→  const [imgError, setImgError] = useState(false);
+   188→  const fallbackIcon = getIconForProvider(providerId);
+   189→  const sizeClass = size === 'lg' ? 'w-16 h-16' : size === 'md' ? 'w-12 h-12' : 'w-9 h-9';
+   190→  const imgSizeClass = size === 'lg' ? 'w-12 h-12' : size === 'md' ? 'w-9 h-9' : 'w-7 h-7';
+   191→
+   192→  if ((!isExternal && !iconUrl) || imgError) {
+   193→    return <img src={fallbackIcon} alt={providerName} className={`${imgSizeClass} object-contain`} draggable={false} />;
+   194→  }
+   195→  return <img src={src} alt={providerName} className={`${imgSizeClass} object-contain`} draggable={false} onError={() => setImgError(true)} />;
+   196→}
+   197→
+   198→function SubSectionImage({ iconKey, color, firebaseIcon }: { iconKey: string; color: string; firebaseIcon?: string }) {
+   199→  // Prefer Firebase base64 icon over hardcoded maps
+   200→  if (firebaseIcon) {
+   201→    return <img src={firebaseIcon} alt="" className="w-10 h-10 object-contain" draggable={false} />;
+   202→  }
+   203→  const iconSrc = productIcons[iconKey] || serviceIcons[iconKey] || productIcons['pubg'];
+   204→  const externalUrl = PRODUCT_IMAGES[iconKey];
+   205→  const [imgError, setImgError] = useState(false);
+   206→
+   207→  if (externalUrl && !imgError) {
+   208→    return <img src={externalUrl} alt="" className="w-10 h-10 object-contain" draggable={false} onError={() => setImgError(true)} />;
+   209→  }
+   210→  return <img src={iconSrc} alt="" className="w-10 h-10 object-contain" draggable={false} />;
+   211→}
+   212→
+   213→// ─── Wallet Service / Package types ──────────────────────────────────
+   214→interface WalletServicePackage {
+   215→  id: string;
+   216→  name: string;
+   217→  price?: number;
+   218→  currency?: string;
+   219→  costPrice?: number;
+   220→  commission?: number;
+   221→  commissionType?: string;
+   222→  executionType?: string;
+   223→  isActive?: boolean;
+   224→  sortOrder?: number;
+   225→  description?: string;
+   226→}
+   227→
+   228→interface WalletServiceItem {
+   229→  id: string;
+   230→  name: string;
+   231→  description?: string;
+   232→  icon?: string;
+   233→  color?: string;
+   234→  categoryId?: string;
+   235→  sectionId?: string;
+   236→  subSectionId?: string;
+   237→  inputLabel?: string;
+   238→  inputType?: string;
+   239→  inputPrefix?: string;
+   240→  isActive?: boolean;
+   241→  sortOrder?: number;
+   242→  packages?: Record<string, WalletServicePackage>;
+   243→}
+   244→
+   245→// ─── Main Component ─────────────────────────────────────────────────
+   246→export default function CategoryDetailScreen() {
+   247→  const { theme } = useTheme();
+   248→  const isDark = theme === 'dark';
+   249→  const {
+   250→    selectedCategory,
+   251→    setSelectedCategory,
+   252→    providers,
+   253→    setSelectedProvider,
+   254→    setOrderOpen,
+   255→    setActiveScreen,
+   256→    fbSections,
+   257→    fbWalletServices,
+   258→    fbApiProviders,
+   259→    fbVisibility,
+   260→  } = useAppStore();
+   261→
+   262→  const [viewMode, setViewMode] = useState<'subsections' | 'products' | 'api-products' | 'wallet-packages'>('subsections');
+   263→  const [selectedSubSection, setSelectedSubSection] = useState<string | null>(null);
+   264→  const [searchQuery, setSearchQuery] = useState('');
+   265→  const [searchOpen, setSearchOpen] = useState(false);
+   266→  const contentRef = useRef<HTMLDivElement>(null);
+   267→  
+   268→  // API provider state
+   269→  const [apiCategoryData, setApiCategoryData] = useState<{ provider: ApiProviderConfig; category: ApiProviderCategory; products: ApiProviderProduct[] } | null>(null);
+   270→  const [selectedApiProduct, setSelectedApiProduct] = useState<ApiProviderProduct | null>(null);
+   271→  const [customerInput, setCustomerInput] = useState('');
+   272→  const [isPurchasing, setIsPurchasing] = useState(false);
+   273→
+   274→  // Wallet service state
+   275→  const [selectedWalletService, setSelectedWalletService] = useState<WalletServiceItem | null>(null);
+   276→  const [selectedWalletPackage, setSelectedWalletPackage] = useState<WalletServicePackage | null>(null);
+   277→
+   278→  // ─── Derive API providers list from store ──────────────────────────
+   279→  const apiProviders = useMemo<ApiProviderConfig[]>(() => {
+   280→    const data = fbApiProviders;
+   281→    if (!data || Object.keys(data).length === 0) return [];
+   282→    return Object.entries(data)
+   283→      .filter(([, p]: [string, any]) => p.isActive !== false)
+   284→      .map(([key, p]: [string, any]) => ({
+   285→        id: key || p.id || '',
+   286→        name: p.name || '',
+   287→        baseUrl: p.baseUrl || '',
+   288→        apiKey: p.apiKey || '',
+   289→        apiSecret: p.apiSecret || '',
+   290→        authHeader: p.authHeader || 'X-API-Key',
+   291→        method: p.method || 'POST',
+   292→        headers: p.headers || {},
+   293→        bodyTemplate: p.bodyTemplate || '',
+   294→        responseFormat: p.responseFormat || 'json',
+   295→        fieldMappings: p.fieldMappings || undefined,
+   296→        isActive: p.isActive !== false,
+   297→        syncEnabled: p.syncEnabled !== false,
+   298→        lastSync: p.lastSync || '',
+   299→        createdAt: p.createdAt || '',
+   300→        categories: p.categories || {},
+   301→      }));
+   302→  }, [fbApiProviders]);
+   303→
+   304→  const visibilityProviders = fbVisibility.providers;
+   305→
+   306→  // ─── Determine the current section from Firebase ──────────────────
+   307→  const currentSection = useMemo(() => {
+   308→    if (!selectedCategory || selectedCategory.startsWith('apicat-')) return null;
+   309→    const sections = fbSections as Record<string, any> | null;
+   310→    if (!sections) return null;
+   311→    return sections[selectedCategory] || null;
+   312→  }, [selectedCategory, fbSections]);
+   313→
+   314→  // ─── Determine section type ───────────────────────────────────────
+   315→  const sectionType = useMemo(() => {
+   316→    if (!currentSection) return 'regular';
+   317→    if (currentSection.apiProviderId) return 'api';
+   318→    if (currentSection.type === 'wallet-services' || currentSection.id === 'wallet-services') return 'wallet-services';
+   319→    return 'regular';
+   320→  }, [currentSection]);
+   321→
+   322→  // Check if selectedCategory is an API category (from services-screen navigation)
+   323→  const isApiCategory = selectedCategory?.startsWith('apicat-') || false;
+   324→
+   325→  // ─── Parse API category info from selectedCategory ────────────────
+   326→  const parseApiCategoryInfo = (): { providerId: string; categoryId: string } | null => {
+   327→    if (!selectedCategory?.startsWith('apicat-')) return null;
+   328→    // The provider ID might contain dashes, so we need to find the matching provider
+   329→    for (const ap of apiProviders) {
+   330→      const prefix = ap.id;
+   331→      const catStr = selectedCategory.replace(`apicat-${prefix}-`, '');
+   332→      if (catStr && catStr !== selectedCategory) {
+   333→        return { providerId: prefix, categoryId: catStr };
+   334→      }
+   335→    }
+   336→    return null;
+   337→  };
+   338→
+   339→  const apiCategoryInfo = parseApiCategoryInfo();
+   340→
+   341→  // Helper: safely convert Firebase data (array with nulls or object) to clean array
+   342→  const safeArray = <T,>(data: any): T[] => {
+   343→    if (!data) return [];
+   344→    if (Array.isArray(data)) return data.filter((item: any) => item !== null && item !== undefined) as T[];
+   345→    if (typeof data === 'object') return Object.values(data).filter((item: any) => item !== null && item !== undefined) as T[];
+   346→    return [];
+   347→  };
+   348→
+   349→  // ─── Load API category data when it's an API category ─────────────
+   350→  useEffect(() => {
+   351→    if (isApiCategory && apiCategoryInfo && apiProviders.length > 0) {
+   352→      const provider = apiProviders.find(ap => ap.id === apiCategoryInfo.providerId);
+   353→      if (provider) {
+   354→        const cats = provider.categories || {};
+   355→        const catList = safeArray<ApiProviderCategory>(cats);
+   356→        // Try matching by id (could have cat_ prefix from Firebase sync)
+   357→        const category = catList.find(c => String(c.id) === String(apiCategoryInfo.categoryId) || `cat_${c.id}` === apiCategoryInfo.categoryId || String(c.id) === apiCategoryInfo.categoryId.replace('cat_', ''));
+   358→        if (category) {
+   359→          const products = safeArray<ApiProviderProduct>(category.products).filter(p => p.isActive !== false);
+   360→          setApiCategoryData({ provider, category, products });
+   361→          setViewMode('api-products');
+   362→          return;
+   363→        }
+   364→      }
+   365→      setApiCategoryData(null);
+   366→      setViewMode('products');
+   367→    } else if (!isApiCategory) {
+   368→      // Check if this is a section with apiProviderId
+   369→      if (sectionType === 'api' && currentSection?.apiProviderId) {
+   370→        const providerId = currentSection.apiProviderId;
+   371→        const provider = apiProviders.find(ap => ap.id === providerId);
+   372→        if (provider) {
+   373→          const cats = provider.categories || {};
+   374→          const catList = safeArray<ApiProviderCategory>(cats);
+   375→          if (catList.length > 0) {
+   376→            // Show the first category's products, or list all categories
+   377→            setApiCategoryData(null); // Will show category list instead
+   378→            setViewMode('api-products');
+   379→          }
+   380→        }
+   381→      } else {
+   382→        setApiCategoryData(null);
+   383→      }
+   384→    }
+   385→  }, [selectedCategory, apiProviders, isApiCategory, apiCategoryInfo, sectionType, currentSection]);
+   386→
+   387→  // ─── Normal category logic (non-API) ──────────────────────────────
+   388→  const categoryId = !isApiCategory && sectionType !== 'api' ? (selectedCategory || '') : '';
+   389→  const categoryProviders = !isApiCategory && sectionType !== 'api' ? providers.filter(p => p.categoryId === categoryId && p.isActive && visibilityProviders[p.id] !== false) : [];
+   390→  const rawSubSections = !isApiCategory && sectionType !== 'api' ? (categorySubSections[categoryId] || []) : [];
+   391→  const resolvedSubSections = rawSubSections.map(sub => {
+   392→    const subProviders = sub.providerIds
+   393→      .map(pid => categoryProviders.find(p => p.id === pid))
+   394→      .filter((p): p is NonNullable<typeof p> => !!p);
+   395→    return { ...sub, providers: subProviders };
+   396→  }).filter(sub => sub.providers.length > 0);
+   397→
+   398→  // ─── Wallet services for this section from Firebase ───────────────
+   399→  const walletServicesForSection = useMemo<WalletServiceItem[]>(() => {
+   400→    if (sectionType !== 'wallet-services') return [];
+   401→    const wsData = fbWalletServices as Record<string, any> | null;
+   402→    if (!wsData) return [];
+   403→    return Object.entries(wsData)
+   404→      .filter(([, ws]: [string, any]) => {
+   405→        if (ws.isActive === false) return false;
+   406→        if (visibilityProviders[ws.id] === false) return false;
+   407→        // Match by sectionId or by being unassigned with matching categoryId
+   408→        return ws.sectionId === categoryId || (!ws.sectionId && ws.categoryId === categoryId);
+   409→      })
+   410→      .map(([key, ws]: [string, any]) => ({
+   411→        id: key || ws.id || '',
+   412→        name: ws.name || '',
+   413→        description: ws.description || '',
+   414→        icon: ws.icon || '',
+   415→        color: ws.color || '',
+   416→        categoryId: ws.categoryId || '',
+   417→        sectionId: ws.sectionId || '',
+   418→        subSectionId: ws.subSectionId || '',
+   419→        inputLabel: ws.inputLabel || '',
+   420→        inputType: ws.inputType || 'text',
+   421→        inputPrefix: ws.inputPrefix || '',
+   422→        isActive: ws.isActive !== false,
+   423→        sortOrder: ws.sortOrder || 0,
+   424→        packages: ws.packages || {},
+   425→      }))
+   426→      .sort((a, b) => (a.sortOrder || 999) - (b.sortOrder || 999));
+   427→  }, [fbWalletServices, sectionType, categoryId, visibilityProviders]);
+   428→
+   429→  // ─── API categories for this section from Firebase ────────────────
+   430→  const apiCategoriesForSection = useMemo(() => {
+   431→    if (sectionType !== 'api' || !currentSection?.apiProviderId) return [];
+   432→    const providerId = currentSection.apiProviderId === '__all__' ? null : currentSection.apiProviderId;
+   433→    const result: { providerId: string; providerName: string; categoryId: string; category: ApiProviderCategory }[] = [];
+   434→    
+   435→    for (const ap of apiProviders) {
+   436→      if (providerId && ap.id !== providerId) continue;
+   437→      if (!ap.categories) continue;
+   438→      const catList = safeArray<ApiProviderCategory>(ap.categories);
+   439→      for (const cat of catList) {
+   440→        result.push({
+   441→          providerId: ap.id,
+   442→          providerName: ap.name,
+   443→          categoryId: String(cat.id),
+   444→          category: cat,
+   445→        });
+   446→      }
+   447→    }
+   448→    return result;
+   449→  }, [apiProviders, sectionType, currentSection]);
+   450→
+   451→  // ─── Reset view when category changes ─────────────────────────────
+   452→  useEffect(() => {
+   453→    if (isApiCategory) {
+   454→      setViewMode('api-products');
+   455→    } else if (sectionType === 'api') {
+   456→      setViewMode('api-products');
+   457→    } else if (sectionType === 'wallet-services') {
+   458→      setViewMode('products'); // Show wallet services list
+   459→    } else {
+   460→      const subSections = categorySubSections[selectedCategory || ''] || [];
+   461→      if (subSections.length === 1) {
+   462→        setSelectedSubSection(subSections[0].id);
+   463→        setViewMode('products');
+   464→      } else {
+   465→        setViewMode('subsections');
+   466→        setSelectedSubSection(null);
+   467→      }
+   468→    }
+   469→    setSearchQuery('');
+   470→    setSearchOpen(false);
+   471→    setSelectedApiProduct(null);
+   472→    setSelectedWalletService(null);
+   473→    setSelectedWalletPackage(null);
+   474→    setCustomerInput('');
+   475→    if (contentRef.current) contentRef.current.scrollTop = 0;
+   476→  }, [selectedCategory, sectionType]);
+   477→
+   478→  // Auto-skip single sub-section
+   479→  useEffect(() => {
+   480→    if (!isApiCategory && sectionType === 'regular' && resolvedSubSections.length === 1 && viewMode === 'subsections') {
+   481→      setSelectedSubSection(resolvedSubSections[0].id);
+   482→      setViewMode('products');
+   483→    }
+   484→  }, [resolvedSubSections.length, viewMode, isApiCategory, sectionType]);
+   485→
+   486→  if (!selectedCategory) return null;
+   487→
+   488→  // Get category name
+   489→  const getCategoryName = (): string => {
+   490→    if (isApiCategory && apiCategoryData) {
+   491→      return apiCategoryData.category.title || 'خدمة';
+   492→    }
+   493→    if (currentSection?.name) return currentSection.name;
+   494→    return categoryNames[categoryId] || categoryId;
+   495→  };
+   496→
+   497→  const categoryName = getCategoryName();
+   498→  const currentSubSection = resolvedSubSections.find(s => s.id === selectedSubSection);
+   499→  const currentProviders = currentSubSection?.providers || [];
+   500→  const filteredProviders = searchQuery.trim()
+   501→    ? currentProviders.filter(p => p.name.includes(searchQuery.trim()))
+   502→    : currentProviders;
+   503→  const flatProviders = categoryProviders;
+   504→  const hasSubSections = !isApiCategory && sectionType === 'regular' && resolvedSubSections.length > 1;
+   505→
+   506→  // Handle provider click
+   507→  const handleProviderClick = (providerId: string) => {
+   508→    if (telecomProviderIds.includes(providerId)) {
+   509→      setActiveScreen('recharge');
+   510→      return;
+   511→    }
+   512→    const provider = providers.find(p => p.id === providerId);
+   513→    if (provider) {
+   514→      setSelectedProvider(provider);
+   515→      setOrderOpen(true);
+   516→    }
+   517→  };
+   518→
+   519→  // Handle wallet service click
+   520→  const handleWalletServiceClick = (ws: WalletServiceItem) => {
+   521→    setSelectedWalletService(ws);
+   522→    setViewMode('wallet-packages');
+   523→    setSelectedWalletPackage(null);
+   524→    setCustomerInput('');
+   525→  };
+   526→
+   527→  // Handle API product purchase
+   528→  const handleApiProductPurchase = async () => {
+   529→    if (!selectedApiProduct || !apiCategoryData || !customerInput.trim()) return;
+   530→    
+   531→    setIsPurchasing(true);
+   532→    try {
+   533→      const { push, ref, set: firebaseSet } = await import('firebase/database');
+   534→      const { database: db } = await import('@/lib/firebase');
+   535→      
+   536→      const orderId = `order-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+   537→      const user = useAppStore.getState().user;
+   538→      
+   539→      // Calculate price in YER (converting from USD if needed)
+   540→      const exchangeRates = useAppStore.getState().exchangeRates;
+   541→      const priceInYER = Math.round(selectedApiProduct.unit_price * (exchangeRates.USD || 1558));
+   542→      
+   543→      const orderData = {
+   544→        id: orderId,
+   545→        userId: user?.id || '',
+   546→        userName: user?.name || '',
+   547→        userPhone: user?.phone || '',
+   548→        providerId: `api-${apiCategoryData.provider.id}`,
+   549→        providerName: apiCategoryData.provider.name,
+   550→        packageId: String(selectedApiProduct.id),
+   551→        packageName: selectedApiProduct.title,
+   552→        customerInput: customerInput.trim(),
+   553→        amount: priceInYER,
+   554→        currency: 'YER',
+   555→        status: 'pending',
+   556→        executionType: 'auto' as const,
+   557→        apiProviderId: apiCategoryData.provider.id,
+   558→        apiProductId: String(selectedApiProduct.id),
+   559→        apiCategoryId: String(apiCategoryData.category.id),
+   560→        createdAt: new Date().toISOString(),
+   561→      };
+   562→      
+   563→      // Write order to Firebase
+   564→      await firebaseSet(ref(db, `orders/${orderId}`), orderData);
+   565→      
+   566→      // Add to local store
+   567→      useAppStore.getState().addOrder(orderData);
+   568→      
+   569→      // Reset purchase state
+   570→      setSelectedApiProduct(null);
+   571→      setCustomerInput('');
+   572→      
+   573→    } catch (error) {
+   574→      console.error('Purchase error:', error);
+   575→    } finally {
+   576→      setIsPurchasing(false);
+   577→    }
+   578→  };
+   579→
+   580→  // Handle wallet package purchase
+   581→  const handleWalletPackagePurchase = async () => {
+   582→    if (!selectedWalletPackage || !selectedWalletService || !customerInput.trim()) return;
+   583→    
+   584→    setIsPurchasing(true);
+   585→    try {
+   586→      const { ref, set: firebaseSet } = await import('firebase/database');
+   587→      const { database: db } = await import('@/lib/firebase');
+   588→      
+   589→      const orderId = `order-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+   590→      const user = useAppStore.getState().user;
+   591→      
+   592→      const orderData = {
+   593→        id: orderId,
+   594→        userId: user?.id || '',
+   595→        userName: user?.name || '',
+   596→        userPhone: user?.phone || '',
+   597→        providerId: selectedWalletService.id,
+   598→        providerName: selectedWalletService.name,
+   599→        packageId: selectedWalletPackage.id,
+   600→        packageName: selectedWalletPackage.name,
+   601→        customerInput: customerInput.trim(),
+   602→        amount: selectedWalletPackage.price || 0,
+   603→        currency: selectedWalletPackage.currency || 'YER',
+   604→        status: 'pending' as const,
+   605→        executionType: (selectedWalletPackage.executionType || 'manual') as 'manual' | 'auto',
+   606→        createdAt: new Date().toISOString(),
+   607→      };
+   608→      
+   609→      await firebaseSet(ref(db, `orders/${orderId}`), orderData);
+   610→      useAppStore.getState().addOrder(orderData);
+   611→      
+   612→      setSelectedWalletPackage(null);
+   613→      setCustomerInput('');
+   614→    } catch (error) {
+   615→      console.error('Purchase error:', error);
+   616→    } finally {
+   617→      setIsPurchasing(false);
+   618→    }
+   619→  };
+   620→
+   621→  // Handle back button
+   622→  const handleBack = () => {
+   623→    if (selectedApiProduct) {
+   624→      setSelectedApiProduct(null);
+   625→      setCustomerInput('');
+   626→      return;
+   627→    }
+   628→    if (selectedWalletPackage) {
+   629→      setSelectedWalletPackage(null);
+   630→      setCustomerInput('');
+   631→      return;
+   632→    }
+   633→    if (selectedWalletService && viewMode === 'wallet-packages') {
+   634→      setSelectedWalletService(null);
+   635→      setViewMode('products');
+   636→      return;
+   637→    }
+   638→    if (!isApiCategory && sectionType === 'regular' && viewMode === 'products' && hasSubSections) {
+   639→      setViewMode('subsections');
+   640→      setSelectedSubSection(null);
+   641→      setSearchQuery('');
+   642→      if (contentRef.current) contentRef.current.scrollTop = 0;
+   643→    } else {
+   644→      setSelectedCategory(null);
+   645→      const prev = useAppStore.getState().previousScreen;
+   646→      useAppStore.getState().setActiveScreen(prev || '');
+   647→    }
+   648→  };
+   649→
+   650→  const handleSubSectionClick = (subId: string) => {
+   651→    setSelectedSubSection(subId);
+   652→    setViewMode('products');
+   653→    setSearchQuery('');
+   654→    if (contentRef.current) contentRef.current.scrollTop = 0;
+   655→  };
+   656→
+   657→  const handleApiCategoryClick = (providerId: string, categoryId: string) => {
+   658→    setSelectedCategory(`apicat-${providerId}-${categoryId}`);
+   659→  };
+   660→
+   661→  // Colors
+   662→  const cardBg = isDark ? '#1A1A1A' : '#FFFFFF';
+   663→  const borderColor = isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)';
+   664→  const textColor = isDark ? '#FFF' : '#1a1a1a';
+   665→  const secondaryTextColor = isDark ? '#AAA' : '#666';
+   666→  const subtleTextColor = isDark ? '#666' : '#999';
+   667→  const bgColor = isDark ? '#0A0A0A' : '#F5F5F5';
+   668→
+   669→  return (
+   670→    <div className="min-h-screen flex flex-col" style={{ background: bgColor }}>
+   671→      {/* Header */}
+   672→      <motion.div
+   673→        initial={{ opacity: 0, y: -10 }}
+   674→        animate={{ opacity: 1, y: 0 }}
+   675→        transition={{ duration: 0.3 }}
+   676→        className="sticky top-0 z-30"
+   677→        style={{ background: bgColor, borderBottom: `1px solid ${borderColor}` }}
+   678→      >
+   679→        <div className="flex items-center justify-between px-4 pt-4 pb-3">
+   680→          <button
+   681→            onClick={handleBack}
+   682→            className="w-10 h-10 rounded-xl flex items-center justify-center active:scale-95 transition-transform"
+   683→            style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}
+   684→          >
+   685→            <ChevronRight size={20} strokeWidth={1.5} color={isDark ? '#FFF' : '#666'} />
+   686→          </button>
+   687→
+   688→          <div className="text-center">
+   689→            <h1 className="text-lg font-bold" style={{ color: textColor }}>
+   690→              {selectedApiProduct ? selectedApiProduct.title : selectedWalletPackage ? selectedWalletPackage.name : selectedWalletService ? selectedWalletService.name : categoryName}
+   691→            </h1>
+   692→            {(selectedApiProduct || selectedWalletPackage || selectedWalletService) && (
+   693→              <p className="text-[10px]" style={{ color: subtleTextColor }}>{categoryName}</p>
+   694→            )}
+   695→          </div>
+   696→
+   697→          <button
+   698→            onClick={() => setSearchOpen(!searchOpen)}
+   699→            className="w-10 h-10 rounded-xl flex items-center justify-center active:scale-95 transition-transform"
+   700→            style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}
+   701→          >
+   702→            <Search size={20} strokeWidth={1.5} color={isDark ? '#CCC' : '#666'} />
+   703→          </button>
+   704→        </div>
+   705→
+   706→        {/* Search Bar */}
+   707→        <AnimatePresence>
+   708→          {searchOpen && (
+   709→            <motion.div
+   710→              initial={{ height: 0, opacity: 0 }}
+   711→              animate={{ height: 'auto', opacity: 1 }}
+   712→              exit={{ height: 0, opacity: 0 }}
+   713→              transition={{ duration: 0.2 }}
+   714→              className="overflow-hidden px-4 pb-3"
+   715→            >
+   716→              <div
+   717→                className="flex items-center gap-2 px-4 py-2.5 rounded-xl"
+   718→                style={{ background: isDark ? '#1A1A1A' : '#FFFFFF', border: `1px solid ${borderColor}` }}
+   719→              >
+   720→                <Search size={16} strokeWidth={1.5} color={subtleTextColor} />
+   721→                <input
+   722→                  type="text"
+   723→                  placeholder="ابحث عن خدمة..."
+   724→                  value={searchQuery}
+   725→                  onChange={(e) => setSearchQuery(e.target.value)}
+   726→                  className="flex-1 bg-transparent outline-none text-sm"
+   727→                  style={{ color: textColor }}
+   728→                  autoFocus
+   729→                />
+   730→                {searchQuery && (
+   731→                  <button onClick={() => setSearchQuery('')} className="text-xs font-medium" style={{ color: '#5C1A1B' }}>
+   732→                    مسح
+   733→                  </button>
+   734→                )}
+   735→              </div>
+   736→            </motion.div>
+   737→          )}
+   738→        </AnimatePresence>
+   739→      </motion.div>
+   740→
+   741→      {/* Content */}
+   742→      <div
+   743→        ref={contentRef}
+   744→        className="flex-1 overflow-y-auto pb-6"
+   745→        style={{ WebkitOverflowScrolling: 'touch' }}
+   746→      >
+   747→        <AnimatePresence mode="wait">
+   748→          {/* API Product Purchase Dialog */}
+   749→          {selectedApiProduct ? (
+   750→            <motion.div
+   751→              key="api-purchase"
+   752→              initial={{ opacity: 0, y: 20 }}
+   753→              animate={{ opacity: 1, y: 0 }}
+   754→              exit={{ opacity: 0, y: -20 }}
+   755→              className="px-4 pt-4"
+   756→            >
+   757→              <div className="rounded-2xl p-4" style={{ background: cardBg, border: `1px solid ${borderColor}` }}>
+   758→                {/* Product Info */}
+   759→                <div className="flex items-center gap-3 mb-4">
+   760→                  <div className="w-14 h-14 rounded-2xl overflow-hidden flex items-center justify-center" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
+   761→                    {selectedApiProduct.icon ? (
+   762→                      <img src={selectedApiProduct.icon} alt="" className="w-10 h-10 object-contain" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+   763→                    ) : (
+   764→                      <Package size={24} color={isDark ? '#888' : '#666'} />
+   765→                    )}
+   766→                  </div>
+   767→                  <div className="flex-1">
+   768→                    <h3 className="text-sm font-bold" style={{ color: textColor }}>{selectedApiProduct.title}</h3>
+   769→                    <p className="text-lg font-bold mt-1" style={{ color: '#5C1A1B' }}>
+   770→                      {formatPrice(Math.round(selectedApiProduct.unit_price * (useAppStore.getState().exchangeRates.USD || 1558)))} ر.ي
+   771→                    </p>
+   772→                    {selectedApiProduct.stock !== undefined && (
+   773→                      <p className="text-[10px] mt-0.5" style={{ color: subtleTextColor }}>
+   774→                        المتوفر: {selectedApiProduct.stock}
+   775→                      </p>
+   776→                    )}
+   777→                  </div>
+   778→                </div>
+   779→
+   780→                {/* Customer Input */}
+   781→                <div className="mb-4">
+   782→                  <label className="text-xs font-medium block mb-1.5" style={{ color: secondaryTextColor }}>
+   783→                    معرف العميل / رقم الحساب
+   784→                  </label>
+   785→                  <input
+   786→                    type="text"
+   787→                    value={customerInput}
+   788→                    onChange={(e) => setCustomerInput(e.target.value)}
+   789→                    placeholder="أدخل معرف العميل"
+   790→                    className="w-full px-4 py-3 rounded-xl text-sm outline-none"
+   791→                    dir="ltr"
+   792→                    style={{
+   793→                      background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+   794→                      border: `1px solid ${borderColor}`,
+   795→                      color: textColor,
+   796→                    }}
+   797→                  />
+   798→                </div>
+   799→
+   800→                {/* Purchase Button */}
+   801→                <button
+   802→                  onClick={handleApiProductPurchase}
+   803→                  disabled={!customerInput.trim() || isPurchasing}
+   804→                  className="w-full py-3 rounded-xl text-sm font-bold text-white transition-all active:scale-[0.98] disabled:opacity-50"
+   805→                  style={{
+   806→                    background: (!customerInput.trim() || isPurchasing) ? '#666' : '#5C1A1B',
+   807→                    boxShadow: (!customerInput.trim() || isPurchasing) ? 'none' : '0 4px 12px rgba(92,26,27,0.3)',
+   808→                  }}
+   809→                >
+   810→                  {isPurchasing ? (
+   811→                    <span className="flex items-center justify-center gap-2">
+   812→                      <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+   813→                      جاري المعالجة...
+   814→                    </span>
+   815→                  ) : (
+   816→                    <span className="flex items-center justify-center gap-2">
+   817→                      <ShoppingCart size={16} />
+   818→                      تأكيد الشراء
+   819→                    </span>
+   820→                  )}
+   821→                </button>
+   822→              </div>
+   823→            </motion.div>
+   824→          ) : selectedWalletPackage ? (
+   825→            /* Wallet Package Purchase Dialog */
+   826→            <motion.div
+   827→              key="wallet-purchase"
+   828→              initial={{ opacity: 0, y: 20 }}
+   829→              animate={{ opacity: 1, y: 0 }}
+   830→              exit={{ opacity: 0, y: -20 }}
+   831→              className="px-4 pt-4"
+   832→            >
+   833→              <div className="rounded-2xl p-4" style={{ background: cardBg, border: `1px solid ${borderColor}` }}>
+   834→                <div className="flex items-center gap-3 mb-4">
+   835→                  <div className="w-14 h-14 rounded-2xl overflow-hidden flex items-center justify-center" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
+   836→                    {selectedWalletService?.icon ? (
+   837→                      <img src={selectedWalletService.icon} alt="" className="w-10 h-10 object-contain" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+   838→                    ) : (
+   839→                      <Wallet size={24} color={isDark ? '#888' : '#666'} />
+   840→                    )}
+   841→                  </div>
+   842→                  <div className="flex-1">
+   843→                    <h3 className="text-sm font-bold" style={{ color: textColor }}>{selectedWalletPackage.name}</h3>
+   844→                    {selectedWalletPackage.price !== undefined && (
+   845→                      <p className="text-lg font-bold mt-1" style={{ color: '#5C1A1B' }}>
+   846→                        {formatPrice(selectedWalletPackage.price)} {selectedWalletPackage.currency || 'ر.ي'}
+   847→                      </p>
+   848→                    )}
+   849→                    {selectedWalletPackage.description && (
+   850→                      <p className="text-[10px] mt-0.5" style={{ color: subtleTextColor }}>
+   851→                        {selectedWalletPackage.description}
+   852→                      </p>
+   853→                    )}
+   854→                  </div>
+   855→                </div>
+   856→
+   857→                <div className="mb-4">
+   858→                  <label className="text-xs font-medium block mb-1.5" style={{ color: secondaryTextColor }}>
+   859→                    {selectedWalletService?.inputLabel || 'معرف العميل / رقم الحساب'}
+   860→                  </label>
+   861→                  <input
+   862→                    type={selectedWalletService?.inputType === 'phone' ? 'tel' : 'text'}
+   863→                    value={customerInput}
+   864→                    onChange={(e) => setCustomerInput(e.target.value)}
+   865→                    placeholder={selectedWalletService?.inputLabel || 'أدخل معرف العميل'}
+   866→                    className="w-full px-4 py-3 rounded-xl text-sm outline-none"
+   867→                    dir="ltr"
+   868→                    style={{
+   869→                      background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+   870→                      border: `1px solid ${borderColor}`,
+   871→                      color: textColor,
+   872→                    }}
+   873→                  />
+   874→                </div>
+   875→
+   876→                <button
+   877→                  onClick={handleWalletPackagePurchase}
+   878→                  disabled={!customerInput.trim() || isPurchasing}
+   879→                  className="w-full py-3 rounded-xl text-sm font-bold text-white transition-all active:scale-[0.98] disabled:opacity-50"
+   880→                  style={{
+   881→                    background: (!customerInput.trim() || isPurchasing) ? '#666' : '#5C1A1B',
+   882→                    boxShadow: (!customerInput.trim() || isPurchasing) ? 'none' : '0 4px 12px rgba(92,26,27,0.3)',
+   883→                  }}
+   884→                >
+   885→                  {isPurchasing ? (
+   886→                    <span className="flex items-center justify-center gap-2">
+   887→                      <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+   888→                      جاري المعالجة...
+   889→                    </span>
+   890→                  ) : (
+   891→                    <span className="flex items-center justify-center gap-2">
+   892→                      <ShoppingCart size={16} />
+   893→                      تأكيد الشراء
+   894→                    </span>
+   895→                  )}
+   896→                </button>
+   897→              </div>
+   898→            </motion.div>
+   899→          ) : isApiCategory && viewMode === 'api-products' && apiCategoryData ? (
+   900→            /* API Products View */
+   901→            <motion.div
+   902→              key="api-products"
+   903→              initial={{ opacity: 0, x: -20 }}
+   904→              animate={{ opacity: 1, x: 0 }}
+   905→              exit={{ opacity: 0, x: 20 }}
+   906→              transition={{ duration: 0.25 }}
+   907→              className="px-4 pt-4"
+   908→            >
+   909→              {/* Provider badge */}
+   910→              <div className="flex items-center gap-2 mb-3">
+   911→                <span className="text-[10px] font-bold px-2 py-1 rounded-full" style={{ background: 'rgba(92,26,27,0.1)', color: '#5C1A1B' }}>
+   912→                  {apiCategoryData.provider.name}
+   913→                </span>
+   914→              </div>
+   915→
+   916→              {/* Products grid */}
+   917→              {apiCategoryData.products.length > 0 ? (
+   918→                <div className="rounded-2xl p-3" style={{ background: cardBg, border: `1px solid ${borderColor}`, boxShadow: isDark ? 'none' : '0 1px 4px rgba(0,0,0,0.04)' }}>
+   919→                  <div className="grid grid-cols-2 gap-2">
+   920→                    {apiCategoryData.products.map((product, pIndex) => {
+   921→                      const priceInYER = Math.round(product.unit_price * (useAppStore.getState().exchangeRates.USD || 1558));
+   922→                      return (
+   923→                        <motion.button
+   924→                          key={String(product.id)}
+   925→                          initial={{ opacity: 0, scale: 0.9 }}
+   926→                          animate={{ opacity: 1, scale: 1 }}
+   927→                          transition={{ delay: 0.03 * pIndex, duration: 0.25 }}
+   928→                          onClick={() => { setSelectedApiProduct(product); setCustomerInput(''); }}
+   929→                          whileTap={{ scale: 0.93 }}
+   930→                          className="flex flex-col items-center justify-center gap-2 py-4 px-3 rounded-xl transition-colors text-right"
+   931→                          style={{ background: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)' }}
+   932→                        >
+   933→                          <div className="w-12 h-12 rounded-2xl overflow-hidden flex items-center justify-center shrink-0" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
+   934→                            {product.icon ? (
+   935→                              <img src={product.icon} alt="" className="w-9 h-9 object-contain" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+   936→                            ) : (
+   937→                              <Package size={20} color={isDark ? '#888' : '#666'} />
+   938→                            )}
+   939→                          </div>
+   940→                          <span className="text-[11px] font-semibold text-center leading-tight max-w-[130px]" style={{ color: textColor }}>
+   941→                            {product.title}
+   942→                          </span>
+   943→                          <span className="text-[11px] font-bold" style={{ color: '#5C1A1B' }}>
+   944→                            {formatPrice(priceInYER)} ر.ي
+   945→                          </span>
+   946→                          {product.stock !== undefined && product.stock > 0 && (
+   947→                            <span className="text-[8px]" style={{ color: subtleTextColor }}>
+   948→                              متوفر: {product.stock}
+   949→                            </span>
+   950→                          )}
+   951→                        </motion.button>
+   952→                      );
+   953→                    })}
+   954→                  </div>
+   955→                </div>
+   956→              ) : (
+   957→                <div className="rounded-2xl p-8 flex flex-col items-center" style={{ background: cardBg, border: `1px solid ${borderColor}` }}>
+   958→                  <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-3" style={{ background: isDark ? '#222' : '#F5F5F5' }}>
+   959→                    <Package size={24} strokeWidth={1.5} color={isDark ? '#333' : '#DDD'} />
+   960→                  </div>
+   961→                  <p className="text-sm font-medium" style={{ color: isDark ? '#555' : '#AAA' }}>لا توجد منتجات</p>
+   962→                  <p className="text-[11px] mt-1" style={{ color: isDark ? '#444' : '#CCC' }}>لم يتم مزامنة المنتجات بعد</p>
+   963→                </div>
+   964→              )}
+   965→            </motion.div>
+   966→          ) : !isApiCategory && sectionType === 'api' && apiCategoriesForSection.length > 0 ? (
+   967→            /* API Categories List for section with apiProviderId */
+   968→            <motion.div
+   969→              key="api-section-categories"
+   970→              initial={{ opacity: 0, y: 12 }}
+   971→              animate={{ opacity: 1, y: 0 }}
+   972→              transition={{ delay: 0.05, duration: 0.35 }}
+   973→              className="px-4 pt-4"
+   974→            >
+   975→              <div className="rounded-2xl p-3" style={{ background: cardBg, border: `1px solid ${borderColor}`, boxShadow: isDark ? 'none' : '0 1px 4px rgba(0,0,0,0.04)' }}>
+   976→                <div className="grid grid-cols-2 gap-2">
+   977→                  {apiCategoriesForSection.map((item, pIndex) => {
+   978→                    const productsCount = item.category.products ? Object.values(item.category.products).filter((p: any) => p && p.isActive !== false).length : 0;
+   979→                    return (
+   980→                      <motion.button
+   981→                        key={`${item.providerId}-${item.categoryId}`}
+   982→                        initial={{ opacity: 0, scale: 0.9 }}
+   983→                        animate={{ opacity: 1, scale: 1 }}
+   984→                        transition={{ delay: 0.03 * pIndex, duration: 0.25 }}
+   985→                        onClick={() => handleApiCategoryClick(item.providerId, item.categoryId)}
+   986→                        whileTap={{ scale: 0.93 }}
+   987→                        className="flex flex-col items-center justify-center gap-2 py-4 px-3 rounded-xl transition-colors text-right"
+   988→                        style={{ background: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)' }}
+   989→                      >
+   990→                        <div className="w-12 h-12 rounded-2xl overflow-hidden flex items-center justify-center shrink-0" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
+   991→                          {item.category.icon ? (
+   992→                            <img src={item.category.icon} alt="" className="w-9 h-9 object-contain" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+   993→                          ) : (
+   994→                            <Package size={20} color={isDark ? '#888' : '#666'} />
+   995→                          )}
+   996→                        </div>
+   997→                        <span className="text-[11px] font-semibold text-center leading-tight max-w-[130px]" style={{ color: textColor }}>
+   998→                          {item.category.title}
+   999→                        </span>
+  1000→                        {productsCount > 0 && (
+  1001→                          <span className="text-[10px] font-bold" style={{ color: '#5C1A1B' }}>
+  1002→                            {productsCount} منتج
+  1003→                          </span>
+  1004→                        )}
+  1005→                      </motion.button>
+  1006→                    );
+  1007→                  })}
+  1008→                </div>
+  1009→              </div>
+  1010→            </motion.div>
+  1011→          ) : !isApiCategory && sectionType === 'wallet-services' && viewMode === 'wallet-packages' && selectedWalletService ? (
+  1012→            /* Wallet Service Packages */
+  1013→            <motion.div
+  1014→              key={`wallet-packages-${selectedWalletService.id}`}
+  1015→              initial={{ opacity: 0, x: -20 }}
+  1016→              animate={{ opacity: 1, x: 0 }}
+  1017→              exit={{ opacity: 0, x: 20 }}
+  1018→              transition={{ duration: 0.25 }}
+  1019→              className="px-4 pt-4"
+  1020→            >
+  1021→              {/* Service badge */}
+  1022→              <div className="flex items-center gap-2 mb-3">
+  1023→                {selectedWalletService.icon ? (
+  1024→                  <img src={selectedWalletService.icon} alt="" className="w-6 h-6 object-contain" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+  1025→                ) : (
+  1026→                  <Wallet size={14} color="#5C1A1B" />
+  1027→                )}
+  1028→                <span className="text-[10px] font-bold px-2 py-1 rounded-full" style={{ background: 'rgba(92,26,27,0.1)', color: '#5C1A1B' }}>
+  1029→                  {selectedWalletService.name}
+  1030→                </span>
+  1031→              </div>
+  1032→
+  1033→              {/* Packages grid */}
+  1034→              {(() => {
+  1035→                const pkgs = safeArray<WalletServicePackage>(selectedWalletService.packages).filter(p => p.isActive !== false);
+  1036→                return pkgs.length > 0 ? (
+  1037→                  <div className="rounded-2xl p-3" style={{ background: cardBg, border: `1px solid ${borderColor}`, boxShadow: isDark ? 'none' : '0 1px 4px rgba(0,0,0,0.04)' }}>
+  1038→                    <div className="grid grid-cols-2 gap-2">
+  1039→                      {pkgs.map((pkg, pIndex) => (
+  1040→                        <motion.button
+  1041→                          key={pkg.id}
+  1042→                          initial={{ opacity: 0, scale: 0.9 }}
+  1043→                          animate={{ opacity: 1, scale: 1 }}
+  1044→                          transition={{ delay: 0.03 * pIndex, duration: 0.25 }}
+  1045→                          onClick={() => { setSelectedWalletPackage(pkg); setCustomerInput(''); }}
+  1046→                          whileTap={{ scale: 0.93 }}
+  1047→                          className="flex flex-col items-center justify-center gap-2 py-4 px-3 rounded-xl transition-colors text-right"
+  1048→                          style={{ background: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)' }}
+  1049→                        >
+  1050→                          <div className="w-12 h-12 rounded-2xl overflow-hidden flex items-center justify-center shrink-0" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
+  1051→                            {selectedWalletService.icon ? (
+  1052→                              <img src={selectedWalletService.icon} alt="" className="w-9 h-9 object-contain" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+  1053→                            ) : (
+  1054→                              <Package size={20} color={isDark ? '#888' : '#666'} />
+  1055→                            )}
+  1056→                          </div>
+  1057→                          <span className="text-[11px] font-semibold text-center leading-tight max-w-[130px]" style={{ color: textColor }}>
+  1058→                            {pkg.name}
+  1059→                          </span>
+  1060→                          {pkg.price !== undefined && (
+  1061→                            <span className="text-[11px] font-bold" style={{ color: '#5C1A1B' }}>
+  1062→                              {formatPrice(pkg.price)} {pkg.currency || 'ر.ي'}
+  1063→                            </span>
+  1064→                          )}
+  1065→                        </motion.button>
+  1066→                      ))}
+  1067→                    </div>
+  1068→                  </div>
+  1069→                ) : (
+  1070→                  <div className="rounded-2xl p-8 flex flex-col items-center" style={{ background: cardBg, border: `1px solid ${borderColor}` }}>
+  1071→                    <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-3" style={{ background: isDark ? '#222' : '#F5F5F5' }}>
+  1072→                      <Package size={24} strokeWidth={1.5} color={isDark ? '#333' : '#DDD'} />
+  1073→                    </div>
+  1074→                    <p className="text-sm font-medium" style={{ color: isDark ? '#555' : '#AAA' }}>لا توجد باقات</p>
+  1075→                    <p className="text-[11px] mt-1" style={{ color: isDark ? '#444' : '#CCC' }}>لم يتم إضافة باقات لهذه الخدمة بعد</p>
+  1076→                  </div>
+  1077→                );
+  1078→              })()}
+  1079→            </motion.div>
+  1080→          ) : !isApiCategory && sectionType === 'wallet-services' && viewMode === 'products' ? (
+  1081→            /* Wallet Services List */
+  1082→            <motion.div
+  1083→              key="wallet-services-list"
+  1084→              initial={{ opacity: 0, y: 12 }}
+  1085→              animate={{ opacity: 1, y: 0 }}
+  1086→              transition={{ delay: 0.05, duration: 0.35 }}
+  1087→              className="px-4 pt-4"
+  1088→            >
+  1089→              {walletServicesForSection.length > 0 ? (
+  1090→                <div className="rounded-2xl p-3" style={{ background: cardBg, border: `1px solid ${borderColor}`, boxShadow: isDark ? 'none' : '0 1px 4px rgba(0,0,0,0.04)' }}>
+  1091→                  <div className="grid grid-cols-3 gap-2">
+  1092→                    {walletServicesForSection.map((ws, pIndex) => {
+  1093→                      const startingPrice = ws.packages ? Math.min(...safeArray<WalletServicePackage>(ws.packages).filter(p => p.isActive !== false && p.price).map(p => p.price || Infinity)) : (STARTING_PRICES[ws.id] || 0);
+  1094→                      return (
+  1095→                        <motion.button
+  1096→                          key={ws.id}
+  1097→                          initial={{ opacity: 0, scale: 0.9 }}
+  1098→                          animate={{ opacity: 1, scale: 1 }}
+  1099→                          transition={{ delay: 0.03 * pIndex, duration: 0.25 }}
+  1100→                          onClick={() => handleWalletServiceClick(ws)}
+  1101→                          whileTap={{ scale: 0.93 }}
+  1102→                          className="flex flex-col items-center justify-center gap-2 py-4 px-2 rounded-xl transition-colors"
+  1103→                          style={{ background: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)' }}
+  1104→                        >
+  1105→                          <div className="w-16 h-16 rounded-2xl overflow-hidden flex items-center justify-center shrink-0" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
+  1106→                            <ProductImage providerId={ws.id} providerName={ws.name} size="lg" iconUrl={ws.icon} />
+  1107→                          </div>
+  1108→                          <span className="text-[11px] font-semibold text-center leading-tight max-w-[90px]" style={{ color: textColor, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+  1109→                            {ws.name}
+  1110→                          </span>
+  1111→                          {startingPrice > 0 && startingPrice !== Infinity && (
+  1112→                            <span className="text-[10px] font-bold" style={{ color: '#5C1A1B' }}>
+  1113→                              من {formatPrice(startingPrice)} ر.ي
+  1114→                            </span>
+  1115→                          )}
+  1116→                        </motion.button>
+  1117→                      );
+  1118→                    })}
+  1119→                  </div>
+  1120→                </div>
+  1121→              ) : (
+  1122→                <div className="rounded-2xl p-8 flex flex-col items-center" style={{ background: cardBg, border: `1px solid ${borderColor}` }}>
+  1123→                  <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-3" style={{ background: isDark ? '#222' : '#F5F5F5' }}>
+  1124→                    <Package size={24} strokeWidth={1.5} color={isDark ? '#333' : '#DDD'} />
+  1125→                  </div>
+  1126→                  <p className="text-sm font-medium" style={{ color: isDark ? '#555' : '#AAA' }}>لا توجد خدمات</p>
+  1127→                  <p className="text-[11px] mt-1" style={{ color: isDark ? '#444' : '#CCC' }}>لم يتم إضافة خدمات بعد</p>
+  1128→                </div>
+  1129→              )}
+  1130→            </motion.div>
+  1131→          ) : hasSubSections && viewMode === 'subsections' ? (
+  1132→            /* Sub-sections Grid (normal categories) */
+  1133→            <motion.div
+  1134→              key="subsections"
+  1135→              initial={{ opacity: 0, x: 20 }}
+  1136→              animate={{ opacity: 1, x: 0 }}
+  1137→              exit={{ opacity: 0, x: -20 }}
+  1138→              transition={{ duration: 0.25 }}
+  1139→              className="px-4 pt-4"
+  1140→            >
+  1141→              <div className="mb-4">
+  1142→                <p className="text-sm" style={{ color: secondaryTextColor }}>
+  1143→                  اختر القسم الفرعي لعرض الخدمات المتاحة
+  1144→                </p>
+  1145→              </div>
+  1146→
+  1147→              <div className="grid grid-cols-2 gap-3">
+  1148→                {resolvedSubSections.map((sub, index) => (
+  1149→                  <motion.button
+  1150→                    key={sub.id}
+  1151→                    initial={{ opacity: 0, y: 20, scale: 0.95 }}
+  1152→                    animate={{ opacity: 1, y: 0, scale: 1 }}
+  1153→                    transition={{ delay: 0.06 * index, duration: 0.35 }}
+  1154→                    onClick={() => handleSubSectionClick(sub.id)}
+  1155→                    whileTap={{ scale: 0.95 }}
+  1156→                    className="relative overflow-hidden rounded-2xl text-right active:scale-[0.97] transition-transform"
+  1157→                    style={{ background: cardBg, border: `1px solid ${borderColor}`, boxShadow: isDark ? 'none' : '0 2px 8px rgba(0,0,0,0.06)' }}
+  1158→                  >
+  1159→                    <div className="absolute top-0 right-0 left-0 h-1 rounded-t-2xl" style={{ background: sub.color }} />
+  1160→                    <div className="absolute -bottom-6 -left-6 w-24 h-24 rounded-full opacity-[0.06]" style={{ background: sub.color }} />
+  1161→                    <div className="relative z-10 p-4">
+  1162→                      <div className="w-14 h-14 rounded-2xl overflow-hidden flex items-center justify-center mb-3" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
+  1163→                        <SubSectionImage iconKey={sub.iconKey} color={sub.color} firebaseIcon={currentSection?.subSections?.[sub.id]?.icon} />
+  1164→                      </div>
+  1165→                      <h3 className="text-sm font-bold mb-1" style={{ color: textColor }}>{sub.name}</h3>
+  1166→                      <p className="text-[10px] leading-relaxed mb-2" style={{ color: subtleTextColor, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+  1167→                        {sub.description}
+  1168→                      </p>
+  1169→                      <div className="flex items-center justify-between">
+  1170→                        <span className="text-[9px] font-bold px-2 py-0.5 rounded-full" style={{ background: `${sub.color}15`, color: sub.color }}>
+  1171→                          {sub.providers.length} خدمة
+  1172→                        </span>
+  1173→                        <ChevronLeft size={14} strokeWidth={1.5} color={subtleTextColor} />
+  1174→                      </div>
+  1175→                    </div>
+  1176→                  </motion.button>
+  1177→                ))}
+  1178→              </div>
+  1179→            </motion.div>
+  1180→          ) : hasSubSections && viewMode === 'products' ? (
+  1181→            /* Products in selected sub-section */
+  1182→            <motion.div
+  1183→              key={`products-${selectedSubSection}`}
+  1184→              initial={{ opacity: 0, x: -20 }}
+  1185→              animate={{ opacity: 1, x: 0 }}
+  1186→              exit={{ opacity: 0, x: 20 }}
+  1187→              transition={{ duration: 0.25 }}
+  1188→            >
+  1189→              <div className="px-4 pt-3 pb-2">
+  1190→                <div className="flex gap-2 overflow-x-auto scrollbar-hide" style={{ WebkitOverflowScrolling: 'touch' }}>
+  1191→                  {resolvedSubSections.map((sub) => (
+  1192→                    <button
+  1193→                      key={sub.id}
+  1194→                      onClick={() => { setSelectedSubSection(sub.id); setSearchQuery(''); if (contentRef.current) contentRef.current.scrollTop = 0; }}
+  1195→                      className="shrink-0 px-3.5 py-1.5 rounded-full text-[11px] font-bold transition-all active:scale-95"
+  1196→                      style={{
+  1197→                        background: selectedSubSection === sub.id ? '#5C1A1B' : isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)',
+  1198→                        color: selectedSubSection === sub.id ? '#FFFFFF' : secondaryTextColor,
+  1199→                        boxShadow: selectedSubSection === sub.id ? '0 2px 8px rgba(92,26,27,0.3)' : 'none',
+  1200→                      }}
+  1201→                    >
+  1202→                      {sub.name}
+  1203→                    </button>
+  1204→                  ))}
+  1205→                </div>
+  1206→              </div>
+  1207→
+  1208→              {filteredProviders.length > 0 ? (
+  1209→                <div className="px-4 mt-2">
+  1210→                  <div className="rounded-2xl p-3" style={{ background: cardBg, border: `1px solid ${borderColor}`, boxShadow: isDark ? 'none' : '0 1px 4px rgba(0,0,0,0.04)' }}>
+  1211→                    <div className="grid grid-cols-3 gap-2">
+  1212→                      {filteredProviders.map((provider, pIndex) => {
+  1213→                        const startingPrice = STARTING_PRICES[provider.id] || 0;
+  1214→                        return (
+  1215→                          <motion.button
+  1216→                            key={provider.id}
+  1217→                            initial={{ opacity: 0, scale: 0.9 }}
+  1218→                            animate={{ opacity: 1, scale: 1 }}
+  1219→                            transition={{ delay: 0.03 * pIndex, duration: 0.25 }}
+  1220→                            onClick={() => handleProviderClick(provider.id)}
+  1221→                            whileTap={{ scale: 0.93 }}
+  1222→                            className="flex flex-col items-center justify-center gap-2 py-4 px-2 rounded-xl transition-colors"
+  1223→                            style={{ background: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)' }}
+  1224→                          >
+  1225→                            <div className="w-16 h-16 rounded-2xl overflow-hidden flex items-center justify-center shrink-0" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
+  1226→                              <ProductImage providerId={provider.id} providerName={provider.name} size="lg" />
+  1227→                            </div>
+  1228→                            <span className="text-[11px] font-semibold text-center leading-tight max-w-[90px]" style={{ color: textColor, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+  1229→                              {provider.name}
+  1230→                            </span>
+  1231→                            {startingPrice > 0 && (
+  1232→                              <span className="text-[10px] font-bold" style={{ color: '#5C1A1B' }}>
+  1233→                                من {formatPrice(startingPrice)} ر.ي
+  1234→                              </span>
+  1235→                            )}
+  1236→                          </motion.button>
+  1237→                        );
+  1238→                      })}
+  1239→                    </div>
+  1240→                  </div>
+  1241→                </div>
+  1242→              ) : (
+  1243→                <div className="px-4 mt-8">
+  1244→                  <div className="rounded-2xl p-8 flex flex-col items-center" style={{ background: cardBg, border: `1px solid ${borderColor}` }}>
+  1245→                    <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-3" style={{ background: isDark ? '#222' : '#F5F5F5' }}>
+  1246→                      <Search size={24} strokeWidth={1.5} color={isDark ? '#333' : '#DDD'} />
+  1247→                    </div>
+  1248→                    <p className="text-sm font-medium" style={{ color: isDark ? '#555' : '#AAA' }}>لا توجد نتائج</p>
+  1249→                    <p className="text-[11px] mt-1" style={{ color: isDark ? '#444' : '#CCC' }}>جرب البحث بكلمات مختلفة</p>
+  1250→                  </div>
+  1251→                </div>
+  1252→              )}
+  1253→            </motion.div>
+  1254→          ) : (
+  1255→            /* Flat grid for categories without sub-sections */
+  1256→            <motion.div
+  1257→              key="flat"
+  1258→              initial={{ opacity: 0, y: 12 }}
+  1259→              animate={{ opacity: 1, y: 0 }}
+  1260→              transition={{ delay: 0.05, duration: 0.35 }}
+  1261→              className="px-4 mt-4"
+  1262→            >
+  1263→              {(() => {
+  1264→                const displayProviders = searchQuery.trim()
+  1265→                  ? flatProviders.filter(p => p.name.includes(searchQuery.trim()))
+  1266→                  : flatProviders;
+  1267→                return displayProviders.length > 0 ? (
+  1268→                  <div className="rounded-2xl p-3" style={{ background: cardBg, border: `1px solid ${borderColor}`, boxShadow: isDark ? 'none' : '0 1px 4px rgba(0,0,0,0.04)' }}>
+  1269→                    <div className="grid grid-cols-3 gap-2">
+  1270→                      {displayProviders.map((provider, pIndex) => {
+  1271→                        const startingPrice = STARTING_PRICES[provider.id] || 0;
+  1272→                        return (
+  1273→                          <motion.button
+  1274→                            key={provider.id}
+  1275→                            initial={{ opacity: 0, scale: 0.9 }}
+  1276→                            animate={{ opacity: 1, scale: 1 }}
+  1277→                            transition={{ delay: 0.03 * pIndex, duration: 0.25 }}
+  1278→                            onClick={() => handleProviderClick(provider.id)}
+  1279→                            whileTap={{ scale: 0.93 }}
+  1280→                            className="flex flex-col items-center justify-center gap-2 py-4 px-2 rounded-xl transition-colors"
+  1281→                            style={{ background: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)' }}
+  1282→                          >
+  1283→                            <div className="w-16 h-16 rounded-2xl overflow-hidden flex items-center justify-center shrink-0" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
+  1284→                              <ProductImage providerId={provider.id} providerName={provider.name} size="lg" />
+  1285→                            </div>
+  1286→                            <span className="text-[11px] font-semibold text-center leading-tight max-w-[90px]" style={{ color: textColor, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+  1287→                              {provider.name}
+  1288→                            </span>
+  1289→                            {startingPrice > 0 && (
+  1290→                              <span className="text-[10px] font-bold" style={{ color: '#5C1A1B' }}>
+  1291→                                من {formatPrice(startingPrice)} ر.ي
+  1292→                              </span>
+  1293→                            )}
+  1294→                          </motion.button>
+  1295→                        );
+  1296→                      })}
+  1297→                    </div>
+  1298→                  </div>
+  1299→                ) : (
+  1300→                  <div className="rounded-2xl p-8 flex flex-col items-center" style={{ background: cardBg, border: `1px solid ${borderColor}` }}>
+  1301→                    <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-3" style={{ background: isDark ? '#222' : '#F5F5F5' }}>
+  1302→                      <Search size={24} strokeWidth={1.5} color={isDark ? '#333' : '#DDD'} />
+  1303→                    </div>
+  1304→                    <p className="text-sm font-medium" style={{ color: isDark ? '#555' : '#AAA' }}>لا توجد نتائج</p>
+  1305→                  </div>
+  1306→                );
+  1307→              })()}
+  1308→            </motion.div>
+  1309→          )}
+  1310→        </AnimatePresence>
+  1311→      </div>
+  1312→    </div>
+  1313→  );
+  1314→}
+  1315→

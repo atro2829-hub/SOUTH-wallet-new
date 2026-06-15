@@ -1,0 +1,733 @@
+     1→'use client';
+     2→
+     3→import { useEffect, useRef, useState, lazy, Suspense } from 'react';
+     4→import { AnimatePresence, motion } from 'framer-motion';
+     5→import { useAppStore } from '@/lib/store';
+     6→import { ToastProvider, useToast } from '@/components/fahed/toast-provider';
+     7→import { useTheme } from 'next-themes';
+     8→import { onAuthStateChanged } from 'firebase/auth';
+     9→import { auth, database } from '@/lib/firebase';
+    10→import { ref, get, update } from 'firebase/database';
+    11→import { generateUserId } from '@/lib/utils';
+    12→import { ErrorBoundary } from '@/components/fahed/error-boundary';
+    13→
+    14→// Lazy-loaded screen components for better performance
+    15→const AuthScreen = lazy(() => import('@/components/fahed/auth-screen'));
+    16→const HomeScreen = lazy(() => import('@/components/fahed/home-screen'));
+    17→const ServicesScreen = lazy(() => import('@/components/fahed/services-screen'));
+    18→const WalletScreen = lazy(() => import('@/components/fahed/wallet-screen'));
+    19→const AccountScreen = lazy(() => import('@/components/fahed/account-screen'));
+    20→const KycScreen = lazy(() => import('@/components/fahed/kyc-screen'));
+    21→const NotificationsScreen = lazy(() => import('@/components/fahed/notifications-screen'));
+    22→const OrdersScreen = lazy(() => import('@/components/fahed/orders-screen'));
+    23→const DepositScreen = lazy(() => import('@/components/fahed/deposit-screen'));
+    24→const SavingsScreen = lazy(() => import('@/components/fahed/savings-screen'));
+    25→const SupportScreen = lazy(() => import('@/components/fahed/support-screen'));
+    26→const ExchangeScreen = lazy(() => import('@/components/fahed/exchange-screen'));
+    27→const PromoScreen = lazy(() => import('@/components/fahed/promo-screen'));
+    28→const QRScreen = lazy(() => import('@/components/fahed/qr-screen'));
+    29→const EditProfileScreen = lazy(() => import('@/components/fahed/edit-profile-screen'));
+    30→const SplitScreen = lazy(() => import('@/components/fahed/split-screen'));
+    31→const SubscriptionsScreen = lazy(() => import('@/components/fahed/subscriptions-screen'));
+    32→const ChargingCompaniesScreen = lazy(() => import('@/components/fahed/charging-companies-screen'));
+    33→const RechargeScreen = lazy(() => import('@/components/fahed/recharge-screen'));
+    34→const SettingsScreen = lazy(() => import('@/components/fahed/settings-screen'));
+    35→const CategoryDetailScreen = lazy(() => import('@/components/fahed/category-detail-screen'));
+    36→const LegalScreen = lazy(() => import('@/components/fahed/legal-screen'));
+    37→const InvestmentScreen = lazy(() => import('@/components/fahed/investment-screen'));
+    38→const GiftVoucherScreen = lazy(() => import('@/components/fahed/gift-voucher-screen'));
+    39→const PinSetupScreen = lazy(() => import('@/components/fahed/pin-setup-screen'));
+    40→
+    41→// Eagerly loaded components (critical for initial render or frequently used)
+    42→import BottomNav from '@/components/fahed/bottom-nav';
+    43→import QuickActionDrawer from '@/components/fahed/quick-action-drawer';
+    44→import TransferModal from '@/components/fahed/transfer-modal';
+    45→import RequestMoneyModal from '@/components/fahed/request-money-modal';
+    46→import OrderBottomSheet from '@/components/fahed/order-bottom-sheet';
+    47→import SplashScreen from '@/components/fahed/splash-screen';
+    48→import PinScreen from '@/components/fahed/pin-screen';
+    49→import { useSupabaseSync } from '@/lib/use-supabase-sync';
+    50→import { useAdminSettings } from '@/lib/use-admin-settings';
+    51→import { LOGO_BASE64 } from '@/lib/logo';
+    52→
+    53→// Loading spinner component for Suspense fallback
+    54→function LoadingSpinner() {
+    55→  return (
+    56→    <div className="min-h-screen flex items-center justify-center" style={{ background: '#F5F5F5' }}>
+    57→      <div className="flex flex-col items-center">
+    58→        <div className="w-10 h-10 border-3 border-[#800020]/30 border-t-[#800020] rounded-full animate-spin" />
+    59→      </div>
+    60→    </div>
+    61→  );
+    62→}
+    63→
+    64→function DarkLoadingSpinner() {
+    65→  return (
+    66→    <div className="min-h-screen flex items-center justify-center dark" style={{ background: '#120808' }}>
+    67→      <div className="flex flex-col items-center">
+    68→        <div className="w-10 h-10 border-3 border-[#800020]/30 border-t-[#800020] rounded-full animate-spin" />
+    69→      </div>
+    70→    </div>
+    71→  );
+    72→}
+    73→
+    74→type AppPhase = 'splash' | 'pin' | 'main';
+    75→
+    76→function AppContent() {
+    77→  const { user, isAuthenticated, activeTab, activeScreen, setActiveScreen, theme: storeTheme, pinCode, selectedCategory, featureFlags, killSwitch } = useAppStore();
+    78→  const { theme } = useTheme();
+    79→  const isDark = theme === 'dark';
+    80→  const { setTheme } = useTheme();
+    81→  const { showToast } = useToast();
+    82→  const mountedRef = useRef(false);
+    83→  const [showUI, setShowUI] = useState(false);
+    84→  const [phase, setPhase] = useState<AppPhase>('splash');
+    85→  const [authLoading, setAuthLoading] = useState(true);
+    86→  const [splashDone, setSplashDone] = useState(false);
+    87→  const authInitializedRef = useRef(false);
+    88→  const kycToastShownRef = useRef(false);
+    89→
+    90→  // Sync user data from Supabase (real-time + on focus + on mount)
+    91→  useSupabaseSync();
+    92→  const { maintenance, forceUpdate } = useAdminSettings();
+    93→
+    94→  // Android back button handler via @capacitor/app
+    95→  useEffect(() => {
+    96→    if (!isAuthenticated) return;
+    97→
+    98→    let backPressedCount = 0;
+    99→    let listener: any = null;
+   100→
+   101→    const setupBackButton = async () => {
+   102→      try {
+   103→        const win = window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } };
+   104→        const isNative = win.Capacitor && win.Capacitor.isNativePlatform && win.Capacitor.isNativePlatform();
+   105→        if (!isNative) return;
+   106→
+   107→        const { App } = await import('@capacitor/app');
+   108→        listener = await App.addListener('backButton', () => {
+   109→          const state = useAppStore.getState();
+   110→
+   111→          // If any modal is open, close it first
+   112→          if (state.isTransferOpen) { state.setTransferOpen(false); return; }
+   113→          if (state.isOrderOpen) { state.setOrderOpen(false); return; }
+   114→          if (state.isDrawerOpen) { state.setDrawerOpen(false); return; }
+   115→          if (state.isRequestMoneyOpen) { state.setRequestMoneyOpen(false); return; }
+   116→
+   117→          // If on an overlay screen, go back to main
+   118→          if (state.activeScreen && state.activeScreen !== 'main') {
+   119→            state.setActiveScreen('main');
+   120→            return;
+   121→          }
+   122→
+   123→          // If on a non-home tab, go to home tab
+   124→          if (state.activeTab !== 'home') {
+   125→            state.setActiveTab('home');
+   126→            return;
+   127→          }
+   128→
+   129→          // On home tab - double press to exit
+   130→          if (backPressedCount === 0) {
+   131→            backPressedCount = 1;
+   132→            showToast('info', 'اضغط مرة أخرى للخروج', '');
+   133→            setTimeout(() => { backPressedCount = 0; }, 2000);
+   134→          } else if (backPressedCount === 1) {
+   135→            App.exitApp();
+   136→          }
+   137→        });
+   138→      } catch (e) {
+   139→        // Not running in Capacitor native - ignore
+   140→      }
+   141→    };
+   142→
+   143→    setupBackButton();
+   144→
+   145→    return () => {
+   146→      if (listener && typeof listener.then === 'function') {
+   147→        listener.then((l: any) => l?.remove?.()).catch(() => {});
+   148→      } else if (listener?.remove) {
+   149→        listener.remove();
+   150→      }
+   151→    };
+   152→  }, [isAuthenticated, showToast]);
+   153→
+   154→  // Show KYC verification toast as a floating notification
+   155→  useEffect(() => {
+   156→    if (!user || !isAuthenticated) {
+   157→      kycToastShownRef.current = false;
+   158→      return;
+   159→    }
+   160→    if (user.kycStatus === 'verified') {
+   161→      kycToastShownRef.current = false;
+   162→      return;
+   163→    }
+   164→    // Only show once per login session
+   165→    if (kycToastShownRef.current) return;
+   166→    kycToastShownRef.current = true;
+   167→
+   168→    const statusMessages: Record<string, { title: string; message: string; type: 'warning' | 'info' | 'error' }> = {
+   169→      pending: {
+   170→        title: 'حسابك غير موثق',
+   171→        message: 'لاستخدام جميع مميزات التطبيق، يرجى توثيق حسابك الآن',
+   172→        type: 'warning',
+   173→      },
+   174→      submitted: {
+   175→        title: 'طلب التوثيق قيد المراجعة',
+   176→        message: 'سيتم إشعارك بعد مراجعة طلب التوثيق',
+   177→        type: 'info',
+   178→      },
+   179→      rejected: {
+   180→        title: 'تم رفض طلب التوثيق',
+   181→        message: 'يرجى إعادة تقديم طلب التوثيق مع البيانات الصحيحة',
+   182→        type: 'error',
+   183→      },
+   184→    };
+   185→
+   186→    const config = statusMessages[user.kycStatus] || statusMessages.pending;
+   187→
+   188→    // Delay the toast so it doesn't appear during transition
+   189→    const timer = setTimeout(() => {
+   190→      showToast(config.type, config.title, config.message);
+   191→    }, 1500);
+   192→
+   193→    return () => clearTimeout(timer);
+   194→  }, [user?.kycStatus, isAuthenticated, showToast]);
+   195→
+   196→  // Listen to Firebase Auth state changes and sync with Zustand store
+   197→  useEffect(() => {
+   198→    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+   199→      // Mark that auth has been initialized at least once
+   200→      if (!authInitializedRef.current) {
+   201→        authInitializedRef.current = true;
+   202→      }
+   203→
+   204→      if (firebaseUser) {
+   205→        // User is signed in via Firebase Auth
+   206→        // Check if Zustand store already has this user synced
+   207→        const currentUser = useAppStore.getState().user;
+   208→        if (currentUser && currentUser.id === firebaseUser.uid) {
+   209→          // Already synced, just mark auth as loaded
+   210→          setAuthLoading(false);
+   211→          return;
+   212→        }
+   213→
+   214→        // Fetch user data from Firebase and set in store
+   215→        try {
+   216→          const userRef = ref(database, `users/${firebaseUser.uid}`);
+   217→          const snapshot = await get(userRef);
+   218→          if (snapshot.exists()) {
+   219→            const data = snapshot.val();
+   220→            const fullName = [data.firstName, data.secondName, data.thirdName, data.familyName].filter((n: string) => n && n.trim()).join(' ') || data.name || '';
+   221→            const isAdminEmail = (data.email || firebaseUser.email || '').toLowerCase().includes('admin');
+   222→            let effectiveRole: 'user' | 'admin' | 'owner' = data.role || 'user';
+   223→            if (effectiveRole !== 'owner' && (effectiveRole === 'admin' || isAdminEmail)) {
+   224→              effectiveRole = 'admin';
+   225→            }
+   226→            useAppStore.getState().setUser({
+   227→              id: firebaseUser.uid,
+   228→              email: data.email || firebaseUser.email || '',
+   229→              phone: data.phone || '',
+   230→              name: fullName,
+   231→              firstName: data.firstName || '',
+   232→              secondName: data.secondName || '',
+   233→              thirdName: data.thirdName || '',
+   234→              familyName: data.familyName || '',
+   235→              nationalId: data.nationalId || '',
+   236→              avatar: data.avatar || '',
+   237→              role: effectiveRole,
+   238→              userId: data.userId || '',
+   239→              kycStatus: data.kycStatus || 'pending',
+   240→              isBlocked: data.isBlocked || false,
+   241→              balanceYER: data.balanceYER || 0,
+   242→              balanceSAR: data.balanceSAR || 0,
+   243→              balanceUSD: data.balanceUSD || 0,
+   244→              cardType: data.cardType || '',
+   245→              cardNumber: data.cardNumber || '',
+   246→              cardIssuedAt: data.cardIssuedAt || '',
+   247→              governorate: data.governorate || '',
+   248→              theme: data.theme || 'light',
+   249→            });
+   250→          } else {
+   251→            // Firebase auth user exists but no DB record - create one
+   252→            const newUserId = generateUserId();
+   253→            const email = firebaseUser.email || '';
+   254→            const isAdminEmail = email.toLowerCase().includes('admin');
+   255→            const newUserData = {
+   256→              email, phone: '', name: '', firstName: '', secondName: '', thirdName: '', familyName: '',
+   257→              nationalId: '', avatar: '', role: isAdminEmail ? 'admin' as const : 'user' as const, userId: newUserId,
+   258→              kycStatus: 'pending' as const, isBlocked: false, balanceYER: 0, balanceSAR: 0, balanceUSD: 0,
+   259→              cardType: '', cardNumber: '', cardIssuedAt: '', governorate: '', theme: 'light' as const,
+   260→            };
+   261→            await update(ref(database), {
+   262→              [`users/${firebaseUser.uid}`]: newUserData,
+   263→              [`userIds/${newUserId}`]: firebaseUser.uid,
+   264→            });
+   265→            useAppStore.getState().setUser({ id: firebaseUser.uid, ...newUserData });
+   266→          }
+   267→        } catch (error) {
+   268→          console.error('Error fetching user data on auth state change:', error);
+   269→          // Don't logout on fetch error - the user might just have a network issue
+   270→        }
+   271→      } else {
+   272→        // User is signed out from Firebase Auth
+   273→        // Only clear store if auth was already initialized (not during initial load)
+   274→        // This prevents premature logout when Firebase Auth is still initializing
+   275→        const currentState = useAppStore.getState();
+   276→        if (currentState.isAuthenticated || currentState.user) {
+   277→          useAppStore.getState().logout();
+   278→        }
+   279→      }
+   280→      setAuthLoading(false);
+   281→    });
+   282→
+   283→    return () => unsubscribe();
+   284→  }, []);
+   285→
+   286→  useEffect(() => {
+   287→    mountedRef.current = true;
+   288→    const raf = requestAnimationFrame(() => {
+   289→      setShowUI(true);
+   290→    });
+   291→    return () => {
+   292→      mountedRef.current = false;
+   293→      cancelAnimationFrame(raf);
+   294→    };
+   295→  }, []);
+   296→
+   297→  useEffect(() => {
+   298→    if (mountedRef.current) {
+   299→      setTheme(storeTheme);
+   300→    }
+   301→  }, [storeTheme, setTheme]);
+   302→
+   303→  // Initialize Push Notifications (Capacitor native + Web FCM)
+   304→  useEffect(() => {
+   305→    if (!isAuthenticated) return;
+   306→
+   307→    const initPushNotifications = async () => {
+   308→      try {
+   309→        // Check if running in Capacitor native environment
+   310→        const win = window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } };
+   311→        const isNative = win.Capacitor && win.Capacitor.isNativePlatform && win.Capacitor.isNativePlatform();
+   312→
+   313→        if (isNative) {
+   314→          // ─── Native Android/iOS via Capacitor ───
+   315→          const { PushNotifications } = await import('@capacitor/push-notifications');
+   316→
+   317→          // Request permission
+   318→          const permResult = await PushNotifications.requestPermissions();
+   319→          if (permResult.receive !== 'granted') {
+   320→            console.warn('Push notification permission denied');
+   321→            return;
+   322→          }
+   323→
+   324→          // Register for push notifications
+   325→          await PushNotifications.register();
+   326→
+   327→          // Listen for registration token
+   328→          PushNotifications.addListener('registration', async (token) => {
+   329→            console.log('Push registration success, token:', token.value);
+   330→            localStorage.setItem('notification-permission', 'granted');
+   331→            // Save FCM token to Firebase
+   332→            try {
+   333→              const { database } = await import('@/lib/firebase');
+   334→              const { ref, set: firebaseSet } = await import('firebase/database');
+   335→              const currentUser = useAppStore.getState().user;
+   336→              if (currentUser?.id) {
+   337→                await firebaseSet(ref(database, `users/${currentUser.id}/fcmToken`), token.value);
+   338→                console.log('FCM token saved to Firebase for user:', currentUser.id);
+   339→              }
+   340→            } catch (e) {
+   341→              console.warn('Failed to save FCM token:', e);
+   342→            }
+   343→          });
+   344→
+   345→          // Listen for registration errors (don't crash, just log)
+   346→          PushNotifications.addListener('registrationError', (error) => {
+   347→            console.warn('Push registration error (non-fatal):', error);
+   348→          });
+   349→
+   350→          // Listen for push notification received (foreground)
+   351→          PushNotifications.addListener('pushNotificationReceived', (notification) => {
+   352→            console.log('Push notification received:', notification);
+   353→            // Show in-app toast
+   354→            const store = useAppStore.getState();
+   355→            if (notification.title || notification.body) {
+   356→              store.addNotification({
+   357→                id: `push-${Date.now()}`,
+   358→                title: notification.title || 'إشعار جديد',
+   359→                body: notification.body || '',
+   360→                type: 'info',
+   361→                isRead: false,
+   362→                createdAt: new Date().toISOString(),
+   363→              });
+   364→
+   365→              // Play notification sound
+   366→              try {
+   367→                const soundType = notification.data?.type || 'info';
+   368→                const soundMap: Record<string, string> = {
+   369→                  transaction: '/sounds/transfer.wav',
+   370→                  security: '/sounds/security.wav',
+   371→                  promo: '/sounds/promo.wav',
+   372→                  info: '/sounds/notification.wav',
+   373→                };
+   374→                const audio = new Audio(soundMap[soundType] || soundMap.info);
+   375→                audio.volume = 0.5;
+   376→                audio.play().catch(() => {});
+   377→              } catch {}
+   378→
+   379→              // Vibrate
+   380→              if (navigator.vibrate) {
+   381→                navigator.vibrate(100);
+   382→              }
+   383→            }
+   384→          });
+   385→
+   386→          // Listen for push notification action (background/closed app tap)
+   387→          PushNotifications.addListener('pushNotificationActionPerformed', (action) => {
+   388→            console.log('Push notification action:', action);
+   389→          });
+   390→
+   391→        } else {
+   392→          // ─── Web/PWA via Firebase Messaging SDK ───
+   393→          try {
+   394→            const { getMessaging, getToken, onMessage } = await import('firebase/messaging');
+   395→            const { messaging: firebaseMessaging } = await import('@/lib/firebase');
+   396→
+   397→            // Request notification permission
+   398→            const permission = await Notification.requestPermission();
+   399→            if (permission === 'granted') {
+   400→              localStorage.setItem('notification-permission', 'granted');
+   401→
+   402→              // Get FCM token for web
+   403→              const vapidKey = 'BMqFpzYvhfjzEM3v1Oq-gMfPwFwmI_S04g-QC_Lz1yFEPG4bZxqXbHOyI_NzJqPWKMfCgL_2MnC1r8l0G6eFyLA'; // We'll generate this
+   404→              const currentToken = await getToken(firebaseMessaging, {
+   405→                vapidKey: vapidKey,
+   406→              });
+   407→
+   408→              if (currentToken) {
+   409→                console.log('Web FCM token:', currentToken);
+   410→                // Save FCM token to Firebase
+   411→                const currentUser = useAppStore.getState().user;
+   412→                if (currentUser?.id) {
+   413→                  const { database } = await import('@/lib/firebase');
+   414→                  const { ref, set: firebaseSet } = await import('firebase/database');
+   415→                  await firebaseSet(ref(database, `users/${currentUser.id}/fcmToken`), currentToken);
+   416→                  console.log('Web FCM token saved for user:', currentUser.id);
+   417→                }
+   418→              }
+   419→
+   420→              // Listen for foreground messages
+   421→              onMessage(firebaseMessaging, (payload) => {
+   422→                console.log('Foreground message received:', payload);
+   423→                const store = useAppStore.getState();
+   424→
+   425→                // Show in-app notification
+   426→                store.addNotification({
+   427→                  id: `push-${Date.now()}`,
+   428→                  title: payload.notification?.title || payload.data?.title || 'إشعار جديد',
+   429→                  body: payload.notification?.body || payload.data?.body || '',
+   430→                  type: (payload.data?.type as any) || 'info',
+   431→                  isRead: false,
+   432→                  createdAt: new Date().toISOString(),
+   433→                });
+   434→
+   435→                // Play notification sound
+   436→                try {
+   437→                  const soundType = payload.data?.type || 'info';
+   438→                  const soundMap: Record<string, string> = {
+   439→                    transaction: '/sounds/transfer.wav',
+   440→                    security: '/sounds/security.wav',
+   441→                    promo: '/sounds/promo.wav',
+   442→                    info: '/sounds/notification.wav',
+   443→                  };
+   444→                  const audio = new Audio(soundMap[soundType] || soundMap.info);
+   445→                  audio.volume = 0.5;
+   446→                  audio.play().catch(() => {});
+   447→                } catch {}
+   448→
+   449→                // Vibrate
+   450→                if (navigator.vibrate) {
+   451→                  navigator.vibrate(100);
+   452→                }
+   453→              });
+   454→            } else {
+   455→              console.warn('Notification permission denied for web');
+   456→            }
+   457→          } catch (webError) {
+   458→            console.warn('Web Firebase Messaging not available (non-fatal):', webError);
+   459→          }
+   460→        }
+   461→
+   462→      } catch (error) {
+   463→        // If anything fails, just log it and continue - don't crash the app
+   464→        console.warn('Push notifications initialization failed (non-fatal):', error);
+   465→      }
+   466→    };
+   467→
+   468→    // Delay initialization to avoid interfering with app startup
+   469→    const timer = setTimeout(initPushNotifications, 3000);
+   470→    return () => clearTimeout(timer);
+   471→  }, [isAuthenticated]);
+   472→
+   473→  const handleSplashComplete = () => {
+   474→    setSplashDone(true);
+   475→    // Phase transition will happen in the useEffect below
+   476→  };
+   477→
+   478→  const handlePinUnlock = () => {
+   479→    setPhase('main');
+   480→  };
+   481→
+   482→  // Transition phase after both splash is done and auth is resolved
+   483→  useEffect(() => {
+   484→    if (splashDone && !authLoading) {
+   485→      if (isAuthenticated && pinCode) {
+   486→        setPhase('pin');
+   487→      } else {
+   488→        setPhase('main');
+   489→      }
+   490→    }
+   491→  }, [splashDone, authLoading, isAuthenticated, pinCode]);
+   492→
+   493→  useEffect(() => {
+   494→    if (phase === 'main' && !isAuthenticated) {
+   495→      // User logged out, stay on main (which shows auth screen)
+   496→    }
+   497→  }, [isAuthenticated, phase]);
+   498→
+   499→  // Show auth loading screen while Firebase Auth is initializing
+   500→  if (authLoading && !splashDone) {
+   501→    return <SplashScreen onComplete={handleSplashComplete} />;
+   502→  }
+   503→
+   504→  // Show loading spinner while auth is resolving after splash
+   505→  if (authLoading && splashDone) {
+   506→    return (
+   507→      <div className="min-h-screen flex items-center justify-center" style={{ background: isDark ? '#0F0F0F' : '#F5F5F5' }}>
+   508→        <motion.div
+   509→          initial={{ scale: 0.8, opacity: 0 }}
+   510→          animate={{ scale: 1, opacity: 1 }}
+   511→          className="flex flex-col items-center"
+   512→        >
+   513→          <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-4 overflow-hidden" style={{ background: 'linear-gradient(145deg, #5C1A1B 0%, #3D0F10 100%)', boxShadow: '0 8px 24px rgba(92,26,27,0.3)' }}>
+   514→            <span className="text-white text-sm font-bold">الجنوب</span>
+   515→          </div>
+   516→          <div className="w-8 h-8 border-2 border-[#5C1A1B]/30 border-t-[#5C1A1B] rounded-full animate-spin" />
+   517→        </motion.div>
+   518→      </div>
+   519→    );
+   520→  }
+   521→
+   522→  // Splash screen phase
+   523→  if (phase === 'splash') {
+   524→    return <SplashScreen onComplete={handleSplashComplete} />;
+   525→  }
+   526→
+   527→  // PIN lock phase
+   528→  if (phase === 'pin') {
+   529→    return <PinScreen onUnlock={handlePinUnlock} />;
+   530→  }
+   531→
+   532→  // Main app phase
+   533→  if (!showUI) {
+   534→    return (
+   535→      <div className="min-h-screen flex items-center justify-center" style={{ background: '#0F0F0F' }}>
+   536→        <motion.div
+   537→          initial={{ scale: 0.8, opacity: 0 }}
+   538→          animate={{ scale: 1, opacity: 1 }}
+   539→          className="flex flex-col items-center"
+   540→        >
+   541→          <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-4 overflow-hidden" style={{ background: 'linear-gradient(145deg, #5C1A1B 0%, #3D0F10 100%)', boxShadow: '0 8px 24px rgba(92,26,27,0.3)' }}>
+   542→            <span className="text-white text-sm font-bold">الجنوب</span>
+   543→          </div>
+   544→          <div className="w-8 h-8 border-2 border-[#5C1A1B]/30 border-t-[#5C1A1B] rounded-full animate-spin" />
+   545→        </motion.div>
+   546→      </div>
+   547→    );
+   548→  }
+   549→
+   550→  // ─── Kill switch check (BEFORE maintenance — highest priority) ────────
+   551→  // The kill switch is an emergency app shutdown controlled by admin.
+   552→  if (killSwitch?.active) {
+   553→    // Auto-deactivate if deactivateAt has passed
+   554→    const deactivateAt = killSwitch.deactivateAt ? new Date(killSwitch.deactivateAt).getTime() : 0;
+   555→    const now = Date.now();
+   556→    if (deactivateAt > 0 && now >= deactivateAt) {
+   557→      // Auto-deactivate - update Firebase
+   558→      update(ref(database, 'adminSettings/killSwitch'), { active: false });
+   559→    } else {
+   560→      // Calculate countdown
+   561→      let countdownText = '';
+   562→      if (deactivateAt > 0) {
+   563→        const diff = deactivateAt - now;
+   564→        const hours = Math.floor(diff / (1000 * 60 * 60));
+   565→        const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+   566→        countdownText = `${hours}س ${minutes}د`;
+   567→      }
+   568→      return (
+   569→        <div className="min-h-screen flex items-center justify-center" style={{ background: 'linear-gradient(145deg, #B71C1C 0%, #880E4F 60%, #3D0F10 100%)' }}>
+   570→          <div className="flex flex-col items-center px-8 text-center">
+   571→            <div className="w-20 h-20 rounded-3xl overflow-hidden flex items-center justify-center mb-6" style={{ background: 'rgba(255,255,255,0.15)' }}>
+   572→              <svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>
+   573→            </div>
+   574→            <h1 className="text-2xl font-bold text-white mb-3">التطبيق مغلق</h1>
+   575→            <p className="text-white/70 text-sm leading-relaxed mb-2">{killSwitch.message || 'التطبيق مغلق مؤقتاً'}</p>
+   576→            {countdownText && (
+   577→              <p className="text-white/50 text-xs mt-2">الوقت المتبقي: {countdownText}</p>
+   578→            )}
+   579→          </div>
+   580→        </div>
+   581→      );
+   582→    }
+   583→  }
+   584→
+   585→  // ─── Maintenance mode check (BEFORE auth check — locks ALL users) ──────
+   586→  // This must come before the authentication check so that maintenance mode
+   587→  // locks the entire app even for users who aren't logged in yet.
+   588→  // Works in real-time: if admin activates maintenance while a user is in the
+   589→  // app, the maintenance screen appears immediately.
+   590→  // Check both the legacy maintenance object and the featureFlags.maintenanceMode
+   591→  if (maintenance?.active || featureFlags.maintenanceMode) {
+   592→    const maintenanceMessage = featureFlags.maintenanceMessage || maintenance?.message || '';
+   593→    return (
+   594→      <div className="min-h-screen flex items-center justify-center" style={{ background: 'linear-gradient(145deg, #5C1A1B 0%, #3D0F10 60%, #2D0A0A 100%)' }}>
+   595→        <div className="flex flex-col items-center px-8 text-center">
+   596→          <div className="w-20 h-20 rounded-3xl overflow-hidden flex items-center justify-center mb-6" style={{ background: 'rgba(255,255,255,0.15)' }}>
+   597→            <img src={LOGO_BASE64} alt="الجنوب" className="w-14 h-14 object-cover" />
+   598→          </div>
+   599→          <h1 className="text-2xl font-bold text-white mb-3">صيانة مجدولة</h1>
+   600→          <p className="text-white/70 text-sm leading-relaxed mb-2">{maintenanceMessage || 'التطبيق حالياً في وضع الصيانة'}</p>
+   601→          {maintenance?.estimatedTime && (
+   602→            <p className="text-white/50 text-xs">الوقت المتوقع للعودة: {maintenance.estimatedTime}</p>
+   603→          )}
+   604→        </div>
+   605→      </div>
+   606→    );
+   607→  }
+   608→
+   609→  // ─── Force update check (BEFORE auth check — applies to ALL users) ─────
+   610→  if (forceUpdate?.active) {
+   611→    const currentVersion = '0.4.6.5';
+   612→    const minVersion = forceUpdate.minVersion || '0.0.0';
+   613→    const needsUpdate = currentVersion < minVersion;
+   614→    if (needsUpdate) {
+   615→      return (
+   616→        <div className="min-h-screen flex items-center justify-center" style={{ background: 'linear-gradient(145deg, #1A0A2E 0%, #2D1B4E 50%, #1A0A2E 100%)' }}>
+   617→          <div className="flex flex-col items-center px-8 text-center">
+   618→            <div className="w-20 h-20 rounded-3xl overflow-hidden flex items-center justify-center mb-6" style={{ background: 'rgba(255,255,255,0.1)' }}>
+   619→              <img src={LOGO_BASE64} alt="الجنوب" className="w-14 h-14 object-cover" />
+   620→            </div>
+   621→            <h1 className="text-2xl font-bold text-white mb-3">تحديث مطلوب</h1>
+   622→            <p className="text-white/70 text-sm leading-relaxed mb-4">{forceUpdate.message || 'يرجى تحديث التطبيق إلى أحدث إصدار للاستمرار'}</p>
+   623→            {forceUpdate.updateUrl && (
+   624→              <a
+   625→                href={forceUpdate.updateUrl}
+   626→                target="_blank"
+   627→                rel="noopener noreferrer"
+   628→                className="px-8 py-3 rounded-xl text-white font-bold text-sm"
+   629→                style={{ background: '#5C1A1B' }}
+   630→              >
+   631→                تحديث الآن
+   632→              </a>
+   633→            )}
+   634→          </div>
+   635→        </div>
+   636→      );
+   637→    }
+   638→  }
+   639→
+   640→  if (!isAuthenticated || !user) {
+   641→    return (
+   642→      <Suspense fallback={<LoadingSpinner />}>
+   643→        <AuthScreen />
+   644→      </Suspense>
+   645→    );
+   646→  }
+   647→
+   648→  // Full-screen overlays
+   649→  const overlayScreens: Record<string, React.ComponentType> = {
+   650→    notifications: NotificationsScreen,
+   651→    kyc: KycScreen,
+   652→    orders: OrdersScreen,
+   653→    deposit: DepositScreen,
+   654→    savings: SavingsScreen,
+   655→    support: SupportScreen,
+   656→    exchange: ExchangeScreen,
+   657→    promo: PromoScreen,
+   658→    qr: QRScreen,
+   659→    'edit-profile': EditProfileScreen,
+   660→    split: SplitScreen,
+   661→    subscriptions: SubscriptionsScreen,
+   662→    'charging-companies': ChargingCompaniesScreen,
+   663→    recharge: RechargeScreen,
+   664→    settings: SettingsScreen,
+   665→    'category-detail': CategoryDetailScreen,
+   666→    legal: LegalScreen,
+   667→    investment: InvestmentScreen,
+   668→    'gift-vouchers': GiftVoucherScreen,
+   669→    'pin-setup': PinSetupScreen,
+   670→  };
+   671→
+   672→  if (activeScreen in overlayScreens) {
+   673→    const OverlayComponent = overlayScreens[activeScreen];
+   674→    return (
+   675→      <div className="min-h-screen bg-[#F5F5F5] dark:bg-[#120808] max-w-md mx-auto relative" style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}>
+   676→        <Suspense fallback={<LoadingSpinner />}>
+   677→          <OverlayComponent key={activeScreen === 'category-detail' ? `category-detail-${selectedCategory}` : activeScreen} />
+   678→        </Suspense>
+   679→        <OrderBottomSheet />
+   680→        <TransferModal />
+   681→        <RequestMoneyModal />
+   682→        <QuickActionDrawer />
+   683→      </div>
+   684→    );
+   685→  }
+   686→
+   687→  const renderScreen = () => {
+   688→    switch (activeTab) {
+   689→      case 'home': return <HomeScreen />;
+   690→      case 'services': return <ServicesScreen />;
+   691→      case 'wallet': return <WalletScreen />;
+   692→      case 'account': return <AccountScreen />;
+   693→      default: return <HomeScreen />;
+   694→    }
+   695→  };
+   696→
+   697→  return (
+   698→    <div className="min-h-screen bg-[#F5F5F5] dark:bg-[#120808] max-w-md mx-auto relative" style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}>
+   699→      <main className="flex-1 overflow-y-auto pb-24">
+   700→        <AnimatePresence mode="wait">
+   701→          <motion.div
+   702→            key={activeTab}
+   703→            initial={{ opacity: 0, y: 8 }}
+   704→            animate={{ opacity: 1, y: 0 }}
+   705→            exit={{ opacity: 0, y: -8 }}
+   706→            transition={{ duration: 0.15 }}
+   707→          >
+   708→            <Suspense fallback={<LoadingSpinner />}>
+   709→              {renderScreen()}
+   710→            </Suspense>
+   711→          </motion.div>
+   712→        </AnimatePresence>
+   713→      </main>
+   714→
+   715→      <BottomNav />
+   716→      <QuickActionDrawer />
+   717→      <TransferModal />
+   718→      <RequestMoneyModal />
+   719→      <OrderBottomSheet />
+   720→    </div>
+   721→  );
+   722→}
+   723→
+   724→export default function Home() {
+   725→  return (
+   726→    <ErrorBoundary>
+   727→      <ToastProvider>
+   728→        <AppContent />
+   729→      </ToastProvider>
+   730→    </ErrorBoundary>
+   731→  );
+   732→}
+   733→

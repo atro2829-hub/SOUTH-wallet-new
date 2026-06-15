@@ -1,0 +1,707 @@
+     1→'use client';
+     2→
+     3→import { useState, useEffect, useCallback } from 'react';
+     4→import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+     5→import { Button } from '@/components/ui/button';
+     6→import { Input } from '@/components/ui/input';
+     7→import { Label } from '@/components/ui/label';
+     8→import { Switch } from '@/components/ui/switch';
+     9→import { Badge } from '@/components/ui/badge';
+    10→import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+    11→import {
+    12→  Globe,
+    13→  Key,
+    14→  RefreshCw,
+    15→  CheckCircle,
+    16→  XCircle,
+    17→  Loader2,
+    18→  DollarSign,
+    19→  Package,
+    20→  FolderOpen,
+    21→  Settings,
+    22→  ArrowUpDown,
+    23→  Eye,
+    24→  EyeOff,
+    25→  Save,
+    26→  AlertTriangle,
+    27→  ShoppingCart,
+    28→} from 'lucide-react';
+    29→import {
+    30→  testG2BulkConnection,
+    31→  saveG2BulkApiKey,
+    32→  getG2BulkSettings,
+    33→  updateG2BulkSettings,
+    34→  syncG2BulkCategories,
+    35→  syncG2BulkProducts,
+    36→  fullG2BulkSync,
+    37→  getG2BulkCategoriesFromFirebase,
+    38→  getG2BulkProductsFromFirebase,
+    39→  updateG2BulkCategory,
+    40→  updateG2BulkProduct,
+    41→  checkG2BulkBalance,
+    42→  checkG2BulkOrderStatus,
+    43→  type G2BulkCategory,
+    44→  type G2BulkProduct,
+    45→} from '@/lib/g2bulk';
+    46→import { onValue, ref } from 'firebase/database';
+    47→import { database } from '@/lib/firebase';
+    48→
+    49→export default function G2BulkPanel() {
+    50→  const [apiKey, setApiKey] = useState('');
+    51→  const [showKey, setShowKey] = useState(false);
+    52→  const [testing, setTesting] = useState(false);
+    53→  const [testResult, setTestResult] = useState<{
+    54→    success: boolean;
+    55→    balance?: number;
+    56→    username?: string;
+    57→    error?: string;
+    58→  } | null>(null);
+    59→  const [saving, setSaving] = useState(false);
+    60→  const [syncing, setSyncing] = useState(false);
+    61→  const [enabled, setEnabled] = useState(false);
+    62→  const [autoSync, setAutoSync] = useState(false);
+    63→  const [markupPercent, setMarkupPercent] = useState(0);
+    64→  const [lastSync, setLastSync] = useState('');
+    65→  const [balance, setBalance] = useState<number | null>(null);
+    66→  const [categories, setCategories] = useState<Record<string, G2BulkCategory>>({});
+    67→  const [products, setProducts] = useState<Record<string, G2BulkProduct>>({});
+    68→  const [activeTab, setActiveTab] = useState('settings');
+    69→  const [loading, setLoading] = useState(true);
+    70→
+    71→  // Load settings on mount
+    72→  useEffect(() => {
+    73→    const settingsRef = ref(database, 'adminSettings/g2bulk');
+    74→    const unsubscribe = onValue(settingsRef, (snapshot) => {
+    75→      if (snapshot.exists()) {
+    76→        const data = snapshot.val();
+    77→        setApiKey(data.apiKey || '');
+    78→        setEnabled(data.enabled || false);
+    79→        setAutoSync(data.autoSync || false);
+    80→        setMarkupPercent(data.markupPercent || 0);
+    81→        setLastSync(data.lastSync || '');
+    82→        setCategories(data.categories || {});
+    83→        setProducts(data.products || {});
+    84→      }
+    85→      setLoading(false);
+    86→    });
+    87→
+    88→    return () => {
+    89→      // Firebase onValue doesn't return a standard unsubscribe function
+    90→      // but we should clean up
+    91→    };
+    92→  }, []);
+    93→
+    94→  // Test API connection
+    95→  const handleTestConnection = async () => {
+    96→    setTesting(true);
+    97→    setTestResult(null);
+    98→    try {
+    99→      const result = await testG2BulkConnection(apiKey);
+   100→      setTestResult(result);
+   101→      if (result.success && result.balance !== undefined) {
+   102→        setBalance(result.balance);
+   103→      }
+   104→    } catch (error: unknown) {
+   105→      setTestResult({ success: false, error: (error as Error).message });
+   106→    }
+   107→    setTesting(false);
+   108→  };
+   109→
+   110→  // Save API key
+   111→  const handleSaveApiKey = async () => {
+   112→    setSaving(true);
+   113→    try {
+   114→      await saveG2BulkApiKey(apiKey);
+   115→    } catch (error) {
+   116→      console.error('Failed to save API key:', error);
+   117→    }
+   118→    setSaving(false);
+   119→  };
+   120→
+   121→  // Save general settings
+   122→  const handleSaveSettings = async () => {
+   123→    setSaving(true);
+   124→    try {
+   125→      await updateG2BulkSettings({ enabled, autoSync, markupPercent });
+   126→    } catch (error) {
+   127→      console.error('Failed to save settings:', error);
+   128→    }
+   129→    setSaving(false);
+   130→  };
+   131→
+   132→  // Sync categories
+   133→  const handleSyncCategories = async () => {
+   134→    setSyncing(true);
+   135→    try {
+   136→      await syncG2BulkCategories();
+   137→    } catch (error) {
+   138→      console.error('Failed to sync categories:', error);
+   139→    }
+   140→    setSyncing(false);
+   141→  };
+   142→
+   143→  // Sync products
+   144→  const handleSyncProducts = async () => {
+   145→    setSyncing(true);
+   146→    try {
+   147→      await syncG2BulkProducts();
+   148→    } catch (error) {
+   149→      console.error('Failed to sync products:', error);
+   150→    }
+   151→    setSyncing(false);
+   152→  };
+   153→
+   154→  // Full sync
+   155→  const handleFullSync = async () => {
+   156→    setSyncing(true);
+   157→    try {
+   158→      await fullG2BulkSync();
+   159→    } catch (error) {
+   160→      console.error('Failed to full sync:', error);
+   161→    }
+   162→    setSyncing(false);
+   163→  };
+   164→
+   165→  // Check balance
+   166→  const handleCheckBalance = async () => {
+   167→    try {
+   168→      const result = await checkG2BulkBalance();
+   169→      if (result.success) {
+   170→        setBalance(result.balance);
+   171→      }
+   172→    } catch (error) {
+   173→      console.error('Failed to check balance:', error);
+   174→    }
+   175→  };
+   176→
+   177→  // Toggle category enabled
+   178→  const handleToggleCategory = async (catId: string, enabled: boolean) => {
+   179→    try {
+   180→      await updateG2BulkCategory(Number(catId), { enabled });
+   181→    } catch (error) {
+   182→      console.error('Failed to update category:', error);
+   183→    }
+   184→  };
+   185→
+   186→  // Map category to section
+   187→  const handleMapCategory = async (catId: string, mappedToSection: string) => {
+   188→    try {
+   189→      await updateG2BulkCategory(Number(catId), { mappedToSection });
+   190→    } catch (error) {
+   191→      console.error('Failed to map category:', error);
+   192→    }
+   193→  };
+   194→
+   195→  // Toggle product enabled
+   196→  const handleToggleProduct = async (prodId: string, enabled: boolean) => {
+   197→    try {
+   198→      await updateG2BulkProduct(Number(prodId), { enabled });
+   199→    } catch (error) {
+   200→      console.error('Failed to update product:', error);
+   201→    }
+   202→  };
+   203→
+   204→  // Update product markup
+   205→  const handleProductMarkup = async (prodId: string, markupPercent: number) => {
+   206→    try {
+   207→      await updateG2BulkProduct(Number(prodId), { markupPercent });
+   208→    } catch (error) {
+   209→      console.error('Failed to update product markup:', error);
+   210→    }
+   211→  };
+   212→
+   213→  const sectionOptions = [
+   214→    { value: '', label: 'غير محدد' },
+   215→    { value: 'telecom', label: 'الاتصالات' },
+   216→    { value: 'entertainment', label: 'الخدمات الترفيهية' },
+   217→    { value: 'games', label: 'الألعاب' },
+   218→    { value: 'gift-cards', label: 'بطاقات الهدايا' },
+   219→    { value: 'digital-wallets', label: 'المحافظ الرقمية' },
+   220→    { value: 'usdt', label: 'شراء USDT' },
+   221→    { value: 'investment', label: 'الاستثمار' },
+   222→  ];
+   223→
+   224→  const categoriesList = Object.values(categories);
+   225→  const productsList = Object.values(products);
+   226→  const enabledProductsCount = productsList.filter((p) => p.enabled).length;
+   227→
+   228→  if (loading) {
+   229→    return (
+   230→      <div className="flex items-center justify-center h-64">
+   231→        <Loader2 className="w-8 h-8 animate-spin text-purple-500" />
+   232→      </div>
+   233→    );
+   234→  }
+   235→
+   236→  return (
+   237→    <div className="space-y-6">
+   238→      {/* Header */}
+   239→      <div className="flex items-center justify-between">
+   240→        <div className="flex items-center gap-3">
+   241→          <div className="w-12 h-12 rounded-xl bg-blue-600/20 border border-blue-500/30 flex items-center justify-center">
+   242→            <Globe className="w-6 h-6 text-blue-400" />
+   243→          </div>
+   244→          <div>
+   245→            <h2 className="text-xl font-bold">مزود G2Bulk</h2>
+   246→            <p className="text-sm text-muted-foreground">
+   247→              إدارة مزود الخدمات G2Bulk والمزامنة مع الأقسام
+   248→            </p>
+   249→          </div>
+   250→        </div>
+   251→        <div className="flex items-center gap-2">
+   252→          <Badge variant={enabled ? 'default' : 'secondary'} className={enabled ? 'bg-green-600' : ''}>
+   253→            {enabled ? 'مفعّل' : 'معطّل'}
+   254→          </Badge>
+   255→          {balance !== null && (
+   256→            <Badge variant="outline" className="text-blue-400 border-blue-500/30">
+   257→              <DollarSign className="w-3 h-3 ml-1" />
+   258→              رصيد: ${balance.toFixed(2)}
+   259→            </Badge>
+   260→          )}
+   261→        </div>
+   262→      </div>
+   263→
+   264→      {/* Tabs */}
+   265→      <Tabs value={activeTab} onValueChange={setActiveTab}>
+   266→        <TabsList className="grid w-full grid-cols-4">
+   267→          <TabsTrigger value="settings">
+   268→            <Settings className="w-4 h-4 ml-1" />
+   269→            الإعدادات
+   270→          </TabsTrigger>
+   271→          <TabsTrigger value="categories">
+   272→            <FolderOpen className="w-4 h-4 ml-1" />
+   273→            الأقسام ({categoriesList.length})
+   274→          </TabsTrigger>
+   275→          <TabsTrigger value="products">
+   276→            <Package className="w-4 h-4 ml-1" />
+   277→            المنتجات ({enabledProductsCount}/{productsList.length})
+   278→          </TabsTrigger>
+   279→          <TabsTrigger value="sync">
+   280→            <RefreshCw className="w-4 h-4 ml-1" />
+   281→            المزامنة
+   282→          </TabsTrigger>
+   283→        </TabsList>
+   284→
+   285→        {/* Settings Tab */}
+   286→        <TabsContent value="settings" className="space-y-4 mt-4">
+   287→          {/* API Key */}
+   288→          <Card>
+   289→            <CardHeader>
+   290→              <CardTitle className="text-base flex items-center gap-2">
+   291→                <Key className="w-5 h-5 text-yellow-500" />
+   292→                مفتاح API
+   293→              </CardTitle>
+   294→            </CardHeader>
+   295→            <CardContent className="space-y-4">
+   296→              <div className="flex gap-2">
+   297→                <div className="flex-1 relative">
+   298→                  <Input
+   299→                    type={showKey ? 'text' : 'password'}
+   300→                    value={apiKey}
+   301→                    onChange={(e) => setApiKey(e.target.value)}
+   302→                    placeholder="أدخل مفتاح G2Bulk API"
+   303→                    className="pl-10"
+   304→                    dir="ltr"
+   305→                  />
+   306→                  <button
+   307→                    onClick={() => setShowKey(!showKey)}
+   308→                    className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+   309→                  >
+   310→                    {showKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+   311→                  </button>
+   312→                </div>
+   313→                <Button onClick={handleSaveApiKey} disabled={saving || !apiKey}>
+   314→                  {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+   315→                  حفظ
+   316→                </Button>
+   317→              </div>
+   318→
+   319→              <div className="flex gap-2">
+   320→                <Button
+   321→                  variant="outline"
+   322→                  onClick={handleTestConnection}
+   323→                  disabled={testing || !apiKey}
+   324→                  className="flex-1"
+   325→                >
+   326→                  {testing ? (
+   327→                    <Loader2 className="w-4 h-4 animate-spin ml-2" />
+   328→                  ) : (
+   329→                    <CheckCircle className="w-4 h-4 ml-2" />
+   330→                  )}
+   331→                  اختبار الاتصال
+   332→                </Button>
+   333→                <Button
+   334→                  variant="outline"
+   335→                  onClick={handleCheckBalance}
+   336→                  disabled={!apiKey}
+   337→                >
+   338→                  <DollarSign className="w-4 h-4 ml-2" />
+   339→                  فحص الرصيد
+   340→                </Button>
+   341→              </div>
+   342→
+   343→              {testResult && (
+   344→                <div
+   345→                  className={`p-3 rounded-lg flex items-center gap-2 ${
+   346→                    testResult.success
+   347→                      ? 'bg-green-500/10 border border-green-500/30'
+   348→                      : 'bg-red-500/10 border border-red-500/30'
+   349→                  }`}
+   350→                >
+   351→                  {testResult.success ? (
+   352→                    <CheckCircle className="w-5 h-5 text-green-500" />
+   353→                  ) : (
+   354→                    <XCircle className="w-5 h-5 text-red-500" />
+   355→                  )}
+   356→                  <div className="flex-1">
+   357→                    <p className="text-sm font-medium">
+   358→                      {testResult.success
+   359→                        ? `متصل بنجاح - المستخدم: ${testResult.username}`
+   360→                        : `فشل الاتصال: ${testResult.error}`}
+   361→                    </p>
+   362→                    {testResult.balance !== undefined && (
+   363→                      <p className="text-xs text-muted-foreground">
+   364→                        الرصيد: ${testResult.balance.toFixed(2)}
+   365→                      </p>
+   366→                    )}
+   367→                  </div>
+   368→                </div>
+   369→              )}
+   370→            </CardContent>
+   371→          </Card>
+   372→
+   373→          {/* General Settings */}
+   374→          <Card>
+   375→            <CardHeader>
+   376→              <CardTitle className="text-base flex items-center gap-2">
+   377→                <Settings className="w-5 h-5 text-gray-400" />
+   378→                الإعدادات العامة
+   379→              </CardTitle>
+   380→            </CardHeader>
+   381→            <CardContent className="space-y-4">
+   382→              <div className="flex items-center justify-between">
+   383→                <div>
+   384→                  <Label>تفعيل مزود G2Bulk</Label>
+   385→                  <p className="text-xs text-muted-foreground">
+   386→                    تفعيل أو تعطيل مزود G2Bulk في تطبيق المستخدم
+   387→                  </p>
+   388→                </div>
+   389→                <Switch checked={enabled} onCheckedChange={setEnabled} />
+   390→              </div>
+   391→
+   392→              <div className="flex items-center justify-between">
+   393→                <div>
+   394→                  <Label>مزامنة تلقائية</Label>
+   395→                  <p className="text-xs text-muted-foreground">
+   396→                    مزامنة المنتجات والأقسام تلقائياً
+   397→                  </p>
+   398→                </div>
+   399→                <Switch checked={autoSync} onCheckedChange={setAutoSync} />
+   400→              </div>
+   401→
+   402→              <div className="space-y-2">
+   403→                <Label>نسبة الهامش الافتراضي (%)</Label>
+   404→                <p className="text-xs text-muted-foreground">
+   405→                  نسبة الزيادة على سعر المنتج عند البيع للمستخدم
+   406→                </p>
+   407→                <Input
+   408→                  type="number"
+   409→                  value={markupPercent}
+   410→                  onChange={(e) => setMarkupPercent(Number(e.target.value))}
+   411→                  min={0}
+   412→                  max={100}
+   413→                  step={1}
+   414→                  dir="ltr"
+   415→                />
+   416→              </div>
+   417→
+   418→              <Button onClick={handleSaveSettings} disabled={saving} className="w-full">
+   419→                {saving ? <Loader2 className="w-4 h-4 animate-spin ml-2" /> : <Save className="w-4 h-4 ml-2" />}
+   420→                حفظ الإعدادات
+   421→              </Button>
+   422→            </CardContent>
+   423→          </Card>
+   424→        </TabsContent>
+   425→
+   426→        {/* Categories Tab */}
+   427→        <TabsContent value="categories" className="space-y-4 mt-4">
+   428→          <Card>
+   429→            <CardHeader>
+   430→              <div className="flex items-center justify-between">
+   431→                <CardTitle className="text-base flex items-center gap-2">
+   432→                  <FolderOpen className="w-5 h-5 text-orange-400" />
+   433→                  الأقسام المتاحة
+   434→                </CardTitle>
+   435→                <Button
+   436→                  variant="outline"
+   437→                  size="sm"
+   438→                  onClick={handleSyncCategories}
+   439→                  disabled={syncing || !apiKey}
+   440→                >
+   441→                  {syncing ? (
+   442→                    <Loader2 className="w-4 h-4 animate-spin" />
+   443→                  ) : (
+   444→                    <RefreshCw className="w-4 h-4" />
+   445→                  )}
+   446→                </Button>
+   447→              </div>
+   448→            </CardHeader>
+   449→            <CardContent>
+   450→              {categoriesList.length === 0 ? (
+   451→                <div className="text-center py-8 text-muted-foreground">
+   452→                  <FolderOpen className="w-12 h-12 mx-auto mb-2 opacity-30" />
+   453→                  <p>لا توجد أقسام. قم بالمزامنة أولاً.</p>
+   454→                </div>
+   455→              ) : (
+   456→                <div className="space-y-3">
+   457→                  {categoriesList.map((cat) => (
+   458→                    <div
+   459→                      key={cat.id}
+   460→                      className="flex items-center justify-between p-3 rounded-lg border border-border bg-muted/30"
+   461→                    >
+   462→                      <div className="flex items-center gap-3">
+   463→                        <Switch
+   464→                          checked={cat.enabled !== false}
+   465→                          onCheckedChange={(checked) =>
+   466→                            handleToggleCategory(String(cat.id), checked)
+   467→                          }
+   468→                        />
+   469→                        <div>
+   470→                          <p className="text-sm font-medium">{cat.title}</p>
+   471→                          <p className="text-xs text-muted-foreground">ID: {cat.id}</p>
+   472→                        </div>
+   473→                      </div>
+   474→                      <div className="flex items-center gap-2">
+   475→                        <select
+   476→                          value={cat.mappedToSection || ''}
+   477→                          onChange={(e) =>
+   478→                            handleMapCategory(String(cat.id), e.target.value)
+   479→                          }
+   480→                          className="text-xs bg-background border border-border rounded px-2 py-1"
+   481→                          dir="rtl"
+   482→                        >
+   483→                          {sectionOptions.map((opt) => (
+   484→                            <option key={opt.value} value={opt.value}>
+   485→                              {opt.label}
+   486→                            </option>
+   487→                          ))}
+   488→                        </select>
+   489→                      </div>
+   490→                    </div>
+   491→                  ))}
+   492→                </div>
+   493→              )}
+   494→            </CardContent>
+   495→          </Card>
+   496→        </TabsContent>
+   497→
+   498→        {/* Products Tab */}
+   499→        <TabsContent value="products" className="space-y-4 mt-4">
+   500→          <Card>
+   501→            <CardHeader>
+   502→              <div className="flex items-center justify-between">
+   503→                <CardTitle className="text-base flex items-center gap-2">
+   504→                  <Package className="w-5 h-5 text-purple-400" />
+   505→                  المنتجات ({enabledProductsCount}/{productsList.length})
+   506→                </CardTitle>
+   507→                <Button
+   508→                  variant="outline"
+   509→                  size="sm"
+   510→                  onClick={handleSyncProducts}
+   511→                  disabled={syncing || !apiKey}
+   512→                >
+   513→                  {syncing ? (
+   514→                    <Loader2 className="w-4 h-4 animate-spin" />
+   515→                  ) : (
+   516→                    <RefreshCw className="w-4 h-4" />
+   517→                  )}
+   518→                </Button>
+   519→              </div>
+   520→            </CardHeader>
+   521→            <CardContent>
+   522→              {productsList.length === 0 ? (
+   523→                <div className="text-center py-8 text-muted-foreground">
+   524→                  <Package className="w-12 h-12 mx-auto mb-2 opacity-30" />
+   525→                  <p>لا توجد منتجات. قم بالمزامنة أولاً.</p>
+   526→                </div>
+   527→              ) : (
+   528→                <div className="space-y-2 max-h-[500px] overflow-y-auto">
+   529→                  {productsList.map((prod) => {
+   530→                    const finalPrice =
+   531→                      prod.customPrice > 0
+   532→                        ? prod.customPrice
+   533→                        : prod.unit_price * (1 + (prod.markupPercent || markupPercent) / 100);
+   534→                    return (
+   535→                      <div
+   536→                        key={prod.id}
+   537→                        className="flex items-center justify-between p-3 rounded-lg border border-border bg-muted/30"
+   538→                      >
+   539→                        <div className="flex items-center gap-3">
+   540→                          <Switch
+   541→                            checked={prod.enabled !== false}
+   542→                            onCheckedChange={(checked) =>
+   543→                              handleToggleProduct(String(prod.id), checked)
+   544→                            }
+   545→                          />
+   546→                          <div>
+   547→                            <p className="text-sm font-medium">{prod.title}</p>
+   548→                            <div className="flex items-center gap-2 mt-1">
+   549→                              <Badge variant="outline" className="text-xs">
+   550→                                ${prod.unit_price.toFixed(2)}
+   551→                              </Badge>
+   552→                              <span className="text-xs text-muted-foreground">→</span>
+   553→                              <Badge className="text-xs bg-green-600/20 text-green-400 border-green-500/30">
+   554→                                ${finalPrice.toFixed(2)}
+   555→                              </Badge>
+   556→                              {prod.stock > 0 ? (
+   557→                                <Badge variant="outline" className="text-xs text-blue-400">
+   558→                                  مخزون: {prod.stock}
+   559→                                </Badge>
+   560→                              ) : (
+   561→                                <Badge variant="outline" className="text-xs text-red-400">
+   562→                                  نفذ
+   563→                                </Badge>
+   564→                              )}
+   565→                            </div>
+   566→                          </div>
+   567→                        </div>
+   568→                        <div className="flex items-center gap-2">
+   569→                          <div className="flex items-center gap-1">
+   570→                            <Label className="text-xs text-muted-foreground">هامش:</Label>
+   571→                            <Input
+   572→                              type="number"
+   573→                              value={prod.markupPercent || 0}
+   574→                              onChange={(e) =>
+   575→                                handleProductMarkup(String(prod.id), Number(e.target.value))
+   576→                              }
+   577→                              className="w-16 h-7 text-xs text-center"
+   578→                              min={0}
+   579→                              max={500}
+   580→                              dir="ltr"
+   581→                            />
+   582→                            <span className="text-xs text-muted-foreground">%</span>
+   583→                          </div>
+   584→                        </div>
+   585→                      </div>
+   586→                    );
+   587→                  })}
+   588→                </div>
+   589→              )}
+   590→            </CardContent>
+   591→          </Card>
+   592→        </TabsContent>
+   593→
+   594→        {/* Sync Tab */}
+   595→        <TabsContent value="sync" className="space-y-4 mt-4">
+   596→          <Card>
+   597→            <CardHeader>
+   598→              <CardTitle className="text-base flex items-center gap-2">
+   599→                <RefreshCw className="w-5 h-5 text-cyan-400" />
+   600→                المزامنة مع G2Bulk
+   601→              </CardTitle>
+   602→            </CardHeader>
+   603→            <CardContent className="space-y-4">
+   604→              {lastSync && (
+   605→                <div className="p-3 rounded-lg bg-muted/50 border border-border">
+   606→                  <p className="text-xs text-muted-foreground">
+   607→                    آخر مزامنة: {new Date(lastSync).toLocaleString('ar')}
+   608→                  </p>
+   609→                </div>
+   610→              )}
+   611→
+   612→              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+   613→                <Button
+   614→                  variant="outline"
+   615→                  onClick={handleSyncCategories}
+   616→                  disabled={syncing || !apiKey}
+   617→                  className="h-auto py-4 flex-col gap-2"
+   618→                >
+   619→                  <FolderOpen className="w-6 h-6 text-orange-400" />
+   620→                  <span className="text-sm">مزامنة الأقسام</span>
+   621→                  <span className="text-xs text-muted-foreground">
+   622→                    {categoriesList.length} قسم
+   623→                  </span>
+   624→                </Button>
+   625→
+   626→                <Button
+   627→                  variant="outline"
+   628→                  onClick={handleSyncProducts}
+   629→                  disabled={syncing || !apiKey}
+   630→                  className="h-auto py-4 flex-col gap-2"
+   631→                >
+   632→                  <Package className="w-6 h-6 text-purple-400" />
+   633→                  <span className="text-sm">مزامنة المنتجات</span>
+   634→                  <span className="text-xs text-muted-foreground">
+   635→                    {productsList.length} منتج
+   636→                  </span>
+   637→                </Button>
+   638→
+   639→                <Button
+   640→                  variant="outline"
+   641→                  onClick={handleFullSync}
+   642→                  disabled={syncing || !apiKey}
+   643→                  className="h-auto py-4 flex-col gap-2"
+   644→                >
+   645→                  <ArrowUpDown className="w-6 h-6 text-cyan-400" />
+   646→                  <span className="text-sm">مزامنة كاملة</span>
+   647→                  <span className="text-xs text-muted-foreground">أقسام + منتجات</span>
+   648→                </Button>
+   649→              </div>
+   650→
+   651→              {syncing && (
+   652→                <div className="flex items-center justify-center gap-2 p-4">
+   653→                  <Loader2 className="w-5 h-5 animate-spin text-cyan-400" />
+   654→                  <span className="text-sm text-muted-foreground">جارٍ المزامنة...</span>
+   655→                </div>
+   656→              )}
+   657→
+   658→              {!apiKey && (
+   659→                <div className="flex items-center gap-2 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/30">
+   660→                  <AlertTriangle className="w-5 h-5 text-yellow-500" />
+   661→                  <p className="text-sm text-yellow-600">
+   662→                    يرجى إدخال مفتاح API وحفظه أولاً قبل المزامنة
+   663→                  </p>
+   664→                </div>
+   665→              )}
+   666→            </CardContent>
+   667→          </Card>
+   668→
+   669→          {/* Stats */}
+   670→          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+   671→            <Card>
+   672→              <CardContent className="p-4 text-center">
+   673→                <FolderOpen className="w-6 h-6 mx-auto mb-1 text-orange-400" />
+   674→                <p className="text-2xl font-bold">{categoriesList.length}</p>
+   675→                <p className="text-xs text-muted-foreground">قسم</p>
+   676→              </CardContent>
+   677→            </Card>
+   678→            <Card>
+   679→              <CardContent className="p-4 text-center">
+   680→                <Package className="w-6 h-6 mx-auto mb-1 text-purple-400" />
+   681→                <p className="text-2xl font-bold">{productsList.length}</p>
+   682→                <p className="text-xs text-muted-foreground">منتج</p>
+   683→              </CardContent>
+   684→            </Card>
+   685→            <Card>
+   686→              <CardContent className="p-4 text-center">
+   687→                <CheckCircle className="w-6 h-6 mx-auto mb-1 text-green-400" />
+   688→                <p className="text-2xl font-bold">{enabledProductsCount}</p>
+   689→                <p className="text-xs text-muted-foreground">مفعّل</p>
+   690→              </CardContent>
+   691→            </Card>
+   692→            <Card>
+   693→              <CardContent className="p-4 text-center">
+   694→                <DollarSign className="w-6 h-6 mx-auto mb-1 text-blue-400" />
+   695→                <p className="text-2xl font-bold">
+   696→                  {balance !== null ? `$${balance.toFixed(2)}` : '-'}
+   697→                </p>
+   698→                <p className="text-xs text-muted-foreground">رصيد G2Bulk</p>
+   699→              </CardContent>
+   700→            </Card>
+   701→          </div>
+   702→        </TabsContent>
+   703→      </Tabs>
+   704→    </div>
+   705→  );
+   706→}
+   707→

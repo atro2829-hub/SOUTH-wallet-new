@@ -1,0 +1,1750 @@
+     1→'use client';
+     2→
+     3→import { useState, useEffect, useMemo } from 'react';
+     4→import { ref, onValue, push, update, remove, set } from 'firebase/database';
+     5→import { database } from '@/lib/firebase';
+     6→import { useAdminStore } from '@/lib/store';
+     7→import { formatNumber, currencySymbols, generateId } from '@/lib/utils';
+     8→// Card components not used directly - using ios-card CSS classes
+     9→import { Input } from '@/components/ui/input';
+    10→import { Button } from '@/components/ui/button';
+    11→import { Badge } from '@/components/ui/badge';
+    12→import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+    13→import { Label } from '@/components/ui/label';
+    14→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+    15→import { Switch } from '@/components/ui/switch';
+    16→import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+    17→// Textarea available if needed
+    18→import {
+    19→  Plus, Trash2, Edit, Percent, TrendingUp, Search, Loader2,
+    20→  Bitcoin, Landmark, BarChart3, Settings, Download, ArrowUpDown,
+    21→  Coins, Send, Wallet, ArrowDownCircle, ArrowUpCircle, RefreshCw,
+    22→  ShieldCheck, Zap, FileText, ChevronDown,
+    23→  ChevronUp, X, Crown, AlertCircle
+    24→} from 'lucide-react';
+    25→import { motion, AnimatePresence } from 'framer-motion';
+    26→import { cn } from '@/lib/utils';
+    27→
+    28→// ─── Types ───────────────────────────────────────────────
+    29→
+    30→interface FeeTier {
+    31→  id: string;
+    32→  minAmount: number;
+    33→  maxAmount: number;
+    34→  feeValue: number;
+    35→}
+    36→
+    37→interface CommissionRule {
+    38→  id?: string;
+    39→  name: string;
+    40→  serviceType: string;
+    41→  feeType: 'percentage' | 'fixed';
+    42→  feeValue: number;
+    43→  minFee: number;
+    44→  maxFee: number;
+    45→  currency: string;
+    46→  isActive: boolean;
+    47→  applyTo: 'all' | 'verified' | 'unverified';
+    48→  tiers: FeeTier[];
+    49→}
+    50→
+    51→interface CryptoCommission {
+    52→  id?: string;
+    53→  cryptoCode: string;
+    54→  cryptoName: string;
+    55→  buyPercentage: number;
+    56→  sellPercentage: number;
+    57→  minBuyFee: number;
+    58→  maxBuyFee: number;
+    59→  minSellFee: number;
+    60→  maxSellFee: number;
+    61→  feeCurrency: string;
+    62→  spreadPercentage: number;
+    63→  networkFeeOverride: number;
+    64→  isActive: boolean;
+    65→}
+    66→
+    67→interface InvestmentCommission {
+    68→  id?: string;
+    69→  planName: string;
+    70→  percentage: number;
+    71→  minFee: number;
+    72→  maxFee: number;
+    73→  feeCurrency: string;
+    74→  earlyWithdrawalPenalty: number;
+    75→  isActive: boolean;
+    76→}
+    77→
+    78→interface CommissionSettings {
+    79→  commissionEnabled: boolean;
+    80→  defaultFeePercentage: number;
+    81→  roundingMethod: 'up' | 'down' | 'nearest';
+    82→  feeDisplayToUser: boolean;
+    83→  deductFromSource: boolean;
+    84→  minimumTransactionFee: number;
+    85→  maximumTransactionFee: number;
+    86→  taxOnCommission: number;
+    87→  platformShare: number;
+    88→  agentShare: number;
+    89→}
+    90→
+    91→interface CommissionReport {
+    92→  serviceType: string;
+    93→  totalCollected: number;
+    94→  transactionCount: number;
+    95→  currency: string;
+    96→}
+    97→
+    98→// ─── Constants ───────────────────────────────────────────
+    99→
+   100→const SERVICE_TYPES = [
+   101→  { value: 'transfer', label: 'تحويلات', icon: Send, color: 'text-blue-500', bg: 'bg-blue-500/10' },
+   102→  { value: 'deposit', label: 'إيداع', icon: ArrowDownCircle, color: 'text-green-500', bg: 'bg-green-500/10' },
+   103→  { value: 'withdraw', label: 'سحب', icon: ArrowUpCircle, color: 'text-orange-500', bg: 'bg-orange-500/10' },
+   104→  { value: 'exchange', label: 'تبادل عملات', icon: RefreshCw, color: 'text-purple-500', bg: 'bg-purple-500/10' },
+   105→  { value: 'entertainment', label: 'خدمات ترفيهية', icon: Zap, color: 'text-pink-500', bg: 'bg-pink-500/10' },
+   106→  { value: 'recharge', label: 'شحن رصيد', icon: Coins, color: 'text-yellow-500', bg: 'bg-yellow-500/10' },
+   107→  { value: 'bills', label: 'فواتير', icon: FileText, color: 'text-teal-500', bg: 'bg-teal-500/10' },
+   108→  { value: 'purchase', label: 'شراء منتجات', icon: Wallet, color: 'text-indigo-500', bg: 'bg-indigo-500/10' },
+   109→];
+   110→
+   111→const CRYPTO_CODES = [
+   112→  { code: 'BTC', name: 'بيتكوين' },
+   113→  { code: 'ETH', name: 'إيثريوم' },
+   114→  { code: 'USDT', name: 'تيثر' },
+   115→  { code: 'BNB', name: 'بينانس' },
+   116→  { code: 'SOL', name: 'سولانا' },
+   117→  { code: 'XRP', name: 'ريبل' },
+   118→  { code: 'ADA', name: 'كاردانو' },
+   119→  { code: 'DOGE', name: 'دوج كوين' },
+   120→];
+   121→
+   122→const DEFAULT_SETTINGS: CommissionSettings = {
+   123→  commissionEnabled: true,
+   124→  defaultFeePercentage: 2,
+   125→  roundingMethod: 'nearest',
+   126→  feeDisplayToUser: true,
+   127→  deductFromSource: true,
+   128→  minimumTransactionFee: 0,
+   129→  maximumTransactionFee: 0,
+   130→  taxOnCommission: 0,
+   131→  platformShare: 80,
+   132→  agentShare: 20,
+   133→};
+   134→
+   135→// ─── Helper: Generate mock report data ──────────────────
+   136→
+   137→function generateMockReports(): CommissionReport[] {
+   138→  return SERVICE_TYPES.map(st => ({
+   139→    serviceType: st.value,
+   140→    totalCollected: Math.floor(Math.random() * 500000) + 10000,
+   141→    transactionCount: Math.floor(Math.random() * 2000) + 50,
+   142→    currency: 'YER',
+   143→  }));
+   144→}
+   145→
+   146→function generateDailyData(): { day: string; value: number }[] {
+   147→  const data = [];
+   148→  for (let i = 29; i >= 0; i--) {
+   149→    const d = new Date();
+   150→    d.setDate(d.getDate() - i);
+   151→    data.push({
+   152→      day: `${d.getMonth() + 1}/${d.getDate()}`,
+   153→      value: Math.floor(Math.random() * 80000) + 10000,
+   154→    });
+   155→  }
+   156→  return data;
+   157→}
+   158→
+   159→// ─── Main Component ──────────────────────────────────────
+   160→
+   161→export default function CommissionsPanel() {
+   162→  const { showToast } = useAdminStore();
+   163→
+   164→  // ── Data State ──
+   165→  const [rules, setRules] = useState<CommissionRule[]>([]);
+   166→  const [cryptoCommissions, setCryptoCommissions] = useState<CryptoCommission[]>([]);
+   167→  const [investmentCommissions, setInvestmentCommissions] = useState<InvestmentCommission[]>([]);
+   168→  const [settings, setSettings] = useState<CommissionSettings>(DEFAULT_SETTINGS);
+   169→  const [reportSeed, setReportSeed] = useState(() => Date.now());
+   170→
+   171→  // ── UI State ──
+   172→  const [loading, setLoading] = useState(true);
+   173→  const [saving, setSaving] = useState(false);
+   174→  const [activeTab, setActiveTab] = useState('rules');
+   175→  const [search, setSearch] = useState('');
+   176→  const [filterServiceType, setFilterServiceType] = useState('all');
+   177→
+   178→  // ── Dialog State ──
+   179→  const [ruleDialog, setRuleDialog] = useState(false);
+   180→  const [editingRule, setEditingRule] = useState<CommissionRule | null>(null);
+   181→  const [cryptoDialog, setCryptoDialog] = useState(false);
+   182→  const [editingCrypto, setEditingCrypto] = useState<CryptoCommission | null>(null);
+   183→  const [investDialog, setInvestDialog] = useState(false);
+   184→  const [editingInvest, setEditingInvest] = useState<InvestmentCommission | null>(null);
+   185→  const [expandedRuleId, setExpandedRuleId] = useState<string | null>(null);
+   186→
+   187→  // ── Report State ──
+   188→  const [reportPeriod, setReportPeriod] = useState<'daily' | 'weekly' | 'monthly'>('daily');
+   189→  const [reportDateFrom, setReportDateFrom] = useState('');
+   190→  const [reportDateTo, setReportDateTo] = useState('');
+   191→
+   192→  // ── Rule Form ──
+   193→  const [ruleForm, setRuleForm] = useState<CommissionRule>({
+   194→    name: '', serviceType: 'transfer', feeType: 'percentage',
+   195→    feeValue: 0, minFee: 0, maxFee: 0, currency: 'YER',
+   196→    isActive: true, applyTo: 'all', tiers: [],
+   197→  });
+   198→
+   199→  // ── Crypto Form ──
+   200→  const [cryptoForm, setCryptoForm] = useState<CryptoCommission>({
+   201→    cryptoCode: 'BTC', cryptoName: 'بيتكوين',
+   202→    buyPercentage: 1, sellPercentage: 1,
+   203→    minBuyFee: 0, maxBuyFee: 0, minSellFee: 0, maxSellFee: 0,
+   204→    feeCurrency: 'YER', spreadPercentage: 0.5, networkFeeOverride: 0,
+   205→    isActive: true,
+   206→  });
+   207→
+   208→  // ── Investment Form ──
+   209→  const [investForm, setInvestForm] = useState<InvestmentCommission>({
+   210→    planName: '', percentage: 5, minFee: 0, maxFee: 0,
+   211→    feeCurrency: 'YER', earlyWithdrawalPenalty: 10, isActive: true,
+   212→  });
+   213→
+   214→  // ── Firebase Listeners ──
+   215→  useEffect(() => {
+   216→    const rulesRef = ref(database, 'adminSettings/commissions/rules');
+   217→    const unsub1 = onValue(rulesRef, (snapshot) => {
+   218→      const data = snapshot.val() || {};
+   219→      const list: CommissionRule[] = [];
+   220→      Object.entries<Record<string, unknown>>(data).forEach(([id, val]) => {
+   221→        list.push({
+   222→          id,
+   223→          name: (val.name as string) || '',
+   224→          serviceType: (val.serviceType as string) || 'transfer',
+   225→          feeType: (val.feeType as 'percentage' | 'fixed') || 'percentage',
+   226→          feeValue: (val.feeValue as number) || 0,
+   227→          minFee: (val.minFee as number) || 0,
+   228→          maxFee: (val.maxFee as number) || 0,
+   229→          currency: (val.currency as string) || 'YER',
+   230→          isActive: val.isActive !== false,
+   231→          applyTo: (val.applyTo as 'all' | 'verified' | 'unverified') || 'all',
+   232→          tiers: (val.tiers as FeeTier[]) || [],
+   233→        });
+   234→      });
+   235→      setRules(list);
+   236→    });
+   237→
+   238→    const cryptoRef = ref(database, 'adminSettings/commissions/crypto');
+   239→    const unsub2 = onValue(cryptoRef, (snapshot) => {
+   240→      const data = snapshot.val() || {};
+   241→      const list: CryptoCommission[] = [];
+   242→      Object.entries<Record<string, unknown>>(data).forEach(([id, val]) => {
+   243→        list.push({ id, ...(val as Omit<CryptoCommission, 'id'>) });
+   244→      });
+   245→      setCryptoCommissions(list);
+   246→    });
+   247→
+   248→    const investRef = ref(database, 'adminSettings/commissions/investment');
+   249→    const unsub3 = onValue(investRef, (snapshot) => {
+   250→      const data = snapshot.val() || {};
+   251→      const list: InvestmentCommission[] = [];
+   252→      Object.entries<Record<string, unknown>>(data).forEach(([id, val]) => {
+   253→        list.push({ id, ...(val as Omit<InvestmentCommission, 'id'>) });
+   254→      });
+   255→      setInvestmentCommissions(list);
+   256→    });
+   257→
+   258→    const settingsRef = ref(database, 'adminSettings/commissions/settings');
+   259→    const unsub4 = onValue(settingsRef, (snapshot) => {
+   260→      const data = snapshot.val();
+   261→      if (data) {
+   262→        setSettings({
+   263→          commissionEnabled: data.commissionEnabled !== false,
+   264→          defaultFeePercentage: data.defaultFeePercentage || 2,
+   265→          roundingMethod: data.roundingMethod || 'nearest',
+   266→          feeDisplayToUser: data.feeDisplayToUser !== false,
+   267→          deductFromSource: data.deductFromSource !== false,
+   268→          minimumTransactionFee: data.minimumTransactionFee || 0,
+   269→          maximumTransactionFee: data.maximumTransactionFee || 0,
+   270→          taxOnCommission: data.taxOnCommission || 0,
+   271→          platformShare: data.platformShare ?? 80,
+   272→          agentShare: data.agentShare ?? 20,
+   273→        });
+   274→      }
+   275→      setLoading(false);
+   276→    });
+   277→
+   278→    return () => { unsub1(); unsub2(); unsub3(); unsub4(); };
+   279→  }, []);
+   280→
+   281→  // ── Stats ──
+   282→  const activeRules = rules.filter(r => r.isActive).length;
+   283→  const totalRevenueEstimate = rules.filter(r => r.isActive).reduce((sum, r) => sum + r.feeValue * 100, 0);
+   284→  const mostProfitableRule = rules.filter(r => r.isActive).sort((a, b) => b.feeValue - a.feeValue)[0];
+   285→
+   286→  // Memoized report data - regenerated when seed changes via refresh
+   287→  // eslint-disable-next-line react-hooks/exhaustive-deps
+   288→  const reports = useMemo(() => generateMockReports(), [reportSeed]);
+   289→  // eslint-disable-next-line react-hooks/exhaustive-deps
+   290→  const dailyData = useMemo(() => generateDailyData(), [reportSeed]);
+   291→
+   292→  // ── Handlers: Commission Rules ──
+   293→  const resetRuleForm = () => {
+   294→    setRuleForm({
+   295→      name: '', serviceType: 'transfer', feeType: 'percentage',
+   296→      feeValue: 0, minFee: 0, maxFee: 0, currency: 'YER',
+   297→      isActive: true, applyTo: 'all', tiers: [],
+   298→    });
+   299→    setEditingRule(null);
+   300→  };
+   301→
+   302→  const openRuleDialog = (rule?: CommissionRule) => {
+   303→    if (rule) {
+   304→      setEditingRule(rule);
+   305→      setRuleForm({ ...rule, tiers: rule.tiers ? [...rule.tiers] : [] });
+   306→    } else {
+   307→      resetRuleForm();
+   308→    }
+   309→    setRuleDialog(true);
+   310→  };
+   311→
+   312→  const handleSaveRule = async () => {
+   313→    if (!ruleForm.name || !ruleForm.serviceType) {
+   314→      showToast('يرجى ملء جميع الحقول المطلوبة', 'error');
+   315→      return;
+   316→    }
+   317→    setSaving(true);
+   318→    try {
+   319→      const { id: _ruleId, ...ruleData } = ruleForm;
+   320→      if (editingRule?.id) {
+   321→        await update(ref(database, `adminSettings/commissions/rules/${editingRule.id}`), ruleData);
+   322→        showToast('تم تحديث قاعدة العمولة', 'success');
+   323→      } else {
+   324→        await push(ref(database, 'adminSettings/commissions/rules'), ruleData);
+   325→        showToast('تم إضافة قاعدة العمولة', 'success');
+   326→      }
+   327→      setRuleDialog(false);
+   328→      resetRuleForm();
+   329→    } catch (e) {
+   330→      showToast('حدث خطأ', 'error');
+   331→    } finally {
+   332→      setSaving(false);
+   333→    }
+   334→  };
+   335→
+   336→  const handleDeleteRule = async (id: string) => {
+   337→    try {
+   338→      await remove(ref(database, `adminSettings/commissions/rules/${id}`));
+   339→      showToast('تم حذف القاعدة', 'success');
+   340→    } catch (e) {
+   341→      showToast('حدث خطأ', 'error');
+   342→    }
+   343→  };
+   344→
+   345→  const handleToggleRule = async (rule: CommissionRule) => {
+   346→    try {
+   347→      await update(ref(database, `adminSettings/commissions/rules/${rule.id}`), { isActive: !rule.isActive });
+   348→    } catch (e) {
+   349→      showToast('حدث خطأ', 'error');
+   350→    }
+   351→  };
+   352→
+   353→  const addTier = () => {
+   354→    setRuleForm(prev => ({
+   355→      ...prev,
+   356→      tiers: [...prev.tiers, { id: generateId(), minAmount: 0, maxAmount: 0, feeValue: 0 }],
+   357→    }));
+   358→  };
+   359→
+   360→  const removeTier = (tierId: string) => {
+   361→    setRuleForm(prev => ({
+   362→      ...prev,
+   363→      tiers: prev.tiers.filter(t => t.id !== tierId),
+   364→    }));
+   365→  };
+   366→
+   367→  const updateTier = (tierId: string, field: keyof FeeTier, value: number) => {
+   368→    setRuleForm(prev => ({
+   369→      ...prev,
+   370→      tiers: prev.tiers.map(t => t.id === tierId ? { ...t, [field]: value } : t),
+   371→    }));
+   372→  };
+   373→
+   374→  // ── Handlers: Crypto Commissions ──
+   375→  const resetCryptoForm = () => {
+   376→    setCryptoForm({
+   377→      cryptoCode: 'BTC', cryptoName: 'بيتكوين',
+   378→      buyPercentage: 1, sellPercentage: 1,
+   379→      minBuyFee: 0, maxBuyFee: 0, minSellFee: 0, maxSellFee: 0,
+   380→      feeCurrency: 'YER', spreadPercentage: 0.5, networkFeeOverride: 0,
+   381→      isActive: true,
+   382→    });
+   383→    setEditingCrypto(null);
+   384→  };
+   385→
+   386→  const openCryptoDialog = (crypto?: CryptoCommission) => {
+   387→    if (crypto) {
+   388→      setEditingCrypto(crypto);
+   389→      setCryptoForm({ ...crypto });
+   390→    } else {
+   391→      resetCryptoForm();
+   392→    }
+   393→    setCryptoDialog(true);
+   394→  };
+   395→
+   396→  const handleSaveCrypto = async () => {
+   397→    if (!cryptoForm.cryptoCode) {
+   398→      showToast('يرجى اختيار العملة الرقمية', 'error');
+   399→      return;
+   400→    }
+   401→    setSaving(true);
+   402→    try {
+   403→      const { id: _cryptoId, ...cryptoData } = cryptoForm;
+   404→      if (editingCrypto?.id) {
+   405→        await update(ref(database, `adminSettings/commissions/crypto/${editingCrypto.id}`), cryptoData);
+   406→        showToast('تم تحديث عمولة الكريبتو', 'success');
+   407→      } else {
+   408→        await push(ref(database, 'adminSettings/commissions/crypto'), cryptoData);
+   409→        showToast('تم إضافة عمولة الكريبتو', 'success');
+   410→      }
+   411→      setCryptoDialog(false);
+   412→      resetCryptoForm();
+   413→    } catch (e) {
+   414→      showToast('حدث خطأ', 'error');
+   415→    } finally {
+   416→      setSaving(false);
+   417→    }
+   418→  };
+   419→
+   420→  const handleDeleteCrypto = async (id: string) => {
+   421→    try {
+   422→      await remove(ref(database, `adminSettings/commissions/crypto/${id}`));
+   423→      showToast('تم حذف عمولة الكريبتو', 'success');
+   424→    } catch (e) {
+   425→      showToast('حدث خطأ', 'error');
+   426→    }
+   427→  };
+   428→
+   429→  const handleToggleCrypto = async (crypto: CryptoCommission) => {
+   430→    try {
+   431→      await update(ref(database, `adminSettings/commissions/crypto/${crypto.id}`), { isActive: !crypto.isActive });
+   432→    } catch (e) {
+   433→      showToast('حدث خطأ', 'error');
+   434→    }
+   435→  };
+   436→
+   437→  // ── Handlers: Investment Commissions ──
+   438→  const resetInvestForm = () => {
+   439→    setInvestForm({
+   440→      planName: '', percentage: 5, minFee: 0, maxFee: 0,
+   441→      feeCurrency: 'YER', earlyWithdrawalPenalty: 10, isActive: true,
+   442→    });
+   443→    setEditingInvest(null);
+   444→  };
+   445→
+   446→  const openInvestDialog = (invest?: InvestmentCommission) => {
+   447→    if (invest) {
+   448→      setEditingInvest(invest);
+   449→      setInvestForm({ ...invest });
+   450→    } else {
+   451→      resetInvestForm();
+   452→    }
+   453→    setInvestDialog(true);
+   454→  };
+   455→
+   456→  const handleSaveInvest = async () => {
+   457→    if (!investForm.planName) {
+   458→      showToast('يرجى إدخال اسم الخطة', 'error');
+   459→      return;
+   460→    }
+   461→    setSaving(true);
+   462→    try {
+   463→      const { id: _investId, ...investData } = investForm;
+   464→      if (editingInvest?.id) {
+   465→        await update(ref(database, `adminSettings/commissions/investment/${editingInvest.id}`), investData);
+   466→        showToast('تم تحديث عمولة الاستثمار', 'success');
+   467→      } else {
+   468→        await push(ref(database, 'adminSettings/commissions/investment'), investData);
+   469→        showToast('تم إضافة عمولة الاستثمار', 'success');
+   470→      }
+   471→      setInvestDialog(false);
+   472→      resetInvestForm();
+   473→    } catch (e) {
+   474→      showToast('حدث خطأ', 'error');
+   475→    } finally {
+   476→      setSaving(false);
+   477→    }
+   478→  };
+   479→
+   480→  const handleDeleteInvest = async (id: string) => {
+   481→    try {
+   482→      await remove(ref(database, `adminSettings/commissions/investment/${id}`));
+   483→      showToast('تم حذف عمولة الاستثمار', 'success');
+   484→    } catch (e) {
+   485→      showToast('حدث خطأ', 'error');
+   486→    }
+   487→  };
+   488→
+   489→  const handleToggleInvest = async (invest: InvestmentCommission) => {
+   490→    try {
+   491→      await update(ref(database, `adminSettings/commissions/investment/${invest.id}`), { isActive: !invest.isActive });
+   492→    } catch (e) {
+   493→      showToast('حدث خطأ', 'error');
+   494→    }
+   495→  };
+   496→
+   497→  // ── Handlers: Settings ──
+   498→  const handleSaveSettings = async () => {
+   499→    setSaving(true);
+   500→    try {
+   501→      await set(ref(database, 'adminSettings/commissions/settings'), settings);
+   502→      showToast('تم حفظ إعدادات العمولات', 'success');
+   503→    } catch (e) {
+   504→      showToast('حدث خطأ', 'error');
+   505→    } finally {
+   506→      setSaving(false);
+   507→    }
+   508→  };
+   509→
+   510→  // ── Handlers: Export ──
+   511→  const handleExportData = () => {
+   512→    const data = {
+   513→      rules,
+   514→      cryptoCommissions,
+   515→      investmentCommissions,
+   516→      settings,
+   517→      exportDate: new Date().toISOString(),
+   518→    };
+   519→    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+   520→    const url = URL.createObjectURL(blob);
+   521→    const a = document.createElement('a');
+   522→    a.href = url;
+   523→    a.download = `commissions-export-${new Date().toISOString().split('T')[0]}.json`;
+   524→    a.click();
+   525→    URL.revokeObjectURL(url);
+   526→    showToast('تم تصدير البيانات', 'success');
+   527→  };
+   528→
+   529→  // ── Filtering ──
+   530→  const filteredRules = rules.filter((r) => {
+   531→    const matchSearch = !search || r.name.includes(search) || r.serviceType.includes(search);
+   532→    const matchType = filterServiceType === 'all' || r.serviceType === filterServiceType;
+   533→    return matchSearch && matchType;
+   534→  });
+   535→
+   536→  // ── Loading ──
+   537→  if (loading) {
+   538→    return (
+   539→      <div className="flex items-center justify-center min-h-[400px]">
+   540→        <div className="w-8 h-8 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" />
+   541→      </div>
+   542→    );
+   543→  }
+   544→
+   545→  // ── Render: Stats Cards ──
+   546→  const renderStatsCards = () => (
+   547→    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+   548→      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
+   549→        <div className="ios-card p-4">
+   550→          <div className="p-2 rounded-xl w-fit bg-purple-500/10">
+   551→            <Percent className="w-4 h-4 text-purple-500" />
+   552→          </div>
+   553→          <p className="text-xl font-bold text-foreground mt-2">{formatNumber(activeRules)}</p>
+   554→          <p className="text-[11px] text-muted-foreground">قاعدة نشطة</p>
+   555→        </div>
+   556→      </motion.div>
+   557→      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}>
+   558→        <div className="ios-card p-4">
+   559→          <div className="p-2 rounded-xl w-fit bg-green-500/10">
+   560→            <TrendingUp className="w-4 h-4 text-green-500" />
+   561→          </div>
+   562→          <p className="text-xl font-bold text-foreground mt-2">{formatNumber(rules.length)}</p>
+   563→          <p className="text-[11px] text-muted-foreground">إجمالي القواعد ({formatNumber(totalRevenueEstimate)} ر.ي تقديرية)</p>
+   564→        </div>
+   565→      </motion.div>
+   566→      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
+   567→        <div className="ios-card p-4">
+   568→          <div className="p-2 rounded-xl w-fit bg-orange-500/10">
+   569→            <Bitcoin className="w-4 h-4 text-orange-500" />
+   570→          </div>
+   571→          <p className="text-xl font-bold text-foreground mt-2">{formatNumber(cryptoCommissions.filter(c => c.isActive).length)}</p>
+   572→          <p className="text-[11px] text-muted-foreground">عمولة كريبتو نشطة</p>
+   573→        </div>
+   574→      </motion.div>
+   575→      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}>
+   576→        <div className="ios-card p-4">
+   577→          <div className="p-2 rounded-xl w-fit bg-emerald-500/10">
+   578→            <Landmark className="w-4 h-4 text-emerald-500" />
+   579→          </div>
+   580→          <p className="text-xl font-bold text-foreground mt-2">
+   581→            {mostProfitableRule ? (mostProfitableRule.feeType === 'percentage' ? `${mostProfitableRule.feeValue}%` : `${mostProfitableRule.feeValue}`) : '—'}
+   582→          </p>
+   583→          <p className="text-[11px] text-muted-foreground">أعلى عمولة</p>
+   584→        </div>
+   585→      </motion.div>
+   586→    </div>
+   587→  );
+   588→
+   589→  // ── Render: Service Type Icon ──
+   590→  const getServiceTypeIcon = (type: string) => {
+   591→    const st = SERVICE_TYPES.find(s => s.value === type);
+   592→    return st || SERVICE_TYPES[0];
+   593→  };
+   594→
+   595→  // ── Render: Tab 1 - Commission Rules ──
+   596→  const renderRulesTab = () => (
+   597→    <div className="space-y-4">
+   598→      {/* Search + Filter */}
+   599→      <div className="flex flex-col sm:flex-row gap-3">
+   600→        <div className="relative flex-1">
+   601→          <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+   602→          <Input
+   603→            placeholder="بحث بالاسم أو نوع الخدمة..."
+   604→            value={search}
+   605→            onChange={(e) => setSearch(e.target.value)}
+   606→            className="pr-10"
+   607→          />
+   608→        </div>
+   609→        <Select value={filterServiceType} onValueChange={setFilterServiceType}>
+   610→          <SelectTrigger className="w-full sm:w-48">
+   611→            <SelectValue placeholder="نوع الخدمة" />
+   612→          </SelectTrigger>
+   613→          <SelectContent>
+   614→            <SelectItem value="all">جميع الخدمات</SelectItem>
+   615→            {SERVICE_TYPES.map(st => (
+   616→              <SelectItem key={st.value} value={st.value}>{st.label}</SelectItem>
+   617→            ))}
+   618→          </SelectContent>
+   619→        </Select>
+   620→      </div>
+   621→
+   622→      {/* Rules List */}
+   623→      <div className="space-y-2 max-h-[calc(100vh-520px)] overflow-y-auto scrollbar-thin">
+   624→        {filteredRules.map((rule, i) => {
+   625→          const stInfo = getServiceTypeIcon(rule.serviceType);
+   626→          const isExpanded = expandedRuleId === rule.id;
+   627→          return (
+   628→            <motion.div
+   629→              key={rule.id}
+   630→              initial={{ opacity: 0, y: 10 }}
+   631→              animate={{ opacity: 1, y: 0 }}
+   632→              transition={{ delay: i * 0.02 }}
+   633→              className="ios-card"
+   634→            >
+   635→              <div className="p-4">
+   636→                <div className="flex items-center justify-between gap-3">
+   637→                  <div className="flex items-center gap-3 flex-1 min-w-0">
+   638→                    <div className={cn('p-2 rounded-xl shrink-0', stInfo.bg)}>
+   639→                      <stInfo.icon className={cn('w-4 h-4', stInfo.color)} />
+   640→                    </div>
+   641→                    <div className="min-w-0 flex-1">
+   642→                      <div className="flex items-center gap-2">
+   643→                        <p className="text-sm font-medium text-foreground truncate">{rule.name}</p>
+   644→                        <span className={cn(
+   645→                          'px-1.5 py-0.5 rounded text-[9px] font-bold',
+   646→                          rule.feeType === 'percentage' ? 'bg-green-500/15 text-green-500' : 'bg-orange-500/15 text-orange-500'
+   647→                        )}>
+   648→                          {rule.feeType === 'percentage' ? 'نسبة' : 'ثابت'}
+   649→                        </span>
+   650→                        <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-purple-500/15 text-purple-500">
+   651→                          {stInfo.label}
+   652→                        </span>
+   653→                      </div>
+   654→                      <p className="text-[11px] text-muted-foreground">
+   655→                        {rule.feeType === 'percentage' ? `${rule.feeValue}%` : `${rule.feeValue} ${currencySymbols[rule.currency || 'YER']}`}
+   656→                        {rule.minFee > 0 && ` • حد أدنى: ${rule.minFee}`}
+   657→                        {rule.maxFee > 0 && ` • حد أقصى: ${rule.maxFee}`}
+   658→                        {rule.applyTo !== 'all' && ` • ${rule.applyTo === 'verified' ? 'موثقين فقط' : 'غير موثقين فقط'}`}
+   659→                      </p>
+   660→                    </div>
+   661→                  </div>
+   662→                  <div className="flex items-center gap-1.5 shrink-0">
+   663→                    {rule.tiers && rule.tiers.length > 0 && (
+   664→                      <button
+   665→                        onClick={() => setExpandedRuleId(isExpanded ? null : rule.id!)}
+   666→                        className="p-1.5 rounded-lg hover:bg-muted/50 transition-colors"
+   667→                      >
+   668→                        {isExpanded ? <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />}
+   669→                      </button>
+   670→                    )}
+   671→                    <Badge className={cn(
+   672→                      'text-[10px]',
+   673→                      rule.isActive ? 'bg-green-500/20 text-green-600 dark:text-green-400' : 'bg-red-500/20 text-red-600 dark:text-red-400'
+   674→                    )}>
+   675→                      {rule.isActive ? 'نشط' : 'معطل'}
+   676→                    </Badge>
+   677→                    <div
+   678→                      onClick={() => handleToggleRule(rule)}
+   679→                      className={cn('ios-toggle shrink-0 !w-[42px] !h-[26px]', rule.isActive && 'active')}
+   680→                    />
+   681→                    <button onClick={() => openRuleDialog(rule)} className="p-1.5 rounded-lg hover:bg-muted/50 transition-colors">
+   682→                      <Edit className="w-3.5 h-3.5 text-muted-foreground" />
+   683→                    </button>
+   684→                    <button onClick={() => rule.id && handleDeleteRule(rule.id)} className="p-1.5 rounded-lg hover:bg-red-500/10 transition-colors">
+   685→                      <Trash2 className="w-3.5 h-3.5 text-red-500" />
+   686→                    </button>
+   687→                  </div>
+   688→                </div>
+   689→                {/* Expanded Tiers */}
+   690→                <AnimatePresence>
+   691→                  {isExpanded && rule.tiers && rule.tiers.length > 0 && (
+   692→                    <motion.div
+   693→                      initial={{ height: 0, opacity: 0 }}
+   694→                      animate={{ height: 'auto', opacity: 1 }}
+   695→                      exit={{ height: 0, opacity: 0 }}
+   696→                      className="overflow-hidden"
+   697→                    >
+   698→                      <div className="mt-3 pt-3 border-t border-border/50">
+   699→                        <p className="text-[11px] font-semibold text-muted-foreground mb-2">شرائح المبلغ</p>
+   700→                        <div className="space-y-1.5">
+   701→                          {rule.tiers.map((tier) => (
+   702→                            <div key={tier.id} className="flex items-center justify-between p-2 rounded-lg bg-muted/30 text-[11px]">
+   703→                              <span className="text-muted-foreground">
+   704→                                {formatNumber(tier.minAmount)} - {formatNumber(tier.maxAmount)} {currencySymbols[rule.currency]}
+   705→                              </span>
+   706→                              <span className="font-medium text-foreground">
+   707→                                {rule.feeType === 'percentage' ? `${tier.feeValue}%` : `${tier.feeValue} ${currencySymbols[rule.currency]}`}
+   708→                              </span>
+   709→                            </div>
+   710→                          ))}
+   711→                        </div>
+   712→                      </div>
+   713→                    </motion.div>
+   714→                  )}
+   715→                </AnimatePresence>
+   716→              </div>
+   717→            </motion.div>
+   718→          );
+   719→        })}
+   720→        {filteredRules.length === 0 && (
+   721→          <div className="text-center py-12">
+   722→            <Percent className="w-10 h-10 mx-auto text-muted-foreground/30 mb-3" />
+   723→            <p className="text-sm text-muted-foreground">لا توجد قواعد عمولات</p>
+   724→            <p className="text-xs text-muted-foreground/60 mt-1">أضف قاعدة جديدة لبدء التحكم بالعمولات</p>
+   725→          </div>
+   726→        )}
+   727→      </div>
+   728→    </div>
+   729→  );
+   730→
+   731→  // ── Render: Tab 2 - Crypto Commissions ──
+   732→  const renderCryptoTab = () => (
+   733→    <div className="space-y-4">
+   734→      <div className="max-h-[calc(100vh-440px)] overflow-y-auto scrollbar-thin space-y-2">
+   735→        {cryptoCommissions.map((crypto, i) => (
+   736→          <motion.div
+   737→            key={crypto.id}
+   738→            initial={{ opacity: 0, y: 10 }}
+   739→            animate={{ opacity: 1, y: 0 }}
+   740→            transition={{ delay: i * 0.03 }}
+   741→            className="ios-card p-4"
+   742→          >
+   743→            <div className="flex items-center justify-between gap-3">
+   744→              <div className="flex items-center gap-3 min-w-0">
+   745→                <div className="w-10 h-10 rounded-xl bg-orange-500/10 flex items-center justify-center shrink-0">
+   746→                  <Bitcoin className="w-5 h-5 text-orange-500" />
+   747→                </div>
+   748→                <div className="min-w-0">
+   749→                  <div className="flex items-center gap-2">
+   750→                    <p className="text-sm font-medium text-foreground">{crypto.cryptoName}</p>
+   751→                    <span className="text-[10px] font-bold text-orange-500 bg-orange-500/10 px-1.5 py-0.5 rounded">{crypto.cryptoCode}</span>
+   752→                  </div>
+   753→                  <p className="text-[11px] text-muted-foreground">
+   754→                    شراء: {crypto.buyPercentage}% • بيع: {crypto.sellPercentage}% • فروق: {crypto.spreadPercentage}%
+   755→                  </p>
+   756→                </div>
+   757→              </div>
+   758→              <div className="flex items-center gap-1.5 shrink-0">
+   759→                <Badge className={cn(
+   760→                  'text-[10px]',
+   761→                  crypto.isActive ? 'bg-green-500/20 text-green-600 dark:text-green-400' : 'bg-red-500/20 text-red-600 dark:text-red-400'
+   762→                )}>
+   763→                  {crypto.isActive ? 'نشط' : 'معطل'}
+   764→                </Badge>
+   765→                <div
+   766→                  onClick={() => handleToggleCrypto(crypto)}
+   767→                  className={cn('ios-toggle shrink-0 !w-[42px] !h-[26px]', crypto.isActive && 'active')}
+   768→                />
+   769→                <button onClick={() => openCryptoDialog(crypto)} className="p-1.5 rounded-lg hover:bg-muted/50 transition-colors">
+   770→                  <Edit className="w-3.5 h-3.5 text-muted-foreground" />
+   771→                </button>
+   772→                <button onClick={() => crypto.id && handleDeleteCrypto(crypto.id)} className="p-1.5 rounded-lg hover:bg-red-500/10 transition-colors">
+   773→                  <Trash2 className="w-3.5 h-3.5 text-red-500" />
+   774→                </button>
+   775→              </div>
+   776→            </div>
+   777→            {/* Detail Row */}
+   778→            <div className="mt-3 pt-3 border-t border-border/50 grid grid-cols-2 sm:grid-cols-4 gap-2">
+   779→              <div className="p-2 rounded-lg bg-muted/30">
+   780→                <p className="text-[10px] text-muted-foreground">حد أدنى شراء</p>
+   781→                <p className="text-xs font-medium text-foreground">{formatNumber(crypto.minBuyFee)} {currencySymbols[crypto.feeCurrency]}</p>
+   782→              </div>
+   783→              <div className="p-2 rounded-lg bg-muted/30">
+   784→                <p className="text-[10px] text-muted-foreground">حد أقصى شراء</p>
+   785→                <p className="text-xs font-medium text-foreground">{formatNumber(crypto.maxBuyFee)} {currencySymbols[crypto.feeCurrency]}</p>
+   786→              </div>
+   787→              <div className="p-2 rounded-lg bg-muted/30">
+   788→                <p className="text-[10px] text-muted-foreground">حد أدنى بيع</p>
+   789→                <p className="text-xs font-medium text-foreground">{formatNumber(crypto.minSellFee)} {currencySymbols[crypto.feeCurrency]}</p>
+   790→              </div>
+   791→              <div className="p-2 rounded-lg bg-muted/30">
+   792→                <p className="text-[10px] text-muted-foreground">رسوم الشبكة</p>
+   793→                <p className="text-xs font-medium text-foreground">{crypto.networkFeeOverride > 0 ? `${crypto.networkFeeOverride}` : 'تلقائي'}</p>
+   794→              </div>
+   795→            </div>
+   796→          </motion.div>
+   797→        ))}
+   798→        {cryptoCommissions.length === 0 && (
+   799→          <div className="text-center py-12">
+   800→            <Bitcoin className="w-10 h-10 mx-auto text-muted-foreground/30 mb-3" />
+   801→            <p className="text-sm text-muted-foreground">لا توجد عمولات كريبتو</p>
+   802→            <p className="text-xs text-muted-foreground/60 mt-1">أضف عملة رقمية لبدء التحكم بالعمولات</p>
+   803→          </div>
+   804→        )}
+   805→      </div>
+   806→    </div>
+   807→  );
+   808→
+   809→  // ── Render: Tab 3 - Investment Commissions ──
+   810→  const renderInvestmentTab = () => (
+   811→    <div className="space-y-4">
+   812→      <div className="max-h-[calc(100vh-440px)] overflow-y-auto scrollbar-thin space-y-2">
+   813→        {investmentCommissions.map((invest, i) => (
+   814→          <motion.div
+   815→            key={invest.id}
+   816→            initial={{ opacity: 0, y: 10 }}
+   817→            animate={{ opacity: 1, y: 0 }}
+   818→            transition={{ delay: i * 0.03 }}
+   819→            className="ios-card p-4"
+   820→          >
+   821→            <div className="flex items-center justify-between gap-3">
+   822→              <div className="flex items-center gap-3 min-w-0">
+   823→                <div className="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center shrink-0">
+   824→                  <Landmark className="w-5 h-5 text-emerald-500" />
+   825→                </div>
+   826→                <div className="min-w-0">
+   827→                  <div className="flex items-center gap-2">
+   828→                    <p className="text-sm font-medium text-foreground">{invest.planName}</p>
+   829→                    <span className="text-[10px] font-bold text-emerald-500 bg-emerald-500/10 px-1.5 py-0.5 rounded">{invest.percentage}%</span>
+   830→                  </div>
+   831→                  <p className="text-[11px] text-muted-foreground">
+   832→                    عمولة الأرباح: {invest.percentage}% • غرامة السحب المبكر: {invest.earlyWithdrawalPenalty}%
+   833→                  </p>
+   834→                </div>
+   835→              </div>
+   836→              <div className="flex items-center gap-1.5 shrink-0">
+   837→                <Badge className={cn(
+   838→                  'text-[10px]',
+   839→                  invest.isActive ? 'bg-green-500/20 text-green-600 dark:text-green-400' : 'bg-red-500/20 text-red-600 dark:text-red-400'
+   840→                )}>
+   841→                  {invest.isActive ? 'نشط' : 'معطل'}
+   842→                </Badge>
+   843→                <div
+   844→                  onClick={() => handleToggleInvest(invest)}
+   845→                  className={cn('ios-toggle shrink-0 !w-[42px] !h-[26px]', invest.isActive && 'active')}
+   846→                />
+   847→                <button onClick={() => openInvestDialog(invest)} className="p-1.5 rounded-lg hover:bg-muted/50 transition-colors">
+   848→                  <Edit className="w-3.5 h-3.5 text-muted-foreground" />
+   849→                </button>
+   850→                <button onClick={() => invest.id && handleDeleteInvest(invest.id)} className="p-1.5 rounded-lg hover:bg-red-500/10 transition-colors">
+   851→                  <Trash2 className="w-3.5 h-3.5 text-red-500" />
+   852→                </button>
+   853→              </div>
+   854→            </div>
+   855→            {/* Detail Row */}
+   856→            <div className="mt-3 pt-3 border-t border-border/50 grid grid-cols-3 gap-2">
+   857→              <div className="p-2 rounded-lg bg-muted/30">
+   858→                <p className="text-[10px] text-muted-foreground">حد أدنى</p>
+   859→                <p className="text-xs font-medium text-foreground">{formatNumber(invest.minFee)} {currencySymbols[invest.feeCurrency]}</p>
+   860→              </div>
+   861→              <div className="p-2 rounded-lg bg-muted/30">
+   862→                <p className="text-[10px] text-muted-foreground">حد أقصى</p>
+   863→                <p className="text-xs font-medium text-foreground">{formatNumber(invest.maxFee)} {currencySymbols[invest.feeCurrency]}</p>
+   864→              </div>
+   865→              <div className="p-2 rounded-lg bg-red-500/5">
+   866→                <p className="text-[10px] text-red-500">غرامة سحب مبكر</p>
+   867→                <p className="text-xs font-medium text-red-500">{invest.earlyWithdrawalPenalty}%</p>
+   868→              </div>
+   869→            </div>
+   870→          </motion.div>
+   871→        ))}
+   872→        {investmentCommissions.length === 0 && (
+   873→          <div className="text-center py-12">
+   874→            <Landmark className="w-10 h-10 mx-auto text-muted-foreground/30 mb-3" />
+   875→            <p className="text-sm text-muted-foreground">لا توجد عمولات استثمار</p>
+   876→            <p className="text-xs text-muted-foreground/60 mt-1">أضف خطة استثمارية لبدء التحكم بالعمولات</p>
+   877→          </div>
+   878→        )}
+   879→      </div>
+   880→    </div>
+   881→  );
+   882→
+   883→  // ── Render: Tab 4 - Commission Reports ──
+   884→  const renderReportsTab = () => {
+   885→    const maxDailyValue = Math.max(...dailyData.map(d => d.value), 1);
+   886→    const totalCommission = reports.reduce((sum, r) => sum + r.totalCollected, 0);
+   887→    const totalTransactions = reports.reduce((sum, r) => sum + r.transactionCount, 0);
+   888→
+   889→    return (
+   890→      <div className="space-y-4">
+   891→        {/* Period Filter */}
+   892→        <div className="flex flex-wrap items-center gap-2">
+   893→          <div className="flex gap-2">
+   894→            {(['daily', 'weekly', 'monthly'] as const).map(p => (
+   895→              <button
+   896→                key={p}
+   897→                onClick={() => setReportPeriod(p)}
+   898→                className={cn(
+   899→                  'px-4 py-2 rounded-xl text-sm font-medium transition-all',
+   900→                  reportPeriod === p
+   901→                    ? 'bg-purple-500 text-white shadow-lg shadow-purple-500/25'
+   902→                    : 'ios-card text-muted-foreground'
+   903→                )}
+   904→              >
+   905→                {p === 'daily' ? 'يومي' : p === 'weekly' ? 'أسبوعي' : 'شهري'}
+   906→              </button>
+   907→            ))}
+   908→          </div>
+   909→          <div className="flex items-center gap-2 mr-auto">
+   910→            <Input
+   911→              type="date"
+   912→              value={reportDateFrom}
+   913→              onChange={(e) => setReportDateFrom(e.target.value)}
+   914→              className="w-36 text-xs"
+   915→            />
+   916→            <span className="text-xs text-muted-foreground">إلى</span>
+   917→            <Input
+   918→              type="date"
+   919→              value={reportDateTo}
+   920→              onChange={(e) => setReportDateTo(e.target.value)}
+   921→              className="w-36 text-xs"
+   922→            />
+   923→          </div>
+   924→          <button
+   925→            onClick={handleExportData}
+   926→            className="px-3 py-2 rounded-xl ios-card text-xs font-medium flex items-center gap-1.5 card-press"
+   927→          >
+   928→            <Download className="w-3.5 h-3.5" />
+   929→            تصدير
+   930→          </button>
+   931→          <button
+   932→            onClick={() => setReportSeed(Date.now())}
+   933→            className="px-3 py-2 rounded-xl ios-card text-xs font-medium flex items-center gap-1.5 card-press"
+   934→          >
+   935→            <RefreshCw className="w-3.5 h-3.5" />
+   936→            تحديث
+   937→          </button>
+   938→        </div>
+   939→
+   940→        {/* Summary Stats */}
+   941→        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+   942→          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
+   943→            <div className="ios-card p-4">
+   944→              <div className="p-2 rounded-xl w-fit bg-purple-500/10">
+   945→                <BarChart3 className="w-4 h-4 text-purple-500" />
+   946→              </div>
+   947→              <p className="text-lg font-bold text-foreground mt-2">{formatNumber(totalCommission)}</p>
+   948→              <p className="text-[11px] text-muted-foreground">إجمالي العمولات (ر.ي)</p>
+   949→            </div>
+   950→          </motion.div>
+   951→          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}>
+   952→            <div className="ios-card p-4">
+   953→              <div className="p-2 rounded-xl w-fit bg-green-500/10">
+   954→                <ArrowUpDown className="w-4 h-4 text-green-500" />
+   955→              </div>
+   956→              <p className="text-lg font-bold text-foreground mt-2">{formatNumber(totalTransactions)}</p>
+   957→              <p className="text-[11px] text-muted-foreground">إجمالي المعاملات</p>
+   958→            </div>
+   959→          </motion.div>
+   960→          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
+   961→            <div className="ios-card p-4">
+   962→              <div className="p-2 rounded-xl w-fit bg-orange-500/10">
+   963→                <TrendingUp className="w-4 h-4 text-orange-500" />
+   964→              </div>
+   965→              <p className="text-lg font-bold text-foreground mt-2">
+   966→                {totalTransactions > 0 ? formatNumber(Math.round(totalCommission / totalTransactions)) : 0}
+   967→              </p>
+   968→              <p className="text-[11px] text-muted-foreground">متوسط العمولة (ر.ي)</p>
+   969→            </div>
+   970→          </motion.div>
+   971→        </div>
+   972→
+   973→        {/* Revenue Chart */}
+   974→        <div className="ios-card p-5">
+   975→          <h3 className="text-sm font-semibold text-foreground mb-4">إيرادات العمولات عبر الوقت</h3>
+   976→          <div className="flex items-end gap-[2px] h-40" dir="ltr">
+   977→            {dailyData.map((d, i) => (
+   978→              <div key={i} className="flex-1 flex flex-col items-center justify-end h-full group relative">
+   979→                <div
+   980→                  className="w-full rounded-t-sm bg-purple-500/80 hover:bg-purple-500 transition-colors cursor-pointer min-h-[2px]"
+   981→                  style={{ height: `${(d.value / maxDailyValue) * 100}%` }}
+   982→                />
+   983→                {/* Tooltip */}
+   984→                <div className="absolute bottom-full mb-1 px-2 py-1 rounded-lg bg-foreground text-background text-[9px] font-medium opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-10">
+   985→                  {d.day}: {formatNumber(d.value)} ر.ي
+   986→                </div>
+   987→              </div>
+   988→            ))}
+   989→          </div>
+   990→          <div className="flex justify-between mt-2 text-[9px] text-muted-foreground" dir="ltr">
+   991→            <span>{dailyData[0]?.day}</span>
+   992→            <span>{dailyData[dailyData.length - 1]?.day}</span>
+   993→          </div>
+   994→        </div>
+   995→
+   996→        {/* Breakdown by Service Type */}
+   997→        <div className="ios-card p-5">
+   998→          <h3 className="text-sm font-semibold text-foreground mb-4">توزيع العمولات حسب نوع الخدمة</h3>
+   999→          <div className="space-y-2.5">
+  1000→            {reports.map((report) => {
+  1001→              const stInfo = getServiceTypeIcon(report.serviceType);
+  1002→              const percentage = totalCommission > 0 ? (report.totalCollected / totalCommission) * 100 : 0;
+  1003→              return (
+  1004→                <div key={report.serviceType} className="flex items-center gap-3">
+  1005→                  <div className={cn('p-1.5 rounded-lg shrink-0', stInfo.bg)}>
+  1006→                    <stInfo.icon className={cn('w-3.5 h-3.5', stInfo.color)} />
+  1007→                  </div>
+  1008→                  <div className="flex-1 min-w-0">
+  1009→                    <div className="flex items-center justify-between mb-1">
+  1010→                      <span className="text-xs font-medium text-foreground">{stInfo.label}</span>
+  1011→                      <span className="text-xs text-muted-foreground">{formatNumber(report.totalCollected)} {currencySymbols[report.currency]}</span>
+  1012→                    </div>
+  1013→                    <div className="h-2 bg-muted/50 rounded-full overflow-hidden">
+  1014→                      <motion.div
+  1015→                        initial={{ width: 0 }}
+  1016→                        animate={{ width: `${percentage}%` }}
+  1017→                        transition={{ delay: 0.2, duration: 0.8, ease: 'easeOut' }}
+  1018→                        className="h-full bg-purple-500 rounded-full"
+  1019→                      />
+  1020→                    </div>
+  1021→                  </div>
+  1022→                  <span className="text-[10px] text-muted-foreground w-10 text-left">{percentage.toFixed(1)}%</span>
+  1023→                </div>
+  1024→              );
+  1025→            })}
+  1026→          </div>
+  1027→        </div>
+  1028→      </div>
+  1029→    );
+  1030→  };
+  1031→
+  1032→  // ── Render: Tab 5 - Commission Settings ──
+  1033→  const renderSettingsTab = () => (
+  1034→    <div className="space-y-4">
+  1035→      {/* Master Toggle */}
+  1036→      <div className={cn('ios-card p-5', !settings.commissionEnabled && 'opacity-60')}>
+  1037→        <div className="flex items-center justify-between">
+  1038→          <div className="flex items-center gap-3">
+  1039→            <div className="p-2 rounded-xl bg-purple-500/10">
+  1040→              <Settings className="w-5 h-5 text-purple-500" />
+  1041→            </div>
+  1042→            <div>
+  1043→              <p className="text-sm font-semibold text-foreground">تفعيل نظام العمولات</p>
+  1044→              <p className="text-[11px] text-muted-foreground">عند التعطيل لن يتم احتساب أي عمولات</p>
+  1045→            </div>
+  1046→          </div>
+  1047→          <div
+  1048→            onClick={() => setSettings(s => ({ ...s, commissionEnabled: !s.commissionEnabled }))}
+  1049→            className={cn('ios-toggle', settings.commissionEnabled && 'active')}
+  1050→          />
+  1051→        </div>
+  1052→      </div>
+  1053→
+  1054→      {/* Default Settings */}
+  1055→      <div className="ios-card p-5 space-y-5">
+  1056→        <h3 className="text-sm font-semibold text-foreground">الإعدادات الافتراضية</h3>
+  1057→
+  1058→        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+  1059→          <div>
+  1060→            <Label className="text-xs">نسبة العمولة الافتراضية (%)</Label>
+  1061→            <Input
+  1062→              type="number"
+  1063→              value={settings.defaultFeePercentage}
+  1064→              onChange={(e) => setSettings(s => ({ ...s, defaultFeePercentage: parseFloat(e.target.value) || 0 }))}
+  1065→              dir="ltr"
+  1066→              className="mt-1"
+  1067→            />
+  1068→            <p className="text-[10px] text-muted-foreground mt-1">تُطبق على الخدمات الجديدة تلقائياً</p>
+  1069→          </div>
+  1070→
+  1071→          <div>
+  1072→            <Label className="text-xs">طريقة التقريب</Label>
+  1073→            <Select
+  1074→              value={settings.roundingMethod}
+  1075→              onValueChange={(v) => setSettings(s => ({ ...s, roundingMethod: v as 'up' | 'down' | 'nearest' }))}
+  1076→            >
+  1077→              <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+  1078→              <SelectContent>
+  1079→                <SelectItem value="nearest">أقرب رقم</SelectItem>
+  1080→                <SelectItem value="up">تقريب لأعلى</SelectItem>
+  1081→                <SelectItem value="down">تقريب لأدنى</SelectItem>
+  1082→              </SelectContent>
+  1083→            </Select>
+  1084→          </div>
+  1085→
+  1086→          <div>
+  1087→            <Label className="text-xs">الحد الأدنى لرسوم المعاملة (ر.ي)</Label>
+  1088→            <Input
+  1089→              type="number"
+  1090→              value={settings.minimumTransactionFee}
+  1091→              onChange={(e) => setSettings(s => ({ ...s, minimumTransactionFee: parseFloat(e.target.value) || 0 }))}
+  1092→              dir="ltr"
+  1093→              className="mt-1"
+  1094→            />
+  1095→          </div>
+  1096→
+  1097→          <div>
+  1098→            <Label className="text-xs">الحد الأقصى لرسوم المعاملة (ر.ي)</Label>
+  1099→            <Input
+  1100→              type="number"
+  1101→              value={settings.maximumTransactionFee}
+  1102→              onChange={(e) => setSettings(s => ({ ...s, maximumTransactionFee: parseFloat(e.target.value) || 0 }))}
+  1103→              dir="ltr"
+  1104→              className="mt-1"
+  1105→            />
+  1106→            <p className="text-[10px] text-muted-foreground mt-1">اتركه 0 لإلغاء الحد الأقصى</p>
+  1107→          </div>
+  1108→        </div>
+  1109→      </div>
+  1110→
+  1111→      {/* Display & Deduction Settings */}
+  1112→      <div className="ios-card p-5 space-y-4">
+  1113→        <h3 className="text-sm font-semibold text-foreground">إعدادات العرض والخصم</h3>
+  1114→
+  1115→        <div className="flex items-center justify-between p-3 rounded-xl bg-muted/30">
+  1116→          <div>
+  1117→            <p className="text-sm font-medium text-foreground">عرض الرسوم قبل المعاملة</p>
+  1118→            <p className="text-[11px] text-muted-foreground">إظهار تكلفة العمولة للمستخدم قبل التنفيذ</p>
+  1119→          </div>
+  1120→          <div
+  1121→            onClick={() => setSettings(s => ({ ...s, feeDisplayToUser: !s.feeDisplayToUser }))}
+  1122→            className={cn('ios-toggle !w-[42px] !h-[26px]', settings.feeDisplayToUser && 'active')}
+  1123→          />
+  1124→        </div>
+  1125→
+  1126→        <div className="flex items-center justify-between p-3 rounded-xl bg-muted/30">
+  1127→          <div>
+  1128→            <p className="text-sm font-medium text-foreground">خصم من الرصيد المصدر</p>
+  1129→            <p className="text-[11px] text-muted-foreground">خصم العمولة من رصيد المرسل بدلاً من المبلغ المرسل</p>
+  1130→          </div>
+  1131→          <div
+  1132→            onClick={() => setSettings(s => ({ ...s, deductFromSource: !s.deductFromSource }))}
+  1133→            className={cn('ios-toggle !w-[42px] !h-[26px]', settings.deductFromSource && 'active')}
+  1134→          />
+  1135→        </div>
+  1136→      </div>
+  1137→
+  1138→      {/* Tax & Distribution */}
+  1139→      <div className="ios-card p-5 space-y-5">
+  1140→        <h3 className="text-sm font-semibold text-foreground">الضرائب وتوزيع العمولات</h3>
+  1141→
+  1142→        <div>
+  1143→          <Label className="text-xs">ضريبة على العمولة (%)</Label>
+  1144→          <Input
+  1145→            type="number"
+  1146→            value={settings.taxOnCommission}
+  1147→            onChange={(e) => setSettings(s => ({ ...s, taxOnCommission: parseFloat(e.target.value) || 0 }))}
+  1148→            dir="ltr"
+  1149→            className="mt-1"
+  1150→          />
+  1151→          <p className="text-[10px] text-muted-foreground mt-1">نسبة ضريبة تُضاف على قيمة العمولة</p>
+  1152→        </div>
+  1153→
+  1154→        <div>
+  1155→          <Label className="text-xs">توزيع العمولات (المجموع يجب أن يكون 100%)</Label>
+  1156→          <div className="grid grid-cols-2 gap-4 mt-2">
+  1157→            <div className="p-3 rounded-xl bg-purple-500/5 border border-purple-500/10">
+  1158→              <div className="flex items-center gap-2 mb-2">
+  1159→                <Crown className="w-4 h-4 text-purple-500" />
+  1160→                <span className="text-xs font-medium text-foreground">حصة المنصة</span>
+  1161→              </div>
+  1162→              <Input
+  1163→                type="number"
+  1164→                value={settings.platformShare}
+  1165→                onChange={(e) => {
+  1166→                  const val = parseFloat(e.target.value) || 0;
+  1167→                  setSettings(s => ({ ...s, platformShare: val, agentShare: 100 - val }));
+  1168→                }}
+  1169→                dir="ltr"
+  1170→              />
+  1171→              <p className="text-[10px] text-purple-500 mt-1">{settings.platformShare}%</p>
+  1172→            </div>
+  1173→            <div className="p-3 rounded-xl bg-emerald-500/5 border border-emerald-500/10">
+  1174→              <div className="flex items-center gap-2 mb-2">
+  1175→                <ShieldCheck className="w-4 h-4 text-emerald-500" />
+  1176→                <span className="text-xs font-medium text-foreground">حصة الوكيل</span>
+  1177→              </div>
+  1178→              <Input
+  1179→                type="number"
+  1180→                value={settings.agentShare}
+  1181→                onChange={(e) => {
+  1182→                  const val = parseFloat(e.target.value) || 0;
+  1183→                  setSettings(s => ({ ...s, agentShare: val, platformShare: 100 - val }));
+  1184→                }}
+  1185→                dir="ltr"
+  1186→              />
+  1187→              <p className="text-[10px] text-emerald-500 mt-1">{settings.agentShare}%</p>
+  1188→            </div>
+  1189→          </div>
+  1190→          {settings.platformShare + settings.agentShare !== 100 && (
+  1191→            <div className="flex items-center gap-2 mt-2 p-2 rounded-lg bg-red-500/10">
+  1192→              <AlertCircle className="w-3.5 h-3.5 text-red-500 shrink-0" />
+  1193→              <p className="text-[11px] text-red-500">المجموع يجب أن يكون 100% (حالياً: {settings.platformShare + settings.agentShare}%)</p>
+  1194→            </div>
+  1195→          )}
+  1196→        </div>
+  1197→      </div>
+  1198→
+  1199→      {/* Save Button */}
+  1200→      <Button
+  1201→        onClick={handleSaveSettings}
+  1202→        disabled={saving || (settings.platformShare + settings.agentShare !== 100)}
+  1203→        className="w-full bg-purple-600 hover:bg-purple-700 h-12 rounded-xl text-base font-medium"
+  1204→      >
+  1205→        {saving ? <Loader2 className="w-5 h-5 ml-2 animate-spin" /> : <Settings className="w-5 h-5 ml-2" />}
+  1206→        حفظ إعدادات العمولات
+  1207→      </Button>
+  1208→    </div>
+  1209→  );
+  1210→
+  1211→  // ── Main Render ──
+  1212→  return (
+  1213→    <div className="space-y-6 max-w-[1400px] mx-auto">
+  1214→      {/* Header */}
+  1215→      <div className="flex items-center justify-between">
+  1216→        <div>
+  1217→          <h1 className="ios-large-title text-foreground">ضبط العمولات</h1>
+  1218→          <p className="text-muted-foreground text-sm mt-1">إدارة شاملة لعمولات المنتجات والخدمات والكريبتو والاستثمار</p>
+  1219→        </div>
+  1220→        <div className="flex items-center gap-2">
+  1221→          <button
+  1222→            onClick={handleExportData}
+  1223→            className="p-2.5 rounded-xl ios-card card-press"
+  1224→            title="تصدير البيانات"
+  1225→          >
+  1226→            <Download className="w-4 h-4 text-muted-foreground" />
+  1227→          </button>
+  1228→          {activeTab === 'rules' && (
+  1229→            <button
+  1230→              onClick={() => openRuleDialog()}
+  1231→              className="px-4 py-2.5 rounded-xl bg-purple-500 text-white text-sm font-medium flex items-center gap-2 shadow-lg shadow-purple-500/25 active:scale-[0.98] transition-transform"
+  1232→            >
+  1233→              <Plus className="w-4 h-4" />
+  1234→              قاعدة جديدة
+  1235→            </button>
+  1236→          )}
+  1237→          {activeTab === 'crypto' && (
+  1238→            <button
+  1239→              onClick={() => openCryptoDialog()}
+  1240→              className="px-4 py-2.5 rounded-xl bg-purple-500 text-white text-sm font-medium flex items-center gap-2 shadow-lg shadow-purple-500/25 active:scale-[0.98] transition-transform"
+  1241→            >
+  1242→              <Plus className="w-4 h-4" />
+  1243→              عملة جديدة
+  1244→            </button>
+  1245→          )}
+  1246→          {activeTab === 'investment' && (
+  1247→            <button
+  1248→              onClick={() => openInvestDialog()}
+  1249→              className="px-4 py-2.5 rounded-xl bg-purple-500 text-white text-sm font-medium flex items-center gap-2 shadow-lg shadow-purple-500/25 active:scale-[0.98] transition-transform"
+  1250→            >
+  1251→              <Plus className="w-4 h-4" />
+  1252→              خطة جديدة
+  1253→            </button>
+  1254→          )}
+  1255→        </div>
+  1256→      </div>
+  1257→
+  1258→      {/* Stats Cards */}
+  1259→      {renderStatsCards()}
+  1260→
+  1261→      {/* Tabs */}
+  1262→      <Tabs value={activeTab} onValueChange={setActiveTab}>
+  1263→        <TabsList className="w-full grid grid-cols-5 h-auto p-1">
+  1264→          <TabsTrigger value="rules" className="text-xs py-2 data-[state=active]:bg-purple-500 data-[state=active]:text-white">
+  1265→            قواعد العمولات
+  1266→          </TabsTrigger>
+  1267→          <TabsTrigger value="crypto" className="text-xs py-2 data-[state=active]:bg-purple-500 data-[state=active]:text-white">
+  1268→            عمولات الكريبتو
+  1269→          </TabsTrigger>
+  1270→          <TabsTrigger value="investment" className="text-xs py-2 data-[state=active]:bg-purple-500 data-[state=active]:text-white">
+  1271→            عمولات الاستثمار
+  1272→          </TabsTrigger>
+  1273→          <TabsTrigger value="reports" className="text-xs py-2 data-[state=active]:bg-purple-500 data-[state=active]:text-white">
+  1274→            تقارير العمولات
+  1275→          </TabsTrigger>
+  1276→          <TabsTrigger value="settings" className="text-xs py-2 data-[state=active]:bg-purple-500 data-[state=active]:text-white">
+  1277→            إعدادات العمولات
+  1278→          </TabsTrigger>
+  1279→        </TabsList>
+  1280→
+  1281→        <TabsContent value="rules" className="space-y-4 mt-4">
+  1282→          {renderRulesTab()}
+  1283→        </TabsContent>
+  1284→
+  1285→        <TabsContent value="crypto" className="space-y-4 mt-4">
+  1286→          {renderCryptoTab()}
+  1287→        </TabsContent>
+  1288→
+  1289→        <TabsContent value="investment" className="space-y-4 mt-4">
+  1290→          {renderInvestmentTab()}
+  1291→        </TabsContent>
+  1292→
+  1293→        <TabsContent value="reports" className="space-y-4 mt-4">
+  1294→          {renderReportsTab()}
+  1295→        </TabsContent>
+  1296→
+  1297→        <TabsContent value="settings" className="space-y-4 mt-4">
+  1298→          {renderSettingsTab()}
+  1299→        </TabsContent>
+  1300→      </Tabs>
+  1301→
+  1302→      {/* ═══════════════════════════════════════════════════ */}
+  1303→      {/* Dialog: Add/Edit Commission Rule */}
+  1304→      {/* ═══════════════════════════════════════════════════ */}
+  1305→      <Dialog open={ruleDialog} onOpenChange={(open) => { setRuleDialog(open); if (!open) resetRuleForm(); }}>
+  1306→        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+  1307→          <DialogHeader>
+  1308→            <DialogTitle className="text-right">{editingRule ? 'تعديل قاعدة العمولة' : 'إضافة قاعدة عمولة جديدة'}</DialogTitle>
+  1309→          </DialogHeader>
+  1310→          <div className="space-y-4">
+  1311→            {/* Name */}
+  1312→            <div>
+  1313→              <Label className="text-xs">اسم القاعدة *</Label>
+  1314→              <Input
+  1315→                value={ruleForm.name}
+  1316→                onChange={(e) => setRuleForm(f => ({ ...f, name: e.target.value }))}
+  1317→                placeholder="مثال: عمولة التحويلات المحلية"
+  1318→                className="mt-1"
+  1319→              />
+  1320→            </div>
+  1321→
+  1322→            {/* Service Type */}
+  1323→            <div>
+  1324→              <Label className="text-xs">نوع الخدمة *</Label>
+  1325→              <Select
+  1326→                value={ruleForm.serviceType}
+  1327→                onValueChange={(v) => setRuleForm(f => ({ ...f, serviceType: v }))}
+  1328→              >
+  1329→                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+  1330→                <SelectContent>
+  1331→                  {SERVICE_TYPES.map(st => (
+  1332→                    <SelectItem key={st.value} value={st.value}>{st.label}</SelectItem>
+  1333→                  ))}
+  1334→                </SelectContent>
+  1335→              </Select>
+  1336→            </div>
+  1337→
+  1338→            {/* Fee Type + Value */}
+  1339→            <div className="grid grid-cols-2 gap-3">
+  1340→              <div>
+  1341→                <Label className="text-xs">نوع الرسوم</Label>
+  1342→                <Select
+  1343→                  value={ruleForm.feeType}
+  1344→                  onValueChange={(v: any) => setRuleForm(f => ({ ...f, feeType: v }))}
+  1345→                >
+  1346→                  <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+  1347→                  <SelectContent>
+  1348→                    <SelectItem value="percentage">نسبة مئوية</SelectItem>
+  1349→                    <SelectItem value="fixed">مبلغ ثابت</SelectItem>
+  1350→                  </SelectContent>
+  1351→                </Select>
+  1352→              </div>
+  1353→              <div>
+  1354→                <Label className="text-xs">قيمة العمولة {ruleForm.feeType === 'percentage' ? '(%)' : ''}</Label>
+  1355→                <Input
+  1356→                  type="number"
+  1357→                  value={ruleForm.feeValue}
+  1358→                  onChange={(e) => setRuleForm(f => ({ ...f, feeValue: parseFloat(e.target.value) || 0 }))}
+  1359→                  dir="ltr"
+  1360→                  className="mt-1"
+  1361→                />
+  1362→              </div>
+  1363→            </div>
+  1364→
+  1365→            {/* Currency (only for fixed) */}
+  1366→            {ruleForm.feeType === 'fixed' && (
+  1367→              <div>
+  1368→                <Label className="text-xs">العملة</Label>
+  1369→                <Select
+  1370→                  value={ruleForm.currency}
+  1371→                  onValueChange={(v) => setRuleForm(f => ({ ...f, currency: v }))}
+  1372→                >
+  1373→                  <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+  1374→                  <SelectContent>
+  1375→                    <SelectItem value="YER">ريال يمني</SelectItem>
+  1376→                    <SelectItem value="SAR">ريال سعودي</SelectItem>
+  1377→                    <SelectItem value="USD">دولار</SelectItem>
+  1378→                  </SelectContent>
+  1379→                </Select>
+  1380→              </div>
+  1381→            )}
+  1382→
+  1383→            {/* Min/Max Fee */}
+  1384→            <div className="grid grid-cols-2 gap-3">
+  1385→              <div>
+  1386→                <Label className="text-xs">الحد الأدنى للرسوم</Label>
+  1387→                <Input
+  1388→                  type="number"
+  1389→                  value={ruleForm.minFee}
+  1390→                  onChange={(e) => setRuleForm(f => ({ ...f, minFee: parseFloat(e.target.value) || 0 }))}
+  1391→                  dir="ltr"
+  1392→                  className="mt-1"
+  1393→                />
+  1394→              </div>
+  1395→              <div>
+  1396→                <Label className="text-xs">الحد الأقصى للرسوم</Label>
+  1397→                <Input
+  1398→                  type="number"
+  1399→                  value={ruleForm.maxFee}
+  1400→                  onChange={(e) => setRuleForm(f => ({ ...f, maxFee: parseFloat(e.target.value) || 0 }))}
+  1401→                  dir="ltr"
+  1402→                  className="mt-1"
+  1403→                />
+  1404→              </div>
+  1405→            </div>
+  1406→
+  1407→            {/* Apply To */}
+  1408→            <div>
+  1409→              <Label className="text-xs">تطبيق على</Label>
+  1410→              <Select
+  1411→                value={ruleForm.applyTo}
+  1412→                onValueChange={(v: any) => setRuleForm(f => ({ ...f, applyTo: v }))}
+  1413→              >
+  1414→                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+  1415→                <SelectContent>
+  1416→                  <SelectItem value="all">جميع المستخدمين</SelectItem>
+  1417→                  <SelectItem value="verified">الموثقين فقط</SelectItem>
+  1418→                  <SelectItem value="unverified">غير الموثقين فقط</SelectItem>
+  1419→                </SelectContent>
+  1420→              </Select>
+  1421→            </div>
+  1422→
+  1423→            {/* Tiers */}
+  1424→            <div>
+  1425→              <div className="flex items-center justify-between mb-2">
+  1426→                <Label className="text-xs">شرائح المبلغ (اختياري)</Label>
+  1427→                <button
+  1428→                  onClick={addTier}
+  1429→                  className="text-[11px] text-purple-500 font-medium flex items-center gap-1 hover:underline"
+  1430→                >
+  1431→                  <Plus className="w-3 h-3" /> إضافة شريحة
+  1432→                </button>
+  1433→              </div>
+  1434→              {ruleForm.tiers.length > 0 && (
+  1435→                <div className="space-y-2">
+  1436→                  {ruleForm.tiers.map((tier) => (
+  1437→                    <div key={tier.id} className="flex items-center gap-2 p-2.5 rounded-xl bg-muted/30">
+  1438→                      <div className="flex-1 grid grid-cols-3 gap-2">
+  1439→                        <Input
+  1440→                          type="number"
+  1441→                          placeholder="من"
+  1442→                          value={tier.minAmount}
+  1443→                          onChange={(e) => updateTier(tier.id, 'minAmount', parseFloat(e.target.value) || 0)}
+  1444→                          dir="ltr"
+  1445→                          className="text-xs h-8"
+  1446→                        />
+  1447→                        <Input
+  1448→                          type="number"
+  1449→                          placeholder="إلى"
+  1450→                          value={tier.maxAmount}
+  1451→                          onChange={(e) => updateTier(tier.id, 'maxAmount', parseFloat(e.target.value) || 0)}
+  1452→                          dir="ltr"
+  1453→                          className="text-xs h-8"
+  1454→                        />
+  1455→                        <Input
+  1456→                          type="number"
+  1457→                          placeholder="الرسوم"
+  1458→                          value={tier.feeValue}
+  1459→                          onChange={(e) => updateTier(tier.id, 'feeValue', parseFloat(e.target.value) || 0)}
+  1460→                          dir="ltr"
+  1461→                          className="text-xs h-8"
+  1462→                        />
+  1463→                      </div>
+  1464→                      <button onClick={() => removeTier(tier.id)} className="p-1 rounded hover:bg-red-500/10">
+  1465→                        <X className="w-3.5 h-3.5 text-red-500" />
+  1466→                      </button>
+  1467→                    </div>
+  1468→                  ))}
+  1469→                </div>
+  1470→              )}
+  1471→            </div>
+  1472→
+  1473→            {/* Active Toggle */}
+  1474→            <div className="flex items-center gap-2">
+  1475→              <Switch checked={ruleForm.isActive} onCheckedChange={(v) => setRuleForm(f => ({ ...f, isActive: v }))} />
+  1476→              <Label className="text-xs">نشط</Label>
+  1477→            </div>
+  1478→          </div>
+  1479→          <DialogFooter className="gap-2">
+  1480→            <Button variant="outline" onClick={() => { setRuleDialog(false); resetRuleForm(); }}>إلغاء</Button>
+  1481→            <Button onClick={handleSaveRule} disabled={saving} className="bg-purple-600 hover:bg-purple-700">
+  1482→              {saving ? <Loader2 className="w-4 h-4 ml-2 animate-spin" /> : null}
+  1483→              {editingRule ? 'تحديث' : 'إضافة'}
+  1484→            </Button>
+  1485→          </DialogFooter>
+  1486→        </DialogContent>
+  1487→      </Dialog>
+  1488→
+  1489→      {/* ═══════════════════════════════════════════════════ */}
+  1490→      {/* Dialog: Add/Edit Crypto Commission */}
+  1491→      {/* ═══════════════════════════════════════════════════ */}
+  1492→      <Dialog open={cryptoDialog} onOpenChange={(open) => { setCryptoDialog(open); if (!open) resetCryptoForm(); }}>
+  1493→        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+  1494→          <DialogHeader>
+  1495→            <DialogTitle className="text-right">{editingCrypto ? 'تعديل عمولة الكريبتو' : 'إضافة عمولة كريبتو جديدة'}</DialogTitle>
+  1496→          </DialogHeader>
+  1497→          <div className="space-y-4">
+  1498→            {/* Crypto Code */}
+  1499→            <div>
+  1500→              <Label className="text-xs">العملة الرقمية *</Label>
+  1501→              <Select
+  1502→                value={cryptoForm.cryptoCode}
+  1503→                onValueChange={(v) => {
+  1504→                  const found = CRYPTO_CODES.find(c => c.code === v);
+  1505→                  setCryptoForm(f => ({ ...f, cryptoCode: v, cryptoName: found?.name || v }));
+  1506→                }}
+  1507→              >
+  1508→                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+  1509→                <SelectContent>
+  1510→                  {CRYPTO_CODES.map(c => (
+  1511→                    <SelectItem key={c.code} value={c.code}>{c.name} ({c.code})</SelectItem>
+  1512→                  ))}
+  1513→                </SelectContent>
+  1514→              </Select>
+  1515→            </div>
+  1516→
+  1517→            {/* Buy/Sell Percentage */}
+  1518→            <div className="grid grid-cols-2 gap-3">
+  1519→              <div>
+  1520→                <Label className="text-xs">عمولة الشراء (%)</Label>
+  1521→                <Input
+  1522→                  type="number"
+  1523→                  value={cryptoForm.buyPercentage}
+  1524→                  onChange={(e) => setCryptoForm(f => ({ ...f, buyPercentage: parseFloat(e.target.value) || 0 }))}
+  1525→                  dir="ltr"
+  1526→                  className="mt-1"
+  1527→                />
+  1528→              </div>
+  1529→              <div>
+  1530→                <Label className="text-xs">عمولة البيع (%)</Label>
+  1531→                <Input
+  1532→                  type="number"
+  1533→                  value={cryptoForm.sellPercentage}
+  1534→                  onChange={(e) => setCryptoForm(f => ({ ...f, sellPercentage: parseFloat(e.target.value) || 0 }))}
+  1535→                  dir="ltr"
+  1536→                  className="mt-1"
+  1537→                />
+  1538→              </div>
+  1539→            </div>
+  1540→
+  1541→            {/* Buy Limits */}
+  1542→            <div className="grid grid-cols-2 gap-3">
+  1543→              <div>
+  1544→                <Label className="text-xs">الحد الأدنى لرسوم الشراء</Label>
+  1545→                <Input
+  1546→                  type="number"
+  1547→                  value={cryptoForm.minBuyFee}
+  1548→                  onChange={(e) => setCryptoForm(f => ({ ...f, minBuyFee: parseFloat(e.target.value) || 0 }))}
+  1549→                  dir="ltr"
+  1550→                  className="mt-1"
+  1551→                />
+  1552→              </div>
+  1553→              <div>
+  1554→                <Label className="text-xs">الحد الأقصى لرسوم الشراء</Label>
+  1555→                <Input
+  1556→                  type="number"
+  1557→                  value={cryptoForm.maxBuyFee}
+  1558→                  onChange={(e) => setCryptoForm(f => ({ ...f, maxBuyFee: parseFloat(e.target.value) || 0 }))}
+  1559→                  dir="ltr"
+  1560→                  className="mt-1"
+  1561→                />
+  1562→              </div>
+  1563→            </div>
+  1564→
+  1565→            {/* Sell Limits */}
+  1566→            <div className="grid grid-cols-2 gap-3">
+  1567→              <div>
+  1568→                <Label className="text-xs">الحد الأدنى لرسوم البيع</Label>
+  1569→                <Input
+  1570→                  type="number"
+  1571→                  value={cryptoForm.minSellFee}
+  1572→                  onChange={(e) => setCryptoForm(f => ({ ...f, minSellFee: parseFloat(e.target.value) || 0 }))}
+  1573→                  dir="ltr"
+  1574→                  className="mt-1"
+  1575→                />
+  1576→              </div>
+  1577→              <div>
+  1578→                <Label className="text-xs">الحد الأقصى لرسوم البيع</Label>
+  1579→                <Input
+  1580→                  type="number"
+  1581→                  value={cryptoForm.maxSellFee}
+  1582→                  onChange={(e) => setCryptoForm(f => ({ ...f, maxSellFee: parseFloat(e.target.value) || 0 }))}
+  1583→                  dir="ltr"
+  1584→                  className="mt-1"
+  1585→                />
+  1586→              </div>
+  1587→            </div>
+  1588→
+  1589→            {/* Spread + Network Fee */}
+  1590→            <div className="grid grid-cols-2 gap-3">
+  1591→              <div>
+  1592→                <Label className="text-xs">فروق السعر (%)</Label>
+  1593→                <Input
+  1594→                  type="number"
+  1595→                  value={cryptoForm.spreadPercentage}
+  1596→                  onChange={(e) => setCryptoForm(f => ({ ...f, spreadPercentage: parseFloat(e.target.value) || 0 }))}
+  1597→                  dir="ltr"
+  1598→                  className="mt-1"
+  1599→                />
+  1600→                <p className="text-[10px] text-muted-foreground mt-1">الفرق بين سعر الشراء والبيع</p>
+  1601→              </div>
+  1602→              <div>
+  1603→                <Label className="text-xs">رسوم الشبكة البديلة</Label>
+  1604→                <Input
+  1605→                  type="number"
+  1606→                  value={cryptoForm.networkFeeOverride}
+  1607→                  onChange={(e) => setCryptoForm(f => ({ ...f, networkFeeOverride: parseFloat(e.target.value) || 0 }))}
+  1608→                  dir="ltr"
+  1609→                  className="mt-1"
+  1610→                />
+  1611→                <p className="text-[10px] text-muted-foreground mt-1">اتركه 0 للتلقائي</p>
+  1612→              </div>
+  1613→            </div>
+  1614→
+  1615→            {/* Fee Currency */}
+  1616→            <div>
+  1617→              <Label className="text-xs">عملة الرسوم</Label>
+  1618→              <Select
+  1619→                value={cryptoForm.feeCurrency}
+  1620→                onValueChange={(v) => setCryptoForm(f => ({ ...f, feeCurrency: v }))}
+  1621→              >
+  1622→                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+  1623→                <SelectContent>
+  1624→                  <SelectItem value="YER">ريال يمني</SelectItem>
+  1625→                  <SelectItem value="SAR">ريال سعودي</SelectItem>
+  1626→                  <SelectItem value="USD">دولار</SelectItem>
+  1627→                </SelectContent>
+  1628→              </Select>
+  1629→            </div>
+  1630→
+  1631→            {/* Active Toggle */}
+  1632→            <div className="flex items-center gap-2">
+  1633→              <Switch checked={cryptoForm.isActive} onCheckedChange={(v) => setCryptoForm(f => ({ ...f, isActive: v }))} />
+  1634→              <Label className="text-xs">نشط</Label>
+  1635→            </div>
+  1636→          </div>
+  1637→          <DialogFooter className="gap-2">
+  1638→            <Button variant="outline" onClick={() => { setCryptoDialog(false); resetCryptoForm(); }}>إلغاء</Button>
+  1639→            <Button onClick={handleSaveCrypto} disabled={saving} className="bg-purple-600 hover:bg-purple-700">
+  1640→              {saving ? <Loader2 className="w-4 h-4 ml-2 animate-spin" /> : null}
+  1641→              {editingCrypto ? 'تحديث' : 'إضافة'}
+  1642→            </Button>
+  1643→          </DialogFooter>
+  1644→        </DialogContent>
+  1645→      </Dialog>
+  1646→
+  1647→      {/* ═══════════════════════════════════════════════════ */}
+  1648→      {/* Dialog: Add/Edit Investment Commission */}
+  1649→      {/* ═══════════════════════════════════════════════════ */}
+  1650→      <Dialog open={investDialog} onOpenChange={(open) => { setInvestDialog(open); if (!open) resetInvestForm(); }}>
+  1651→        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
+  1652→          <DialogHeader>
+  1653→            <DialogTitle className="text-right">{editingInvest ? 'تعديل عمولة الاستثمار' : 'إضافة عمولة استثمار جديدة'}</DialogTitle>
+  1654→          </DialogHeader>
+  1655→          <div className="space-y-4">
+  1656→            {/* Plan Name */}
+  1657→            <div>
+  1658→              <Label className="text-xs">اسم خطة الاستثمار *</Label>
+  1659→              <Input
+  1660→                value={investForm.planName}
+  1661→                onChange={(e) => setInvestForm(f => ({ ...f, planName: e.target.value }))}
+  1662→                placeholder="مثال: خطة الشهر الثابت"
+  1663→                className="mt-1"
+  1664→              />
+  1665→            </div>
+  1666→
+  1667→            {/* Percentage */}
+  1668→            <div>
+  1669→              <Label className="text-xs">نسبة العمولة على الأرباح (%)</Label>
+  1670→              <Input
+  1671→                type="number"
+  1672→                value={investForm.percentage}
+  1673→                onChange={(e) => setInvestForm(f => ({ ...f, percentage: parseFloat(e.target.value) || 0 }))}
+  1674→                dir="ltr"
+  1675→                className="mt-1"
+  1676→              />
+  1677→            </div>
+  1678→
+  1679→            {/* Min/Max Fee */}
+  1680→            <div className="grid grid-cols-2 gap-3">
+  1681→              <div>
+  1682→                <Label className="text-xs">الحد الأدنى للرسوم</Label>
+  1683→                <Input
+  1684→                  type="number"
+  1685→                  value={investForm.minFee}
+  1686→                  onChange={(e) => setInvestForm(f => ({ ...f, minFee: parseFloat(e.target.value) || 0 }))}
+  1687→                  dir="ltr"
+  1688→                  className="mt-1"
+  1689→                />
+  1690→              </div>
+  1691→              <div>
+  1692→                <Label className="text-xs">الحد الأقصى للرسوم</Label>
+  1693→                <Input
+  1694→                  type="number"
+  1695→                  value={investForm.maxFee}
+  1696→                  onChange={(e) => setInvestForm(f => ({ ...f, maxFee: parseFloat(e.target.value) || 0 }))}
+  1697→                  dir="ltr"
+  1698→                  className="mt-1"
+  1699→                />
+  1700→              </div>
+  1701→            </div>
+  1702→
+  1703→            {/* Early Withdrawal Penalty */}
+  1704→            <div>
+  1705→              <Label className="text-xs">غرامة السحب المبكر (%)</Label>
+  1706→              <Input
+  1707→                type="number"
+  1708→                value={investForm.earlyWithdrawalPenalty}
+  1709→                onChange={(e) => setInvestForm(f => ({ ...f, earlyWithdrawalPenalty: parseFloat(e.target.value) || 0 }))}
+  1710→                dir="ltr"
+  1711→                className="mt-1"
+  1712→              />
+  1713→              <p className="text-[10px] text-red-500 mt-1">تُطبق عند سحب الأرباح قبل موعد الاستحقاق</p>
+  1714→            </div>
+  1715→
+  1716→            {/* Fee Currency */}
+  1717→            <div>
+  1718→              <Label className="text-xs">عملة الرسوم</Label>
+  1719→              <Select
+  1720→                value={investForm.feeCurrency}
+  1721→                onValueChange={(v) => setInvestForm(f => ({ ...f, feeCurrency: v }))}
+  1722→              >
+  1723→                <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+  1724→                <SelectContent>
+  1725→                  <SelectItem value="YER">ريال يمني</SelectItem>
+  1726→                  <SelectItem value="SAR">ريال سعودي</SelectItem>
+  1727→                  <SelectItem value="USD">دولار</SelectItem>
+  1728→                </SelectContent>
+  1729→              </Select>
+  1730→            </div>
+  1731→
+  1732→            {/* Active Toggle */}
+  1733→            <div className="flex items-center gap-2">
+  1734→              <Switch checked={investForm.isActive} onCheckedChange={(v) => setInvestForm(f => ({ ...f, isActive: v }))} />
+  1735→              <Label className="text-xs">نشط</Label>
+  1736→            </div>
+  1737→          </div>
+  1738→          <DialogFooter className="gap-2">
+  1739→            <Button variant="outline" onClick={() => { setInvestDialog(false); resetInvestForm(); }}>إلغاء</Button>
+  1740→            <Button onClick={handleSaveInvest} disabled={saving} className="bg-purple-600 hover:bg-purple-700">
+  1741→              {saving ? <Loader2 className="w-4 h-4 ml-2 animate-spin" /> : null}
+  1742→              {editingInvest ? 'تحديث' : 'إضافة'}
+  1743→            </Button>
+  1744→          </DialogFooter>
+  1745→        </DialogContent>
+  1746→      </Dialog>
+  1747→    </div>
+  1748→  );
+  1749→}
+  1750→

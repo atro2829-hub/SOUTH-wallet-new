@@ -1,0 +1,1062 @@
+     1→import { create } from 'zustand';
+     2→import { persist } from 'zustand/middleware';
+     3→import { auth } from '@/lib/firebase';
+     4→import { signOut } from 'firebase/auth';
+     5→import { isBiometricEnabledForUser } from '@/lib/biometric';
+     6→import { supabaseService } from '@/lib/supabase';
+     7→
+     8→interface User {
+     9→  id: string;
+    10→  email: string;
+    11→  phone: string;
+    12→  name: string; // computed: ${firstName} ${secondName} ${thirdName} ${familyName}
+    13→  firstName: string;
+    14→  secondName: string;
+    15→  thirdName: string;
+    16→  familyName: string;
+    17→  nationalId: string;
+    18→  avatar: string;
+    19→  role: 'user' | 'admin' | 'owner';
+    20→  userId: string;
+    21→  kycStatus: 'pending' | 'submitted' | 'verified' | 'rejected';
+    22→  isBlocked: boolean;
+    23→  balanceYER: number;
+    24→  balanceSAR: number;
+    25→  balanceUSD: number;
+    26→  cardType: string;
+    27→  cardNumber: string;
+    28→  cardIssuedAt: string;
+    29→  governorate: string;
+    30→  theme: 'light' | 'dark';
+    31→}
+    32→
+    33→interface Transaction {
+    34→  id: string;
+    35→  fromUserId: string;
+    36→  toUserId: string;
+    37→  amount: number;
+    38→  currency: 'YER' | 'SAR' | 'USD';
+    39→  type: 'transfer' | 'deposit' | 'withdraw' | 'payment' | 'recharge' | 'bill' | 'purchase' | 'order';
+    40→  status: 'pending' | 'completed' | 'failed' | 'refunded';
+    41→  description: string;
+    42→  createdAt: string;
+    43→}
+    44→
+    45→interface Notification {
+    46→  id: string;
+    47→  title: string;
+    48→  body: string;
+    49→  type: 'info' | 'transaction' | 'security' | 'promo';
+    50→  isRead: boolean;
+    51→  createdAt: string;
+    52→  navigationTarget?: string; // e.g., "transaction:abc123", "kyc", "url:https://..."
+    53→  navigationParams?: Record<string, unknown>; // Additional params for navigation
+    54→  data?: Record<string, unknown>; // Extra data payload from FCM or Supabase
+    55→}
+    56→
+    57→// Service categories and providers
+    58→export interface ServiceCategory {
+    59→  id: string;
+    60→  name: string;
+    61→  type: 'telecom' | 'internet' | 'games' | 'cards' | 'electricity' | 'government' | 'crypto' | 'providers' | 'wallet-services';
+    62→  icon: string; // Base64 or icon key
+    63→}
+    64→
+    65→export interface ServiceProvider {
+    66→  id: string;
+    67→  categoryId: string;
+    68→  name: string;
+    69→  color: string;
+    70→  icon: string; // Base64 string for custom icons
+    71→  isActive: boolean;
+    72→  inputLabel: string; // e.g. "رقم الهاتف" or "Player ID"
+    73→  inputType: 'phone' | 'text';
+    74→  inputPrefix?: string; // e.g. "+967"
+    75→}
+    76→
+    77→export interface ProductPackage {
+    78→  id: string;
+    79→  providerId: string;
+    80→  name: string;
+    81→  price: number;
+    82→  currency: 'YER' | 'SAR' | 'USD';
+    83→  executionType: 'manual' | 'auto';
+    84→  isActive: boolean;
+    85→  apiProvider?: string;       // Name of the external API provider company
+    86→  productIdInApi?: string;    // Product ID in the external API system
+    87→  costPrice?: number;         // Cost price from the provider
+    88→  commission?: number;        // Profit margin (selling price - cost price)
+    89→}
+    90→
+    91→export interface Order {
+    92→  id: string;
+    93→  userId: string;
+    94→  userName: string;
+    95→  userPhone: string;
+    96→  providerId: string;
+    97→  providerName: string;
+    98→  packageId: string;
+    99→  packageName: string;
+   100→  customerInput: string; // Phone number or Player ID
+   101→  amount: number;
+   102→  currency: 'YER' | 'SAR' | 'USD';
+   103→  status: 'pending' | 'completed' | 'cancelled' | 'refunded';
+   104→  executionType: 'manual' | 'auto';
+   105→  createdAt: string;
+   106→  completedAt?: string;
+   107→  // API Provider fields
+   108→  apiProviderId?: string;  // Provider ID in Firebase (e.g., "g2bulk")
+   109→  apiProductId?: string;   // Product ID in the API
+   110→  apiCategoryId?: string;  // Category ID in the API
+   111→}
+   112→
+   113→export interface DepositRequest {
+   114→  id: string;
+   115→  userId: string;
+   116→  userName: string;
+   117→  amount: number;
+   118→  currency: 'YER' | 'SAR' | 'USD';
+   119→  method: 'bank_transfer' | 'cash' | 'card' | 'crypto';
+   120→  receiptImage: string;
+   121→  status: 'pending' | 'approved' | 'rejected';
+   122→  notes: string;
+   123→  createdAt: string;
+   124→  reviewedAt?: string;
+   125→  cryptoId?: string;
+   126→  cryptoSymbol?: string;
+   127→  cryptoNetwork?: string;
+   128→  cryptoTxHash?: string;
+   129→}
+   130→
+   131→export interface WithdrawRequest {
+   132→  id: string;
+   133→  userId: string;
+   134→  userName: string;
+   135→  amount: number;
+   136→  currency: 'YER' | 'SAR' | 'USD';
+   137→  method: 'bank_transfer' | 'cash' | 'crypto';
+   138→  bankDetails: string;
+   139→  status: 'pending' | 'approved' | 'rejected';
+   140→  notes: string;
+   141→  createdAt: string;
+   142→  reviewedAt?: string;
+   143→  cryptoId?: string;
+   144→  cryptoSymbol?: string;
+   145→  cryptoNetwork?: string;
+   146→  cryptoWalletAddress?: string;
+   147→}
+   148→
+   149→export interface SupportTicket {
+   150→  id: string;
+   151→  userId: string;
+   152→  userName: string;
+   153→  subject: string;
+   154→  message: string;
+   155→  category: 'technical' | 'financial' | 'general';
+   156→  status: 'open' | 'in_progress' | 'resolved' | 'closed';
+   157→  messages: { sender: 'user' | 'support'; text: string; time: string }[];
+   158→  createdAt: string;
+   159→}
+   160→
+   161→export interface PromoCode {
+   162→  id: string;
+   163→  code: string;
+   164→  discount: number;
+   165→  type: 'percentage' | 'fixed';
+   166→  currency: 'YER' | 'SAR' | 'USD';
+   167→  maxUses: number;
+   168→  usedCount: number;
+   169→  expiresAt: string;
+   170→  isActive: boolean;
+   171→}
+   172→
+   173→export interface GiftCode {
+   174→  id: string;
+   175→  code: string;
+   176→  amount: number;
+   177→  currency: 'YER' | 'SAR' | 'USD';
+   178→  maxUses: number;
+   179→  usedCount: number;
+   180→  expiresAt: string;
+   181→  isActive: boolean;
+   182→  description?: string;
+   183→}
+   184→
+   185→export interface SavingsGoal {
+   186→  id: string;
+   187→  name: string;
+   188→  targetAmount: number;
+   189→  currentAmount: number;
+   190→  currency: 'YER' | 'SAR' | 'USD';
+   191→  icon: string;
+   192→  createdAt: string;
+   193→}
+   194→
+   195→export interface Investment {
+   196→  id: string;
+   197→  planId: string;
+   198→  planName: string;
+   199→  amount: number;
+   200→  currency: 'YER' | 'SAR' | 'USD';
+   201→  profitRate: number;
+   202→  expectedProfit: number;
+   203→  startDate: string;
+   204→  endDate: string;
+   205→  status: 'active' | 'completed' | 'cancelled';
+   206→  completedAt?: string;
+   207→}
+   208→
+   209→export interface UserGiftCode {
+   210→  id: string;
+   211→  code: string;
+   212→  creatorUid: string;
+   213→  creatorName: string;
+   214→  amount: number;
+   215→  currency: 'YER' | 'SAR' | 'USD';
+   216→  message: string;
+   217→  status: 'active' | 'redeemed' | 'cancelled';
+   218→  createdAt: string;
+   219→  redeemedBy?: string;
+   220→  redeemedAt?: string;
+   221→}
+   222→
+   223→export interface CardColor {
+   224→  YER: { primary: string; gradient: string; gradientStart?: string; gradientEnd?: string };
+   225→  SAR: { primary: string; gradient: string; gradientStart?: string; gradientEnd?: string };
+   226→  USD: { primary: string; gradient: string; gradientStart?: string; gradientEnd?: string };
+   227→}
+   228→
+   229→export interface MaintenanceMode {
+   230→  active: boolean;
+   231→  message: string;
+   232→  estimatedTime: string;
+   233→  activatedAt?: string;
+   234→  activatedBy?: string;
+   235→}
+   236→
+   237→export interface ForceUpdate {
+   238→  active: boolean;
+   239→  minVersion: string;
+   240→  updateUrl: string;
+   241→  message: string;
+   242→}
+   243→
+   244→export interface MoneyRequest {
+   245→  id: string;
+   246→  fromUid: string;
+   247→  fromName: string;
+   248→  toUid: string;
+   249→  toName: string;
+   250→  amount: number;
+   251→  currency: 'YER' | 'SAR' | 'USD';
+   252→  status: 'pending' | 'accepted' | 'rejected' | 'partial';
+   253→  partialAmount?: number;
+   254→  createdAt: string;
+   255→}
+   256→
+   257→export interface InvestmentPlan {
+   258→  id: string;
+   259→  name: string;
+   260→  type: string;
+   261→  durationDays: number;
+   262→  minAmount: number;
+   263→  maxAmount: number;
+   264→  currency: 'YER' | 'SAR' | 'USD';
+   265→  profitRate: number;
+   266→  isActive: boolean;
+   267→}
+   268→
+   269→export interface SupportChatMessage {
+   270→  sender: 'user' | 'admin';
+   271→  text: string;
+   272→  time: string;
+   273→  senderName?: string;
+   274→}
+   275→
+   276→// Feature flags controlled by admin
+   277→export interface FeatureFlags {
+   278→  transfersEnabled: boolean;
+   279→  depositsEnabled: boolean;
+   280→  withdrawalsEnabled: boolean;
+   281→  exchangeEnabled: boolean;
+   282→  servicesEnabled: boolean;
+   283→  rechargeEnabled: boolean;
+   284→  billsEnabled: boolean;
+   285→  investmentEnabled: boolean;
+   286→  cryptoEnabled: boolean;
+   287→  giftCodesEnabled: boolean;
+   288→  qrPaymentsEnabled: boolean;
+   289→  referralEnabled: boolean;
+   290→  notificationsEnabled: boolean;
+   291→  biometricEnabled: boolean;
+   292→  pinEnabled: boolean;
+   293→  darkModeEnabled: boolean;
+   294→  maintenanceMode: boolean;
+   295→  maintenanceMessage: string;
+   296→  registrationEnabled: boolean;
+   297→}
+   298→
+   299→// Transaction limits controlled by admin
+   300→export interface TransactionLimits {
+   301→  maxSingleTransfer: number;
+   302→  maxDailyTransfer: number;
+   303→  maxMonthlyTransfer: number;
+   304→  maxSingleDeposit: number;
+   305→  maxDailyDeposit: number;
+   306→  maxBalance: number;
+   307→}
+   308→
+   309→// Default feature flags - all TRUE so the app works even without Firebase
+   310→export const defaultFeatureFlags: FeatureFlags = {
+   311→  transfersEnabled: true,
+   312→  depositsEnabled: true,
+   313→  withdrawalsEnabled: true,
+   314→  exchangeEnabled: true,
+   315→  servicesEnabled: true,
+   316→  rechargeEnabled: true,
+   317→  billsEnabled: true,
+   318→  investmentEnabled: true,
+   319→  cryptoEnabled: true,
+   320→  giftCodesEnabled: true,
+   321→  qrPaymentsEnabled: true,
+   322→  referralEnabled: true,
+   323→  notificationsEnabled: true,
+   324→  biometricEnabled: true,
+   325→  pinEnabled: true,
+   326→  darkModeEnabled: true,
+   327→  maintenanceMode: false,
+   328→  maintenanceMessage: '',
+   329→  registrationEnabled: true,
+   330→};
+   331→
+   332→// Default transaction limits
+   333→export const defaultTransactionLimits: TransactionLimits = {
+   334→  maxSingleTransfer: 500000,
+   335→  maxDailyTransfer: 1000000,
+   336→  maxMonthlyTransfer: 5000000,
+   337→  maxSingleDeposit: 1000000,
+   338→  maxDailyDeposit: 2000000,
+   339→  maxBalance: 10000000,
+   340→};
+   341→
+   342→// Limits by user tier
+   343→export const limitsByTier = {
+   344→  unverified: {
+   345→    maxSingleTransfer: 50000,
+   346→    maxDailyTransfer: 100000,
+   347→    maxMonthlyTransfer: 500000,
+   348→    maxSingleDeposit: 100000,
+   349→    maxDailyDeposit: 200000,
+   350→    maxBalance: 500000,
+   351→  },
+   352→  verified: {
+   353→    maxSingleTransfer: 500000,
+   354→    maxDailyTransfer: 1000000,
+   355→    maxMonthlyTransfer: 5000000,
+   356→    maxSingleDeposit: 1000000,
+   357→    maxDailyDeposit: 2000000,
+   358→    maxBalance: 10000000,
+   359→  },
+   360→  premium: {
+   361→    maxSingleTransfer: 0, // unlimited
+   362→    maxDailyTransfer: 0,
+   363→    maxMonthlyTransfer: 0,
+   364→    maxSingleDeposit: 0,
+   365→    maxDailyDeposit: 0,
+   366→    maxBalance: 0,
+   367→  },
+   368→};
+   369→
+   370→interface AppState {
+   371→  // Auth
+   372→  user: User | null;
+   373→  isAuthenticated: boolean;
+   374→  setUser: (user: User | null) => void;
+   375→  logout: () => void;
+   376→
+   377→  // Theme
+   378→  theme: 'light' | 'dark';
+   379→  setTheme: (theme: 'light' | 'dark') => void;
+   380→  toggleTheme: () => void;
+   381→
+   382→  // Navigation
+   383→  activeTab: 'home' | 'services' | 'wallet' | 'account';
+   384→  setActiveTab: (tab: 'home' | 'services' | 'wallet' | 'account') => void;
+   385→  activeScreen: string;
+   386→  setActiveScreen: (screen: string) => void;
+   387→  previousScreen: string;
+   388→  setPreviousScreen: (screen: string) => void;
+   389→
+   390→  // Balance visibility
+   391→  balanceVisible: boolean;
+   392→  toggleBalance: () => void;
+   393→
+   394→  // Active currency card
+   395→  activeCard: number;
+   396→  setActiveCard: (index: number) => void;
+   397→
+   398→  // Transactions
+   399→  transactions: Transaction[];
+   400→  setTransactions: (txs: Transaction[]) => void;
+   401→  addTransaction: (tx: Transaction) => void;
+   402→
+   403→  // Notifications
+   404→  notifications: Notification[];
+   405→  setNotifications: (notifs: Notification[]) => void;
+   406→  addNotification: (notif: Notification) => void;
+   407→  removeNotification: (id: string) => void;
+   408→  clearNotifications: () => void;
+   409→  markNotificationRead: (id: string) => void;
+   410→  unreadCount: () => number;
+   411→
+   412→  // Service system
+   413→  categories: ServiceCategory[];
+   414→  setCategories: (cats: ServiceCategory[]) => void;
+   415→  providers: ServiceProvider[];
+   416→  setProviders: (provs: ServiceProvider[]) => void;
+   417→  packages: ProductPackage[];
+   418→  setPackages: (pkgs: ProductPackage[]) => void;
+   419→  addPackage: (pkg: ProductPackage) => void;
+   420→  updatePackage: (id: string, pkg: Partial<ProductPackage>) => void;
+   421→
+   422→  // Firebase realtime data (raw) for services
+   423→  fbSections: Record<string, any>;
+   424→  setFbSections: (data: Record<string, any>) => void;
+   425→  fbWalletServices: Record<string, any>;
+   426→  setFbWalletServices: (data: Record<string, any>) => void;
+   427→  fbApiProviders: Record<string, any>;
+   428→  setFbApiProviders: (data: Record<string, any>) => void;
+   429→  fbVisibility: { sections: Record<string, boolean>; providers: Record<string, boolean>; features: Record<string, boolean> };
+   430→  setFbVisibility: (data: { sections: Record<string, boolean>; providers: Record<string, boolean>; features: Record<string, boolean> }) => void;
+   431→
+   432→  // Wallet addresses (from adminSettings/walletAddresses)
+   433→  fbWalletAddresses: Record<string, any>;
+   434→  setFbWalletAddresses: (data: Record<string, any>) => void;
+   435→
+   436→  // Bottom navigation (from adminSettings/bottomNav)
+   437→  fbBottomNav: Record<string, { visible: boolean; label: string; icon?: string }>;
+   438→  setFbBottomNav: (data: Record<string, { visible: boolean; label: string; icon?: string }>) => void;
+   439→
+   440→  // Kill switch (from adminSettings/killSwitch)
+   441→  killSwitch: { active: boolean; message: string; activatedAt: string; activatedBy: string; deactivateAt: string; duration: number } | null;
+   442→  setKillSwitch: (data: { active: boolean; message: string; activatedAt: string; activatedBy: string; deactivateAt: string; duration: number } | null) => void;
+   443→
+   444→  // Orders
+   445→  orders: Order[];
+   446→  setOrders: (orders: Order[]) => void;
+   447→  addOrder: (order: Order) => void;
+   448→  updateOrderStatus: (id: string, status: Order['status']) => void;
+   449→
+   450→  // Quick Action Drawer
+   451→  isDrawerOpen: boolean;
+   452→  setDrawerOpen: (open: boolean) => void;
+   453→
+   454→  // Transfer modal
+   455→  isTransferOpen: boolean;
+   456→  setTransferOpen: (open: boolean) => void;
+   457→
+   458→  // Request money modal
+   459→  isRequestMoneyOpen: boolean;
+   460→  setRequestMoneyOpen: (open: boolean) => void;
+   461→
+   462→  // Order modal (bottom sheet)
+   463→  isOrderOpen: boolean;
+   464→  setOrderOpen: (open: boolean) => void;
+   465→  selectedProvider: ServiceProvider | null;
+   466→  setSelectedProvider: (prov: ServiceProvider | null) => void;
+   467→
+   468→  // Selected category for detail screen
+   469→  selectedCategory: string | null;
+   470→  setSelectedCategory: (category: string | null) => void;
+   471→
+   472→  // Loading states
+   473→  isLoading: boolean;
+   474→  setLoading: (loading: boolean) => void;
+   475→
+   476→  // PIN Lock
+   477→  pinCode: string;
+   478→  setPinCode: (pin: string) => void;
+   479→  isPinLocked: boolean;
+   480→  setPinLocked: (locked: boolean) => void;
+   481→
+   482→  // Favorites
+   483→  favorites: string[];
+   484→  toggleFavorite: (providerId: string) => void;
+   485→
+   486→  // Recent services
+   487→  recentServices: string[];
+   488→  addRecentService: (providerId: string) => void;
+   489→
+   490→  // Deposit requests
+   491→  depositRequests: DepositRequest[];
+   492→  addDepositRequest: (req: DepositRequest) => void;
+   493→  updateDepositStatus: (id: string, status: DepositRequest['status'], reviewedAt?: string) => void;
+   494→
+   495→  // Withdraw requests
+   496→  withdrawRequests: WithdrawRequest[];
+   497→  addWithdrawRequest: (req: WithdrawRequest) => void;
+   498→  updateWithdrawStatus: (id: string, status: WithdrawRequest['status'], reviewedAt?: string) => void;
+   499→
+   500→  // Support tickets
+   501→  supportTickets: SupportTicket[];
+   502→  addTicket: (ticket: SupportTicket) => void;
+   503→  updateTicket: (id: string, updates: Partial<SupportTicket>) => void;
+   504→
+   505→  // Exchange rates
+   506→  exchangeRates: { YER: number; SAR: number; USD: number };
+   507→  setExchangeRates: (rates: { YER: number; SAR: number; USD: number }) => void;
+   508→
+   509→  // Promo codes
+   510→  promoCodes: PromoCode[];
+   511→  applyPromoCode: (code: string) => Promise<PromoCode | null>;
+   512→
+   513→  // Gift codes
+   514→  redeemGiftCode: (code: string) => Promise<{ success: boolean; message: string; amount?: number; currency?: string }>;
+   515→
+   516→  // Savings goals
+   517→  savingsGoals: SavingsGoal[];
+   518→  addSavingsGoal: (goal: SavingsGoal) => void;
+   519→  updateSavingsGoal: (id: string, updates: Partial<SavingsGoal>) => void;
+   520→
+   521→  // Investments
+   522→  investments: Investment[];
+   523→  setInvestments: (investments: Investment[]) => void;
+   524→  addInvestment: (investment: Investment) => void;
+   525→  updateInvestment: (id: string, updates: Partial<Investment>) => void;
+   526→
+   527→  // User gift codes
+   528→  userGiftCodes: UserGiftCode[];
+   529→  setUserGiftCodes: (codes: UserGiftCode[]) => void;
+   530→  addUserGiftCode: (code: UserGiftCode) => void;
+   531→  updateUserGiftCode: (id: string, updates: Partial<UserGiftCode>) => void;
+   532→
+   533→  // Card colors
+   534→  cardColors: CardColor;
+   535→  setCardColors: (colors: CardColor) => void;
+   536→
+   537→  // Maintenance mode
+   538→  maintenance: MaintenanceMode | null;
+   539→  setMaintenance: (data: MaintenanceMode | null) => void;
+   540→
+   541→  // Force update
+   542→  forceUpdate: ForceUpdate | null;
+   543→  setForceUpdate: (data: ForceUpdate | null) => void;
+   544→
+   545→  // Money requests
+   546→  moneyRequests: MoneyRequest[];
+   547→  setMoneyRequests: (requests: MoneyRequest[]) => void;
+   548→  addMoneyRequest: (request: MoneyRequest) => void;
+   549→  updateMoneyRequest: (id: string, updates: Partial<MoneyRequest>) => void;
+   550→
+   551→  // Investment plans (from admin)
+   552→  investmentPlans: InvestmentPlan[];
+   553→  setInvestmentPlans: (plans: InvestmentPlan[]) => void;
+   554→
+   555→  // Biometric enabled
+   556→  biometricEnabled: boolean;
+   557→  setBiometricEnabled: (enabled: boolean) => void;
+   558→
+   559→  // Biometric transaction confirmation (optional)
+   560→  biometricTransactionConfirm: boolean;
+   561→  setBiometricTransactionConfirm: (enabled: boolean) => void;
+   562→
+   563→  // Exchange rate API URL
+   564→  exchangeRateApiUrl: string;
+   565→  setExchangeRateApiUrl: (url: string) => void;
+   566→
+   567→  // Feature flags (from admin)
+   568→  featureFlags: FeatureFlags;
+   569→  setFeatureFlags: (flags: Partial<FeatureFlags>) => void;
+   570→
+   571→  // Transaction limits (from admin)
+   572→  transactionLimits: TransactionLimits;
+   573→  setTransactionLimits: (limits: Partial<TransactionLimits>) => void;
+   574→}
+   575→
+   576→// Default service categories
+   577→const defaultCategories: ServiceCategory[] = [
+   578→  { id: 'service-providers', name: 'مزودين الخدمات', type: 'providers', icon: 'providers' },
+   579→  { id: 'wallet-services', name: 'خدمات المحفظة الخاصة بنا', type: 'wallet-services', icon: 'wallet-services' },
+   580→  { id: 'telecom', name: 'الاتصالات', type: 'telecom', icon: 'telecom' },
+   581→  { id: 'internet', name: 'الإنترنت', type: 'internet', icon: 'internet' },
+   582→  { id: 'electricity', name: 'الكهرباء والماء', type: 'electricity', icon: 'electricity' },
+   583→  { id: 'government', name: 'خدمات حكومية', type: 'government', icon: 'government' },
+   584→  { id: 'crypto', name: 'الكريبتو', type: 'crypto', icon: 'crypto' },
+   585→  { id: 'crypto-invest', name: 'استثمار الكريبتو', type: 'crypto', icon: 'crypto-invest' },
+   586→];
+   587→
+   588→// Default service providers for Yemen
+   589→const defaultProviders: ServiceProvider[] = [];
+   590→
+   591→// Default packages — comprehensive product catalog with real YER market prices
+   592→// Exchange rate: 1 USD = 1550 YER, 1 SAR = 410 YER
+   593→const defaultPackages: ProductPackage[] = [];
+   594→
+   595→// Default promo codes
+   596→const defaultPromoCodes: PromoCode[] = [
+   597→  { id: 'welcome', code: 'WELCOME50', discount: 50, type: 'fixed', currency: 'YER', maxUses: 100, usedCount: 0, expiresAt: '2027-01-01', isActive: true },
+   598→  { id: 'summer', code: 'SUMMER10', discount: 10, type: 'percentage', currency: 'YER', maxUses: 50, usedCount: 0, expiresAt: '2026-09-01', isActive: true },
+   599→];
+   600→
+   601→export const useAppStore = create<AppState>()(
+   602→  persist(
+   603→    (set, get) => ({
+   604→      // Auth
+   605→      user: null,
+   606→      isAuthenticated: false,
+   607→      setUser: (user) => {
+   608→        // Restore pinCode from per-user localStorage if available
+   609→        if (user?.id && typeof window !== 'undefined') {
+   610→          const savedPin = localStorage.getItem(`pin_code_${user.id}`);
+   611→          if (savedPin && !get().pinCode) {
+   612→            set({ user, isAuthenticated: !!user, pinCode: savedPin });
+   613→            return;
+   614→          }
+   615→        }
+   616→        set({ user, isAuthenticated: !!user });
+   617→      },
+   618→      logout: () => {
+   619→        const currentUser = get().user;
+   620→        // Save pinCode per-user in localStorage before clearing
+   621→        if (currentUser?.id && get().pinCode) {
+   622→          if (typeof window !== 'undefined') {
+   623→            localStorage.setItem(`pin_code_${currentUser.id}`, get().pinCode);
+   624→          }
+   625→        }
+   626→        signOut(auth).catch(() => {});
+   627→        // Keep biometricEnabled as-is so it persists per-user via localStorage
+   628→        // The actual per-user flag (biometric_enabled_<uid>) is never cleared on logout
+   629→        set({
+   630→          user: null,
+   631→          isAuthenticated: false,
+   632→          activeTab: 'home',
+   633→          pinCode: '',
+   634→          isPinLocked: false,
+   635→          // Reset biometricEnabled to false in store; it will be re-evaluated
+   636→          // from localStorage on next login based on the user's UID
+   637→          biometricEnabled: false,
+   638→        });
+   639→      },
+   640→
+   641→      // Theme
+   642→      theme: 'light',
+   643→      setTheme: (theme) => set({ theme }),
+   644→      toggleTheme: () => set((state) => ({ theme: state.theme === 'light' ? 'dark' : 'light' })),
+   645→
+   646→      // Navigation
+   647→      activeTab: 'home',
+   648→      setActiveTab: (activeTab) => set({ activeTab }),
+   649→      activeScreen: 'main',
+   650→      setActiveScreen: (activeScreen) => set((state) => ({ previousScreen: state.activeScreen, activeScreen })),
+   651→      previousScreen: '',
+   652→      setPreviousScreen: (previousScreen) => set({ previousScreen }),
+   653→
+   654→      // Balance
+   655→      balanceVisible: true,
+   656→      toggleBalance: () => set((state) => ({ balanceVisible: !state.balanceVisible })),
+   657→
+   658→      // Card
+   659→      activeCard: 0,
+   660→      setActiveCard: (activeCard) => set({ activeCard }),
+   661→
+   662→      // Transactions
+   663→      transactions: [],
+   664→      setTransactions: (transactions) => set({ transactions }),
+   665→      addTransaction: (tx) => set((state) => ({ transactions: [tx, ...state.transactions] })),
+   666→
+   667→      // Notifications
+   668→      notifications: [],
+   669→      setNotifications: (notifications) => set({ notifications }),
+   670→      addNotification: (notif) => set((state) => ({ notifications: [notif, ...state.notifications] })),
+   671→      removeNotification: (id) => {
+   672→        set((state) => ({
+   673→          notifications: state.notifications.filter(n => n.id !== id),
+   674→        }));
+   675→        // Delete from Supabase
+   676→        supabaseService.markNotificationRead(id).catch(() => {});
+   677→      },
+   678→      clearNotifications: () => {
+   679→        const user = get().user;
+   680→        set({ notifications: [] });
+   681→        // Mark all as read in Supabase
+   682→        if (user?.id) {
+   683→          const unreadIds = get().notifications.filter(n => !n.isRead).map(n => n.id);
+   684→          unreadIds.forEach(id => supabaseService.markNotificationRead(id).catch(() => {}));
+   685→        }
+   686→      },
+   687→      markNotificationRead: (id) => {
+   688→        set((state) => ({
+   689→          notifications: state.notifications.map(n => n.id === id ? { ...n, isRead: true } : n),
+   690→        }));
+   691→        // Update in Supabase
+   692→        supabaseService.markNotificationRead(id).catch(() => {});
+   693→      },
+   694→      unreadCount: () => get().notifications.filter(n => !n.isRead).length,
+   695→
+   696→      // Service system
+   697→      categories: defaultCategories,
+   698→      setCategories: (categories) => set({ categories }),
+   699→      providers: defaultProviders,
+   700→      setProviders: (providers) => set({ providers }),
+   701→      packages: defaultPackages,
+   702→      setPackages: (packages) => set({ packages }),
+   703→      addPackage: (pkg) => set((state) => ({ packages: [...state.packages, pkg] })),
+   704→      updatePackage: (id, pkg) => set((state) => ({
+   705→        packages: state.packages.map(p => p.id === id ? { ...p, ...pkg } : p)
+   706→      })),
+   707→
+   708→      // Firebase realtime data (raw) for services
+   709→      fbSections: {},
+   710→      setFbSections: (fbSections) => set({ fbSections }),
+   711→      fbWalletServices: {},
+   712→      setFbWalletServices: (fbWalletServices) => set({ fbWalletServices }),
+   713→      fbApiProviders: {},
+   714→      setFbApiProviders: (fbApiProviders) => set({ fbApiProviders }),
+   715→      fbVisibility: { sections: {}, providers: {}, features: {} },
+   716→      setFbVisibility: (fbVisibility) => set({ fbVisibility }),
+   717→
+   718→      // Wallet addresses
+   719→      fbWalletAddresses: {},
+   720→      setFbWalletAddresses: (fbWalletAddresses) => set({ fbWalletAddresses }),
+   721→
+   722→      // Bottom navigation
+   723→      fbBottomNav: {},
+   724→      setFbBottomNav: (fbBottomNav) => set({ fbBottomNav }),
+   725→
+   726→      // Kill switch
+   727→      killSwitch: null,
+   728→      setKillSwitch: (killSwitch) => set({ killSwitch }),
+   729→
+   730→      // Orders
+   731→      orders: [],
+   732→      setOrders: (orders) => set({ orders }),
+   733→      addOrder: (order) => set((state) => ({ orders: [order, ...state.orders] })),
+   734→      updateOrderStatus: (id, status) => set((state) => ({
+   735→        orders: state.orders.map(o => o.id === id ? { ...o, status, completedAt: status === 'completed' ? new Date().toISOString() : o.completedAt } : o)
+   736→      })),
+   737→
+   738→      // Drawer
+   739→      isDrawerOpen: false,
+   740→      setDrawerOpen: (isDrawerOpen) => set({ isDrawerOpen }),
+   741→
+   742→      // Transfer
+   743→      isTransferOpen: false,
+   744→      setTransferOpen: (isTransferOpen) => set({ isTransferOpen }),
+   745→
+   746→      // Request money
+   747→      isRequestMoneyOpen: false,
+   748→      setRequestMoneyOpen: (isRequestMoneyOpen) => set({ isRequestMoneyOpen }),
+   749→
+   750→      // Order modal
+   751→      isOrderOpen: false,
+   752→      setOrderOpen: (isOrderOpen) => set({ isOrderOpen }),
+   753→      selectedProvider: null,
+   754→      setSelectedProvider: (selectedProvider) => set({ selectedProvider }),
+   755→
+   756→      // Selected category
+   757→      selectedCategory: null,
+   758→      setSelectedCategory: (selectedCategory) => set({ selectedCategory }),
+   759→
+   760→      // Loading
+   761→      isLoading: false,
+   762→      setLoading: (isLoading) => set({ isLoading }),
+   763→
+   764→      // PIN Lock
+   765→      pinCode: '',
+   766→      setPinCode: (pinCode) => set({ pinCode }),
+   767→      isPinLocked: true,
+   768→      setPinLocked: (isPinLocked) => set({ isPinLocked }),
+   769→
+   770→      // Favorites
+   771→      favorites: [],
+   772→      toggleFavorite: (providerId) => set((state) => ({
+   773→        favorites: state.favorites.includes(providerId)
+   774→          ? state.favorites.filter(id => id !== providerId)
+   775→          : [...state.favorites, providerId]
+   776→      })),
+   777→
+   778→      // Recent services
+   779→      recentServices: [],
+   780→      addRecentService: (providerId) => set((state) => {
+   781→        const filtered = state.recentServices.filter(id => id !== providerId);
+   782→        return { recentServices: [providerId, ...filtered].slice(0, 10) };
+   783→      }),
+   784→
+   785→      // Deposit requests
+   786→      depositRequests: [],
+   787→      addDepositRequest: (req) => set((state) => ({ depositRequests: [req, ...state.depositRequests] })),
+   788→      updateDepositStatus: (id, status, reviewedAt) => set((state) => ({
+   789→        depositRequests: state.depositRequests.map(r =>
+   790→          r.id === id ? { ...r, status, reviewedAt: reviewedAt || new Date().toISOString() } : r
+   791→        )
+   792→      })),
+   793→
+   794→      // Withdraw requests
+   795→      withdrawRequests: [],
+   796→      addWithdrawRequest: (req) => set((state) => ({ withdrawRequests: [req, ...state.withdrawRequests] })),
+   797→      updateWithdrawStatus: (id, status, reviewedAt) => set((state) => ({
+   798→        withdrawRequests: state.withdrawRequests.map(r =>
+   799→          r.id === id ? { ...r, status, reviewedAt: reviewedAt || new Date().toISOString() } : r
+   800→        )
+   801→      })),
+   802→
+   803→      // Support tickets
+   804→      supportTickets: [],
+   805→      addTicket: (ticket) => set((state) => ({ supportTickets: [ticket, ...state.supportTickets] })),
+   806→      updateTicket: (id, updates) => set((state) => ({
+   807→        supportTickets: state.supportTickets.map(t =>
+   808→          t.id === id ? { ...t, ...updates } : t
+   809→        )
+   810→      })),
+   811→
+   812→      // Exchange rates - synced from Supabase
+   813→      exchangeRates: { YER: 1, SAR: 3.75, USD: 1 },
+   814→      setExchangeRates: (exchangeRates) => set({ exchangeRates }),
+   815→
+   816→      // Promo codes
+   817→      promoCodes: defaultPromoCodes,
+   818→      applyPromoCode: async (code) => {
+   819→        if (!code.trim()) return null;
+   820→        try {
+   821→          const { supabase } = await import('@/lib/supabase');
+   822→          const normalizedCode = code.trim().toUpperCase();
+   823→
+   824→          // Query Supabase promo_codes by code
+   825→          const { data, error } = await supabase
+   826→            .from('promo_codes')
+   827→            .select('*')
+   828→            .eq('code', normalizedCode)
+   829→            .eq('is_active', true)
+   830→            .limit(1);
+   831→
+   832→          if (error || !data || data.length === 0) {
+   833→            return null;
+   834→          }
+   835→
+   836→          const promo = data[0];
+   837→          if (promo.used_count >= promo.max_uses) return null;
+   838→          if (promo.expires_at && new Date(promo.expires_at) < new Date()) return null;
+   839→
+   840→          // Increment used_count
+   841→          await supabase
+   842→            .from('promo_codes')
+   843→            .update({ used_count: promo.used_count + 1 })
+   844→            .eq('id', promo.id);
+   845→
+   846→          return promo as unknown as PromoCode;
+   847→        } catch (error) {
+   848→          console.error('Apply promo code error:', error);
+   849→          return null;
+   850→        }
+   851→      },
+   852→
+   853→      // Gift codes - FIXED: Uses Supabase RPC for atomic balance update (race condition fix)
+   854→      redeemGiftCode: async (code) => {
+   855→        const state = get();
+   856→        const currentUser = state.user;
+   857→        if (!currentUser) {
+   858→          return { success: false, message: 'يجب تسجيل الدخول أولاً' };
+   859→        }
+   860→        if (!code.trim()) {
+   861→          return { success: false, message: 'يرجى إدخال كود الهدية' };
+   862→        }
+   863→        try {
+   864→          const { supabase } = await import('@/lib/supabase');
+   865→          const normalizedCode = code.trim().toUpperCase();
+   866→
+   867→          // Look up gift code in Supabase
+   868→          const { data: giftData, error: giftError } = await supabase
+   869→            .from('gift_codes')
+   870→            .select('*')
+   871→            .eq('code', normalizedCode)
+   872→            .eq('is_active', true)
+   873→            .limit(1);
+   874→
+   875→          if (giftError || !giftData || giftData.length === 0) {
+   876→            return { success: false, message: 'كود الهدية غير صالح' };
+   877→          }
+   878→
+   879→          const gift = giftData[0];
+   880→
+   881→          // Validate
+   882→          if (gift.used_count >= gift.max_uses) {
+   883→            return { success: false, message: 'تم استخدام هذا الكود الحد الأقصى من المرات' };
+   884→          }
+   885→          if (gift.expires_at && new Date(gift.expires_at) < new Date()) {
+   886→            return { success: false, message: 'انتهت صلاحية هذا الكود' };
+   887→          }
+   888→
+   889→          // Check if user already redeemed
+   890→          const { data: existingRedemption } = await supabase
+   891→            .from('gift_code_redemptions')
+   892→            .select('id')
+   893→            .eq('gift_code_id', gift.id)
+   894→            .eq('user_id', currentUser.userId || currentUser.id)
+   895→            .limit(1);
+   896→
+   897→          if (existingRedemption && existingRedemption.length > 0) {
+   898→            return { success: false, message: 'لقد استخدمت هذا الكود من قبل' };
+   899→          }
+   900→
+   901→          // Increment used_count atomically
+   902→          await supabase
+   903→            .from('gift_codes')
+   904→            .update({ used_count: gift.used_count + 1 })
+   905→            .eq('id', gift.id);
+   906→
+   907→          // Record redemption
+   908→          await supabase.from('gift_code_redemptions').insert({
+   909→            gift_code_id: gift.id,
+   910→            user_id: currentUser.userId || currentUser.id,
+   911→            redeemed_at: new Date().toISOString(),
+   912→          });
+   913→
+   914→          // CRITICAL FIX: Use atomic RPC for balance update (prevents race condition)
+   915→          const currencyMap: Record<string, string> = { YER: 'balance_yer', SAR: 'balance_sar', USD: 'balance_usd' };
+   916→          const dbCurrencyField = currencyMap[gift.currency] || 'balance_yer';
+   917→          
+   918→          await supabaseService.updateBalance(
+   919→            currentUser.userId || currentUser.id,
+   920→            dbCurrencyField.replace('balance_', '').toUpperCase(),
+   921→            gift.amount,
+   922→            'add'
+   923→          );
+   924→
+   925→          // Update local store
+   926→          const currencyToField: Record<string, 'balanceYER' | 'balanceSAR' | 'balanceUSD'> = {
+   927→            YER: 'balanceYER',
+   928→            SAR: 'balanceSAR',
+   929→            USD: 'balanceUSD',
+   930→          };
+   931→          const balanceField = currencyToField[gift.currency] || 'balanceYER';
+   932→          const currentBalance = (currentUser[balanceField] as number) || 0;
+   933→          const newBalance = currentBalance + gift.amount;
+   934→
+   935→          const updatedUser = { ...currentUser, [balanceField]: newBalance };
+   936→
+   937→          const transaction = {
+   938→            id: `gift-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+   939→            fromUserId: 'GIFT',
+   940→            toUserId: currentUser.id,
+   941→            amount: gift.amount,
+   942→            currency: gift.currency as 'YER' | 'SAR' | 'USD',
+   943→            type: 'deposit' as const,
+   944→            status: 'completed' as const,
+   945→            description: `استرداد كود هدية: ${normalizedCode}`,
+   946→            createdAt: new Date().toISOString(),
+   947→          };
+   948→
+   949→          set({ user: updatedUser, transactions: [transaction, ...state.transactions] });
+   950→
+   951→          state.addNotification({
+   952→            id: `gift-${Date.now()}`,
+   953→            title: 'تم استرداد كود الهدية!',
+   954→            body: `تم إضافة ${gift.amount} ${gift.currency === 'YER' ? 'ر.ي' : gift.currency === 'SAR' ? 'ر.س' : '$'} إلى رصيدك`,
+   955→            type: 'promo',
+   956→            isRead: false,
+   957→            createdAt: new Date().toISOString(),
+   958→          });
+   959→
+   960→          return { success: true, message: `تم إضافة ${gift.amount} ${gift.currency === 'YER' ? 'ر.ي' : gift.currency === 'SAR' ? 'ر.س' : '$'} إلى رصيدك`, amount: gift.amount, currency: gift.currency };
+   961→        } catch (error) {
+   962→          console.error('Gift code redemption error:', error);
+   963→          return { success: false, message: 'حدث خطأ، يرجى المحاولة لاحقاً' };
+   964→        }
+   965→      },
+   966→
+   967→      // Savings goals
+   968→      savingsGoals: [],
+   969→      addSavingsGoal: (goal) => set((state) => ({ savingsGoals: [...state.savingsGoals, goal] })),
+   970→      updateSavingsGoal: (id, updates) => set((state) => ({
+   971→        savingsGoals: state.savingsGoals.map(g =>
+   972→          g.id === id ? { ...g, ...updates } : g
+   973→        )
+   974→      })),
+   975→
+   976→      // Investments
+   977→      investments: [],
+   978→      setInvestments: (investments) => set({ investments }),
+   979→      addInvestment: (investment) => set((state) => ({ investments: [investment, ...state.investments] })),
+   980→      updateInvestment: (id, updates) => set((state) => ({
+   981→        investments: state.investments.map(inv =>
+   982→          inv.id === id ? { ...inv, ...updates } : inv
+   983→        )
+   984→      })),
+   985→
+   986→      // User gift codes
+   987→      userGiftCodes: [],
+   988→      setUserGiftCodes: (userGiftCodes) => set({ userGiftCodes }),
+   989→      addUserGiftCode: (code) => set((state) => ({ userGiftCodes: [code, ...state.userGiftCodes] })),
+   990→      updateUserGiftCode: (id, updates) => set((state) => ({
+   991→        userGiftCodes: state.userGiftCodes.map(c =>
+   992→          c.id === id ? { ...c, ...updates } : c
+   993→        )
+   994→      })),
+   995→
+   996→      // Card colors
+   997→      cardColors: {
+   998→        YER: { primary: '#5C1A1B', gradient: '#3D0F10' },
+   999→        SAR: { primary: '#7D2D30', gradient: '#5C1A1B' },
+  1000→        USD: { primary: '#8B3A3D', gradient: '#6B2A2D' },
+  1001→      },
+  1002→      setCardColors: (cardColors) => set({ cardColors }),
+  1003→
+  1004→      // Biometric enabled — initialize from localStorage if a user is already logged in
+  1005→      biometricEnabled: (() => {
+  1006→        if (typeof window === 'undefined') return false;
+  1007→        try {
+  1008→          const storeStr = localStorage.getItem('fahed-net-store');
+  1009→          if (storeStr) {
+  1010→            const parsed = JSON.parse(storeStr);
+  1011→            const uid = parsed?.state?.user?.id;
+  1012→            if (uid && isBiometricEnabledForUser(uid)) return true;
+  1013→          }
+  1014→        } catch { /* ignore */ }
+  1015→        return false;
+  1016→      })(),
+  1017→      setBiometricEnabled: (biometricEnabled) => set({ biometricEnabled }),
+  1018→
+  1019→      // Biometric transaction confirmation
+  1020→      biometricTransactionConfirm: (() => {
+  1021→        if (typeof window !== 'undefined') {
+  1022→          return localStorage.getItem('biometricTransactionConfirm') !== 'false';
+  1023→        }
+  1024→        return true;
+  1025→      })(),
+  1026→      setBiometricTransactionConfirm: (biometricTransactionConfirm) => {
+  1027→        if (typeof window !== 'undefined') {
+  1028→          localStorage.setItem('biometricTransactionConfirm', String(biometricTransactionConfirm));
+  1029→        }
+  1030→        set({ biometricTransactionConfirm });
+  1031→      },
+  1032→
+  1033→      // Feature flags
+  1034→      featureFlags: defaultFeatureFlags,
+  1035→      setFeatureFlags: (flags) => set((state) => ({
+  1036→        featureFlags: { ...state.featureFlags, ...flags },
+  1037→      })),
+  1038→
+  1039→      // Transaction limits
+  1040→      transactionLimits: defaultTransactionLimits,
+  1041→      setTransactionLimits: (limits) => set((state) => ({
+  1042→        transactionLimits: { ...state.transactionLimits, ...limits },
+  1043→      })),
+  1044→    }),
+  1045→    {
+  1046→      name: 'fahed-net-store',
+  1047→      partialize: (state) => ({
+  1048→        user: state.user,
+  1049→        isAuthenticated: state.isAuthenticated,
+  1050→        theme: state.theme,
+  1051→        balanceVisible: state.balanceVisible,
+  1052→        pinCode: state.pinCode,
+  1053→        biometricEnabled: state.biometricEnabled,
+  1054→        favorites: state.favorites,
+  1055→        recentServices: state.recentServices,
+  1056→        savingsGoals: state.savingsGoals,
+  1057→        exchangeRates: state.exchangeRates,
+  1058→      }),
+  1059→    }
+  1060→  )
+  1061→);
+  1062→

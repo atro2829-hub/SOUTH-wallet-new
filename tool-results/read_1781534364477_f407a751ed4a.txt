@@ -1,0 +1,1394 @@
+     1→'use client';
+     2→
+     3→import { useState, useEffect, useMemo } from 'react';
+     4→import { ref, onValue, push, update, remove } from 'firebase/database';
+     5→import { database } from '@/lib/firebase';
+     6→import { useAdminStore } from '@/lib/store';
+     7→import { formatNumber } from '@/lib/utils';
+     8→import { Input } from '@/components/ui/input';
+     9→import { Button } from '@/components/ui/button';
+    10→import { Badge } from '@/components/ui/badge';
+    11→import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+    12→import { Label } from '@/components/ui/label';
+    13→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+    14→import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+    15→import {
+    16→  Plus, Trash2, Edit, Search, Loader2,
+    17→  Building2, Users, BarChart3, Phone,
+    18→  MessageCircle, Clock, Wallet, TrendingUp,
+    19→  ArrowDownCircle, ArrowUpCircle, RefreshCw,
+    20→  Download, ChevronDown, ChevronUp,
+    21→  DollarSign, Calendar, Activity,
+    22→  Mail, MapPinned,
+    23→} from 'lucide-react';
+    24→import { motion, AnimatePresence } from 'framer-motion';
+    25→import { cn } from '@/lib/utils';
+    26→
+    27→// ─── Types ───────────────────────────────────────────────
+    28→
+    29→interface Office {
+    30→  id?: string;
+    31→  name: string;
+    32→  address: string;
+    33→  governorate: string;
+    34→  phone: string;
+    35→  whatsapp: string;
+    36→  managerName: string;
+    37→  isActive: boolean;
+    38→  workingHours: string;
+    39→  location: { lat: number; lng: number };
+    40→  balance: number;
+    41→  maxDailyTransaction: number;
+    42→  commissionPercentage: number;
+    43→}
+    44→
+    45→interface Agent {
+    46→  id?: string;
+    47→  name: string;
+    48→  phone: string;
+    49→  whatsapp: string;
+    50→  email: string;
+    51→  governorate: string;
+    52→  officeId: string;
+    53→  balance: number;
+    54→  maxDailyTransaction: number;
+    55→  commissionPercentage: number;
+    56→  isActive: boolean;
+    57→  joinedAt: string;
+    58→  totalTransactions: number;
+    59→  totalRevenue: number;
+    60→}
+    61→
+    62→interface OfficeReport {
+    63→  officeId: string;
+    64→  officeName: string;
+    65→  totalDeposits: number;
+    66→  totalWithdrawals: number;
+    67→  commissionEarned: number;
+    68→  transactionCount: number;
+    69→}
+    70→
+    71→interface AgentReport {
+    72→  agentId: string;
+    73→  agentName: string;
+    74→  officeName: string;
+    75→  totalDeposits: number;
+    76→  totalWithdrawals: number;
+    77→  commissionEarned: number;
+    78→  transactionCount: number;
+    79→}
+    80→
+    81→// ─── Constants ───────────────────────────────────────────
+    82→
+    83→const GOVERNORATES = [
+    84→  'عدن',
+    85→  'لحج',
+    86→  'أبين',
+    87→  'شبوة',
+    88→  'حضرموت',
+    89→  'المهرة',
+    90→  'الضالع',
+    91→  'سقطرى',
+    92→];
+    93→
+    94→const DEFAULT_OFFICE: Office = {
+    95→  name: '',
+    96→  address: '',
+    97→  governorate: 'عدن',
+    98→  phone: '',
+    99→  whatsapp: '',
+   100→  managerName: '',
+   101→  isActive: true,
+   102→  workingHours: '8:00 ص - 4:00 م',
+   103→  location: { lat: 0, lng: 0 },
+   104→  balance: 0,
+   105→  maxDailyTransaction: 500000,
+   106→  commissionPercentage: 2,
+   107→};
+   108→
+   109→const DEFAULT_AGENT: Agent = {
+   110→  name: '',
+   111→  phone: '',
+   112→  whatsapp: '',
+   113→  email: '',
+   114→  governorate: 'عدن',
+   115→  officeId: '',
+   116→  balance: 0,
+   117→  maxDailyTransaction: 200000,
+   118→  commissionPercentage: 1.5,
+   119→  isActive: true,
+   120→  joinedAt: '',
+   121→  totalTransactions: 0,
+   122→  totalRevenue: 0,
+   123→};
+   124→
+   125→// ─── Helper: Generate mock report data ──────────────────
+   126→
+   127→function generateOfficeReports(offices: Office[]): OfficeReport[] {
+   128→  return offices.map(office => ({
+   129→    officeId: office.id || '',
+   130→    officeName: office.name,
+   131→    totalDeposits: Math.floor(Math.random() * 2000000) + 200000,
+   132→    totalWithdrawals: Math.floor(Math.random() * 1500000) + 100000,
+   133→    commissionEarned: Math.floor(Math.random() * 100000) + 10000,
+   134→    transactionCount: Math.floor(Math.random() * 500) + 50,
+   135→  }));
+   136→}
+   137→
+   138→function generateAgentReports(agents: Agent[], offices: Office[]): AgentReport[] {
+   139→  return agents.map(agent => {
+   140→    const office = offices.find(o => o.id === agent.officeId);
+   141→    return {
+   142→      agentId: agent.id || '',
+   143→      agentName: agent.name,
+   144→      officeName: office ? office.name : 'بدون مكتب',
+   145→      totalDeposits: Math.floor(Math.random() * 800000) + 50000,
+   146→      totalWithdrawals: Math.floor(Math.random() * 600000) + 30000,
+   147→      commissionEarned: Math.floor(Math.random() * 50000) + 5000,
+   148→      transactionCount: Math.floor(Math.random() * 300) + 20,
+   149→    };
+   150→  });
+   151→}
+   152→
+   153→function generateDailyReportData(): { day: string; deposits: number; withdrawals: number }[] {
+   154→  const data = [];
+   155→  for (let i = 29; i >= 0; i--) {
+   156→    const d = new Date();
+   157→    d.setDate(d.getDate() - i);
+   158→    data.push({
+   159→      day: `${d.getMonth() + 1}/${d.getDate()}`,
+   160→      deposits: Math.floor(Math.random() * 500000) + 50000,
+   161→      withdrawals: Math.floor(Math.random() * 400000) + 30000,
+   162→    });
+   163→  }
+   164→  return data;
+   165→}
+   166→
+   167→// ─── Main Component ──────────────────────────────────────
+   168→
+   169→export default function OfficesPanel() {
+   170→  const { showToast } = useAdminStore();
+   171→
+   172→  // ── Data State ──
+   173→  const [offices, setOffices] = useState<Office[]>([]);
+   174→  const [agents, setAgents] = useState<Agent[]>([]);
+   175→  const [loading, setLoading] = useState(true);
+   176→
+   177→  // ── UI State ──
+   178→  const [activeTab, setActiveTab] = useState('offices');
+   179→  const [officeSearch, setOfficeSearch] = useState('');
+   180→  const [officeGovFilter, setOfficeGovFilter] = useState('all');
+   181→  const [agentSearch, setAgentSearch] = useState('');
+   182→  const [agentGovFilter, setAgentGovFilter] = useState('all');
+   183→  const [agentOfficeFilter, setAgentOfficeFilter] = useState('all');
+   184→  const [agentStatusFilter, setAgentStatusFilter] = useState('all');
+   185→  const [saving, setSaving] = useState(false);
+   186→  const [reportSeed, setReportSeed] = useState(() => Date.now());
+   187→
+   188→  // ── Dialog State ──
+   189→  const [officeDialog, setOfficeDialog] = useState(false);
+   190→  const [editingOffice, setEditingOffice] = useState<Office | null>(null);
+   191→  const [agentDialog, setAgentDialog] = useState(false);
+   192→  const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
+   193→  const [expandedOfficeId, setExpandedOfficeId] = useState<string | null>(null);
+   194→  const [expandedAgentId, setExpandedAgentId] = useState<string | null>(null);
+   195→
+   196→  // ── Report State ──
+   197→  const [reportDateFrom, setReportDateFrom] = useState('');
+   198→  const [reportDateTo, setReportDateTo] = useState('');
+   199→  const [reportPeriod, setReportPeriod] = useState<'daily' | 'weekly' | 'monthly'>('daily');
+   200→
+   201→  // ── Office Form ──
+   202→  const [officeForm, setOfficeForm] = useState<Office>({ ...DEFAULT_OFFICE });
+   203→
+   204→  // ── Agent Form ──
+   205→  const [agentForm, setAgentForm] = useState<Agent>({ ...DEFAULT_AGENT });
+   206→
+   207→  // ── Firebase Listeners ──
+   208→  useEffect(() => {
+   209→    const officesRef = ref(database, 'adminSettings/offices');
+   210→    const unsub1 = onValue(officesRef, (snapshot) => {
+   211→      const data = snapshot.val() || {};
+   212→      const list: Office[] = [];
+   213→      Object.entries<Record<string, unknown>>(data).forEach(([id, val]) => {
+   214→        list.push({
+   215→          id,
+   216→          name: (val.name as string) || '',
+   217→          address: (val.address as string) || '',
+   218→          governorate: (val.governorate as string) || 'عدن',
+   219→          phone: (val.phone as string) || '',
+   220→          whatsapp: (val.whatsapp as string) || '',
+   221→          managerName: (val.managerName as string) || '',
+   222→          isActive: val.isActive !== false,
+   223→          workingHours: (val.workingHours as string) || '8:00 ص - 4:00 م',
+   224→          location: (val.location as { lat: number; lng: number }) || { lat: 0, lng: 0 },
+   225→          balance: (val.balance as number) || 0,
+   226→          maxDailyTransaction: (val.maxDailyTransaction as number) || 500000,
+   227→          commissionPercentage: (val.commissionPercentage as number) || 2,
+   228→        });
+   229→      });
+   230→      setOffices(list);
+   231→    });
+   232→
+   233→    const agentsRef = ref(database, 'adminSettings/agents');
+   234→    const unsub2 = onValue(agentsRef, (snapshot) => {
+   235→      const data = snapshot.val() || {};
+   236→      const list: Agent[] = [];
+   237→      Object.entries<Record<string, unknown>>(data).forEach(([id, val]) => {
+   238→        list.push({
+   239→          id,
+   240→          name: (val.name as string) || '',
+   241→          phone: (val.phone as string) || '',
+   242→          whatsapp: (val.whatsapp as string) || '',
+   243→          email: (val.email as string) || '',
+   244→          governorate: (val.governorate as string) || 'عدن',
+   245→          officeId: (val.officeId as string) || '',
+   246→          balance: (val.balance as number) || 0,
+   247→          maxDailyTransaction: (val.maxDailyTransaction as number) || 200000,
+   248→          commissionPercentage: (val.commissionPercentage as number) || 1.5,
+   249→          isActive: val.isActive !== false,
+   250→          joinedAt: (val.joinedAt as string) || '',
+   251→          totalTransactions: (val.totalTransactions as number) || 0,
+   252→          totalRevenue: (val.totalRevenue as number) || 0,
+   253→        });
+   254→      });
+   255→      setAgents(list);
+   256→      setLoading(false);
+   257→    });
+   258→
+   259→    return () => { unsub1(); unsub2(); };
+   260→  }, []);
+   261→
+   262→  // ── Stats ──
+   263→  const activeOffices = offices.filter(o => o.isActive).length;
+   264→  const activeAgents = agents.filter(a => a.isActive).length;
+   265→  const totalOfficeBalance = offices.reduce((sum, o) => sum + o.balance, 0);
+   266→  const totalAgentTransactions = agents.reduce((sum, a) => sum + a.totalTransactions, 0);
+   267→
+   268→  // ── Report data ──
+   269→  // eslint-disable-next-line react-hooks/exhaustive-deps
+   270→  const officeReports = useMemo(() => generateOfficeReports(offices), [offices, reportSeed]);
+   271→  // eslint-disable-next-line react-hooks/exhaustive-deps
+   272→  const agentReports = useMemo(() => generateAgentReports(agents, offices), [agents, offices, reportSeed]);
+   273→  // eslint-disable-next-line react-hooks/exhaustive-deps
+   274→  const dailyReportData = useMemo(() => generateDailyReportData(), [reportSeed]);
+   275→
+   276→  // ── Active offices for dropdown ──
+   277→  const activeOfficesList = offices.filter(o => o.isActive);
+   278→
+   279→  // ── Filtering ──
+   280→  const filteredOffices = offices.filter((o) => {
+   281→    const matchSearch = !officeSearch || o.name.includes(officeSearch) || o.governorate.includes(officeSearch) || o.managerName.includes(officeSearch);
+   282→    const matchGov = officeGovFilter === 'all' || o.governorate === officeGovFilter;
+   283→    return matchSearch && matchGov;
+   284→  });
+   285→
+   286→  const filteredAgents = agents.filter((a) => {
+   287→    const matchSearch = !agentSearch || a.name.includes(agentSearch) || a.phone.includes(agentSearch) || a.governorate.includes(agentSearch);
+   288→    const matchGov = agentGovFilter === 'all' || a.governorate === agentGovFilter;
+   289→    const matchOffice = agentOfficeFilter === 'all' || a.officeId === agentOfficeFilter;
+   290→    const matchStatus = agentStatusFilter === 'all' ||
+   291→      (agentStatusFilter === 'active' && a.isActive) ||
+   292→      (agentStatusFilter === 'inactive' && !a.isActive);
+   293→    return matchSearch && matchGov && matchOffice && matchStatus;
+   294→  });
+   295→
+   296→  // ── Handlers: Offices ──
+   297→  const resetOfficeForm = () => {
+   298→    setOfficeForm({ ...DEFAULT_OFFICE });
+   299→    setEditingOffice(null);
+   300→  };
+   301→
+   302→  const openOfficeDialog = (office?: Office) => {
+   303→    if (office) {
+   304→      setEditingOffice(office);
+   305→      setOfficeForm({
+   306→        ...office,
+   307→        location: office.location ? { ...office.location } : { lat: 0, lng: 0 },
+   308→      });
+   309→    } else {
+   310→      resetOfficeForm();
+   311→    }
+   312→    setOfficeDialog(true);
+   313→  };
+   314→
+   315→  const handleSaveOffice = async () => {
+   316→    if (!officeForm.name || !officeForm.governorate) {
+   317→      showToast('يرجى ملء جميع الحقول المطلوبة', 'error');
+   318→      return;
+   319→    }
+   320→    setSaving(true);
+   321→    try {
+   322→      const { id: _id, ...officeData } = officeForm;
+   323→      if (editingOffice?.id) {
+   324→        await update(ref(database, `adminSettings/offices/${editingOffice.id}`), officeData);
+   325→        showToast('تم تحديث المكتب', 'success');
+   326→      } else {
+   327→        await push(ref(database, 'adminSettings/offices'), { ...officeData, joinedAt: new Date().toISOString() });
+   328→        showToast('تم إضافة المكتب', 'success');
+   329→      }
+   330→      setOfficeDialog(false);
+   331→      resetOfficeForm();
+   332→    } catch (_e) {
+   333→      showToast('حدث خطأ', 'error');
+   334→    } finally {
+   335→      setSaving(false);
+   336→    }
+   337→  };
+   338→
+   339→  const handleDeleteOffice = async (id: string) => {
+   340→    try {
+   341→      await remove(ref(database, `adminSettings/offices/${id}`));
+   342→      showToast('تم حذف المكتب', 'success');
+   343→    } catch (_e) {
+   344→      showToast('حدث خطأ', 'error');
+   345→    }
+   346→  };
+   347→
+   348→  const handleToggleOffice = async (office: Office) => {
+   349→    try {
+   350→      await update(ref(database, `adminSettings/offices/${office.id}`), { isActive: !office.isActive });
+   351→    } catch (_e) {
+   352→      showToast('حدث خطأ', 'error');
+   353→    }
+   354→  };
+   355→
+   356→  // ── Handlers: Agents ──
+   357→  const resetAgentForm = () => {
+   358→    setAgentForm({ ...DEFAULT_AGENT });
+   359→    setEditingAgent(null);
+   360→  };
+   361→
+   362→  const openAgentDialog = (agent?: Agent) => {
+   363→    if (agent) {
+   364→      setEditingAgent(agent);
+   365→      setAgentForm({ ...agent });
+   366→    } else {
+   367→      resetAgentForm();
+   368→    }
+   369→    setAgentDialog(true);
+   370→  };
+   371→
+   372→  const handleSaveAgent = async () => {
+   373→    if (!agentForm.name || !agentForm.phone) {
+   374→      showToast('يرجى ملء جميع الحقول المطلوبة', 'error');
+   375→      return;
+   376→    }
+   377→    setSaving(true);
+   378→    try {
+   379→      const { id: _agentId, ...agentData } = agentForm;
+   380→      if (editingAgent?.id) {
+   381→        await update(ref(database, `adminSettings/agents/${editingAgent.id}`), agentData);
+   382→        showToast('تم تحديث الوكيل', 'success');
+   383→      } else {
+   384→        await push(ref(database, 'adminSettings/agents'), { ...agentData, joinedAt: new Date().toISOString(), totalTransactions: 0, totalRevenue: 0 });
+   385→        showToast('تم إضافة الوكيل', 'success');
+   386→      }
+   387→      setAgentDialog(false);
+   388→      resetAgentForm();
+   389→    } catch (_e) {
+   390→      showToast('حدث خطأ', 'error');
+   391→    } finally {
+   392→      setSaving(false);
+   393→    }
+   394→  };
+   395→
+   396→  const handleDeleteAgent = async (id: string) => {
+   397→    try {
+   398→      await remove(ref(database, `adminSettings/agents/${id}`));
+   399→      showToast('تم حذف الوكيل', 'success');
+   400→    } catch (_e) {
+   401→      showToast('حدث خطأ', 'error');
+   402→    }
+   403→  };
+   404→
+   405→  const handleToggleAgent = async (agent: Agent) => {
+   406→    try {
+   407→      await update(ref(database, `adminSettings/agents/${agent.id}`), { isActive: !agent.isActive });
+   408→    } catch (_e) {
+   409→      showToast('حدث خطأ', 'error');
+   410→    }
+   411→  };
+   412→
+   413→  // ── Export ──
+   414→  const handleExportData = () => {
+   415→    const data = {
+   416→      offices,
+   417→      agents,
+   418→      officeReports,
+   419→      agentReports,
+   420→      exportDate: new Date().toISOString(),
+   421→    };
+   422→    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+   423→    const url = URL.createObjectURL(blob);
+   424→    const a = document.createElement('a');
+   425→    a.href = url;
+   426→    a.download = `offices-agents-export-${new Date().toISOString().split('T')[0]}.json`;
+   427→    a.click();
+   428→    URL.revokeObjectURL(url);
+   429→    showToast('تم تصدير البيانات', 'success');
+   430→  };
+   431→
+   432→  // ── Loading ──
+   433→  if (loading) {
+   434→    return (
+   435→      <div className="flex items-center justify-center min-h-[400px]">
+   436→        <div className="w-8 h-8 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" />
+   437→      </div>
+   438→    );
+   439→  }
+   440→
+   441→  // ── Get office name by id ──
+   442→  const getOfficeName = (officeId: string) => {
+   443→    const office = offices.find(o => o.id === officeId);
+   444→    return office ? office.name : 'بدون مكتب';
+   445→  };
+   446→
+   447→  // ── Render: Stats Cards ──
+   448→  const renderStatsCards = () => (
+   449→    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+   450→      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
+   451→        <div className="ios-card p-4">
+   452→          <div className="p-2 rounded-xl w-fit bg-purple-500/10">
+   453→            <Building2 className="w-4 h-4 text-purple-500" />
+   454→          </div>
+   455→          <p className="text-xl font-bold text-foreground mt-2">{formatNumber(activeOffices)}</p>
+   456→          <p className="text-[11px] text-muted-foreground">مكتب نشط</p>
+   457→        </div>
+   458→      </motion.div>
+   459→      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}>
+   460→        <div className="ios-card p-4">
+   461→          <div className="p-2 rounded-xl w-fit bg-green-500/10">
+   462→            <Users className="w-4 h-4 text-green-500" />
+   463→          </div>
+   464→          <p className="text-xl font-bold text-foreground mt-2">{formatNumber(activeAgents)}</p>
+   465→          <p className="text-[11px] text-muted-foreground">وكيل نشط</p>
+   466→        </div>
+   467→      </motion.div>
+   468→      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
+   469→        <div className="ios-card p-4">
+   470→          <div className="p-2 rounded-xl w-fit bg-orange-500/10">
+   471→            <Wallet className="w-4 h-4 text-orange-500" />
+   472→          </div>
+   473→          <p className="text-xl font-bold text-foreground mt-2">{formatNumber(totalOfficeBalance)}</p>
+   474→          <p className="text-[11px] text-muted-foreground">رصيد المكاتب (ر.ي)</p>
+   475→        </div>
+   476→      </motion.div>
+   477→      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}>
+   478→        <div className="ios-card p-4">
+   479→          <div className="p-2 rounded-xl w-fit bg-emerald-500/10">
+   480→            <Activity className="w-4 h-4 text-emerald-500" />
+   481→          </div>
+   482→          <p className="text-xl font-bold text-foreground mt-2">{formatNumber(totalAgentTransactions)}</p>
+   483→          <p className="text-[11px] text-muted-foreground">إجمالي معاملات الوكلاء</p>
+   484→        </div>
+   485→      </motion.div>
+   486→    </div>
+   487→  );
+   488→
+   489→  // ── Render: Tab 1 - Offices ──
+   490→  const renderOfficesTab = () => (
+   491→    <div className="space-y-4">
+   492→      {/* Search + Filter + Add */}
+   493→      <div className="flex flex-col sm:flex-row gap-3">
+   494→        <div className="relative flex-1">
+   495→          <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+   496→          <Input
+   497→            placeholder="بحث بالاسم أو المحافظة أو المدير..."
+   498→            value={officeSearch}
+   499→            onChange={(e) => setOfficeSearch(e.target.value)}
+   500→            className="pr-10"
+   501→          />
+   502→        </div>
+   503→        <Select value={officeGovFilter} onValueChange={setOfficeGovFilter}>
+   504→          <SelectTrigger className="w-full sm:w-44">
+   505→            <SelectValue placeholder="المحافظة" />
+   506→          </SelectTrigger>
+   507→          <SelectContent>
+   508→            <SelectItem value="all">جميع المحافظات</SelectItem>
+   509→            {GOVERNORATES.map(g => (
+   510→              <SelectItem key={g} value={g}>{g}</SelectItem>
+   511→            ))}
+   512→          </SelectContent>
+   513→        </Select>
+   514→        <Button onClick={() => openOfficeDialog()} size="sm" className="shrink-0">
+   515→          <Plus className="w-4 h-4 ml-1" />
+   516→          إضافة مكتب
+   517→        </Button>
+   518→      </div>
+   519→
+   520→      {/* Offices List */}
+   521→      <div className="space-y-2 max-h-[calc(100vh-520px)] overflow-y-auto scrollbar-thin">
+   522→        {filteredOffices.map((office, i) => {
+   523→          const isExpanded = expandedOfficeId === office.id;
+   524→          return (
+   525→            <motion.div
+   526→              key={office.id}
+   527→              initial={{ opacity: 0, y: 10 }}
+   528→              animate={{ opacity: 1, y: 0 }}
+   529→              transition={{ delay: i * 0.02 }}
+   530→              className="ios-card"
+   531→            >
+   532→              <div className="p-4">
+   533→                <div className="flex items-center justify-between gap-3">
+   534→                  <div className="flex items-center gap-3 flex-1 min-w-0">
+   535→                    <div className="p-2.5 rounded-xl shrink-0 bg-purple-500/10">
+   536→                      <Building2 className="w-4 h-4 text-purple-500" />
+   537→                    </div>
+   538→                    <div className="min-w-0 flex-1">
+   539→                      <div className="flex items-center gap-2">
+   540→                        <p className="text-sm font-medium text-foreground truncate">{office.name}</p>
+   541→                        <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-purple-500/15 text-purple-500">
+   542→                          {office.governorate}
+   543→                        </span>
+   544→                      </div>
+   545→                      <p className="text-[11px] text-muted-foreground">
+   546→                        المدير: {office.managerName || '—'} • الرصيد: {formatNumber(office.balance)} ر.ي
+   547→                      </p>
+   548→                    </div>
+   549→                  </div>
+   550→                  <div className="flex items-center gap-1.5 shrink-0">
+   551→                    <button
+   552→                      onClick={() => setExpandedOfficeId(isExpanded ? null : office.id!)}
+   553→                      className="p-1.5 rounded-lg hover:bg-muted/50 transition-colors"
+   554→                    >
+   555→                      {isExpanded ? <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />}
+   556→                    </button>
+   557→                    <Badge className={cn(
+   558→                      'text-[10px]',
+   559→                      office.isActive ? 'bg-green-500/20 text-green-600 dark:text-green-400' : 'bg-red-500/20 text-red-600 dark:text-red-400'
+   560→                    )}>
+   561→                      {office.isActive ? 'نشط' : 'معطل'}
+   562→                    </Badge>
+   563→                    <div
+   564→                      onClick={() => handleToggleOffice(office)}
+   565→                      className={cn('ios-toggle shrink-0 !w-[42px] !h-[26px]', office.isActive && 'active')}
+   566→                    />
+   567→                    <button onClick={() => openOfficeDialog(office)} className="p-1.5 rounded-lg hover:bg-muted/50 transition-colors">
+   568→                      <Edit className="w-3.5 h-3.5 text-muted-foreground" />
+   569→                    </button>
+   570→                    <button onClick={() => office.id && handleDeleteOffice(office.id)} className="p-1.5 rounded-lg hover:bg-red-500/10 transition-colors">
+   571→                      <Trash2 className="w-3.5 h-3.5 text-red-500" />
+   572→                    </button>
+   573→                  </div>
+   574→                </div>
+   575→                {/* Expanded Details */}
+   576→                <AnimatePresence>
+   577→                  {isExpanded && (
+   578→                    <motion.div
+   579→                      initial={{ height: 0, opacity: 0 }}
+   580→                      animate={{ height: 'auto', opacity: 1 }}
+   581→                      exit={{ height: 0, opacity: 0 }}
+   582→                      className="overflow-hidden"
+   583→                    >
+   584→                      <div className="mt-3 pt-3 border-t border-border/50 grid grid-cols-2 sm:grid-cols-3 gap-2">
+   585→                        <div className="p-2 rounded-lg bg-muted/30">
+   586→                          <p className="text-[10px] text-muted-foreground">العنوان</p>
+   587→                          <p className="text-xs font-medium text-foreground">{office.address || '—'}</p>
+   588→                        </div>
+   589→                        <div className="p-2 rounded-lg bg-muted/30">
+   590→                          <p className="text-[10px] text-muted-foreground">الهاتف</p>
+   591→                          <p className="text-xs font-medium text-foreground" dir="ltr">{office.phone || '—'}</p>
+   592→                        </div>
+   593→                        <div className="p-2 rounded-lg bg-muted/30">
+   594→                          <p className="text-[10px] text-muted-foreground">واتساب</p>
+   595→                          <p className="text-xs font-medium text-foreground" dir="ltr">{office.whatsapp || '—'}</p>
+   596→                        </div>
+   597→                        <div className="p-2 rounded-lg bg-muted/30">
+   598→                          <p className="text-[10px] text-muted-foreground flex items-center gap-1"><Clock className="w-3 h-3" /> ساعات العمل</p>
+   599→                          <p className="text-xs font-medium text-foreground">{office.workingHours || '—'}</p>
+   600→                        </div>
+   601→                        <div className="p-2 rounded-lg bg-muted/30">
+   602→                          <p className="text-[10px] text-muted-foreground flex items-center gap-1"><DollarSign className="w-3 h-3" /> العمولة</p>
+   603→                          <p className="text-xs font-medium text-foreground">{office.commissionPercentage}%</p>
+   604→                        </div>
+   605→                        <div className="p-2 rounded-lg bg-muted/30">
+   606→                          <p className="text-[10px] text-muted-foreground flex items-center gap-1"><TrendingUp className="w-3 h-3" /> الحد اليومي</p>
+   607→                          <p className="text-xs font-medium text-foreground">{formatNumber(office.maxDailyTransaction)} ر.ي</p>
+   608→                        </div>
+   609→                        {office.location && (office.location.lat !== 0 || office.location.lng !== 0) && (
+   610→                          <div className="p-2 rounded-lg bg-purple-500/5 col-span-2 sm:col-span-3">
+   611→                            <p className="text-[10px] text-muted-foreground flex items-center gap-1"><MapPinned className="w-3 h-3" /> الموقع</p>
+   612→                            <p className="text-xs font-medium text-foreground" dir="ltr">{office.location.lat}, {office.location.lng}</p>
+   613→                          </div>
+   614→                        )}
+   615→                      </div>
+   616→                    </motion.div>
+   617→                  )}
+   618→                </AnimatePresence>
+   619→              </div>
+   620→            </motion.div>
+   621→          );
+   622→        })}
+   623→        {filteredOffices.length === 0 && (
+   624→          <div className="text-center py-12">
+   625→            <Building2 className="w-10 h-10 mx-auto text-muted-foreground/30 mb-3" />
+   626→            <p className="text-sm text-muted-foreground">لا توجد مكاتب</p>
+   627→            <p className="text-xs text-muted-foreground/60 mt-1">أضف مكتب جديد لبدء إدارة المكاتب والوكلاء</p>
+   628→          </div>
+   629→        )}
+   630→      </div>
+   631→    </div>
+   632→  );
+   633→
+   634→  // ── Render: Tab 2 - Agents ──
+   635→  const renderAgentsTab = () => (
+   636→    <div className="space-y-4">
+   637→      {/* Search + Filters + Add */}
+   638→      <div className="flex flex-col gap-3">
+   639→        <div className="flex flex-col sm:flex-row gap-3">
+   640→          <div className="relative flex-1">
+   641→            <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+   642→            <Input
+   643→              placeholder="بحث بالاسم أو الهاتف أو المحافظة..."
+   644→              value={agentSearch}
+   645→              onChange={(e) => setAgentSearch(e.target.value)}
+   646→              className="pr-10"
+   647→            />
+   648→          </div>
+   649→          <Button onClick={() => openAgentDialog()} size="sm" className="shrink-0">
+   650→            <Plus className="w-4 h-4 ml-1" />
+   651→            إضافة وكيل
+   652→          </Button>
+   653→        </div>
+   654→        <div className="flex flex-wrap gap-2">
+   655→          <Select value={agentGovFilter} onValueChange={setAgentGovFilter}>
+   656→            <SelectTrigger className="w-36">
+   657→              <SelectValue placeholder="المحافظة" />
+   658→            </SelectTrigger>
+   659→            <SelectContent>
+   660→              <SelectItem value="all">جميع المحافظات</SelectItem>
+   661→              {GOVERNORATES.map(g => (
+   662→                <SelectItem key={g} value={g}>{g}</SelectItem>
+   663→              ))}
+   664→            </SelectContent>
+   665→          </Select>
+   666→          <Select value={agentOfficeFilter} onValueChange={setAgentOfficeFilter}>
+   667→            <SelectTrigger className="w-44">
+   668→              <SelectValue placeholder="المكتب" />
+   669→            </SelectTrigger>
+   670→            <SelectContent>
+   671→              <SelectItem value="all">جميع المكاتب</SelectItem>
+   672→              {activeOfficesList.map(o => (
+   673→                <SelectItem key={o.id} value={o.id!}>{o.name}</SelectItem>
+   674→              ))}
+   675→            </SelectContent>
+   676→          </Select>
+   677→          <Select value={agentStatusFilter} onValueChange={setAgentStatusFilter}>
+   678→            <SelectTrigger className="w-32">
+   679→              <SelectValue placeholder="الحالة" />
+   680→            </SelectTrigger>
+   681→            <SelectContent>
+   682→              <SelectItem value="all">الكل</SelectItem>
+   683→              <SelectItem value="active">نشط</SelectItem>
+   684→              <SelectItem value="inactive">معطل</SelectItem>
+   685→            </SelectContent>
+   686→          </Select>
+   687→        </div>
+   688→      </div>
+   689→
+   690→      {/* Agents List */}
+   691→      <div className="space-y-2 max-h-[calc(100vh-560px)] overflow-y-auto scrollbar-thin">
+   692→        {filteredAgents.map((agent, i) => {
+   693→          const isExpanded = expandedAgentId === agent.id;
+   694→          const officeName = getOfficeName(agent.officeId);
+   695→          return (
+   696→            <motion.div
+   697→              key={agent.id}
+   698→              initial={{ opacity: 0, y: 10 }}
+   699→              animate={{ opacity: 1, y: 0 }}
+   700→              transition={{ delay: i * 0.02 }}
+   701→              className="ios-card"
+   702→            >
+   703→              <div className="p-4">
+   704→                <div className="flex items-center justify-between gap-3">
+   705→                  <div className="flex items-center gap-3 flex-1 min-w-0">
+   706→                    <div className="p-2.5 rounded-xl shrink-0 bg-green-500/10">
+   707→                      <Users className="w-4 h-4 text-green-500" />
+   708→                    </div>
+   709→                    <div className="min-w-0 flex-1">
+   710→                      <div className="flex items-center gap-2">
+   711→                        <p className="text-sm font-medium text-foreground truncate">{agent.name}</p>
+   712→                        <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-green-500/15 text-green-500">
+   713→                          {agent.governorate}
+   714→                        </span>
+   715→                      </div>
+   716→                      <p className="text-[11px] text-muted-foreground">
+   717→                        المكتب: {officeName} • الرصيد: {formatNumber(agent.balance)} ر.ي
+   718→                      </p>
+   719→                    </div>
+   720→                  </div>
+   721→                  <div className="flex items-center gap-1.5 shrink-0">
+   722→                    <button
+   723→                      onClick={() => setExpandedAgentId(isExpanded ? null : agent.id!)}
+   724→                      className="p-1.5 rounded-lg hover:bg-muted/50 transition-colors"
+   725→                    >
+   726→                      {isExpanded ? <ChevronUp className="w-3.5 h-3.5 text-muted-foreground" /> : <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />}
+   727→                    </button>
+   728→                    <Badge className={cn(
+   729→                      'text-[10px]',
+   730→                      agent.isActive ? 'bg-green-500/20 text-green-600 dark:text-green-400' : 'bg-red-500/20 text-red-600 dark:text-red-400'
+   731→                    )}>
+   732→                      {agent.isActive ? 'نشط' : 'معطل'}
+   733→                    </Badge>
+   734→                    <div
+   735→                      onClick={() => handleToggleAgent(agent)}
+   736→                      className={cn('ios-toggle shrink-0 !w-[42px] !h-[26px]', agent.isActive && 'active')}
+   737→                    />
+   738→                    <button onClick={() => openAgentDialog(agent)} className="p-1.5 rounded-lg hover:bg-muted/50 transition-colors">
+   739→                      <Edit className="w-3.5 h-3.5 text-muted-foreground" />
+   740→                    </button>
+   741→                    <button onClick={() => agent.id && handleDeleteAgent(agent.id)} className="p-1.5 rounded-lg hover:bg-red-500/10 transition-colors">
+   742→                      <Trash2 className="w-3.5 h-3.5 text-red-500" />
+   743→                    </button>
+   744→                  </div>
+   745→                </div>
+   746→                {/* Expanded Details */}
+   747→                <AnimatePresence>
+   748→                  {isExpanded && (
+   749→                    <motion.div
+   750→                      initial={{ height: 0, opacity: 0 }}
+   751→                      animate={{ height: 'auto', opacity: 1 }}
+   752→                      exit={{ height: 0, opacity: 0 }}
+   753→                      className="overflow-hidden"
+   754→                    >
+   755→                      <div className="mt-3 pt-3 border-t border-border/50">
+   756→                        {/* Contact Info */}
+   757→                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-3">
+   758→                          <div className="p-2 rounded-lg bg-muted/30">
+   759→                            <p className="text-[10px] text-muted-foreground flex items-center gap-1"><Phone className="w-3 h-3" /> الهاتف</p>
+   760→                            <p className="text-xs font-medium text-foreground" dir="ltr">{agent.phone || '—'}</p>
+   761→                          </div>
+   762→                          <div className="p-2 rounded-lg bg-muted/30">
+   763→                            <p className="text-[10px] text-muted-foreground flex items-center gap-1"><MessageCircle className="w-3 h-3" /> واتساب</p>
+   764→                            <p className="text-xs font-medium text-foreground" dir="ltr">{agent.whatsapp || '—'}</p>
+   765→                          </div>
+   766→                          <div className="p-2 rounded-lg bg-muted/30">
+   767→                            <p className="text-[10px] text-muted-foreground flex items-center gap-1"><Mail className="w-3 h-3" /> البريد</p>
+   768→                            <p className="text-xs font-medium text-foreground truncate" dir="ltr">{agent.email || '—'}</p>
+   769→                          </div>
+   770→                        </div>
+   771→                        {/* Performance Stats */}
+   772→                        <p className="text-[11px] font-semibold text-muted-foreground mb-2">إحصائيات الأداء</p>
+   773→                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+   774→                          <div className="p-2 rounded-lg bg-purple-500/5">
+   775→                            <p className="text-[10px] text-purple-500">إجمالي المعاملات</p>
+   776→                            <p className="text-xs font-bold text-foreground">{formatNumber(agent.totalTransactions)}</p>
+   777→                          </div>
+   778→                          <div className="p-2 rounded-lg bg-green-500/5">
+   779→                            <p className="text-[10px] text-green-500">إجمالي الإيرادات</p>
+   780→                            <p className="text-xs font-bold text-foreground">{formatNumber(agent.totalRevenue)} ر.ي</p>
+   781→                          </div>
+   782→                          <div className="p-2 rounded-lg bg-orange-500/5">
+   783→                            <p className="text-[10px] text-orange-500 flex items-center gap-1"><DollarSign className="w-3 h-3" /> العمولة</p>
+   784→                            <p className="text-xs font-bold text-foreground">{agent.commissionPercentage}%</p>
+   785→                          </div>
+   786→                          <div className="p-2 rounded-lg bg-emerald-500/5">
+   787→                            <p className="text-[10px] text-emerald-500 flex items-center gap-1"><TrendingUp className="w-3 h-3" /> الحد اليومي</p>
+   788→                            <p className="text-xs font-bold text-foreground">{formatNumber(agent.maxDailyTransaction)} ر.ي</p>
+   789→                          </div>
+   790→                        </div>
+   791→                        {agent.joinedAt && (
+   792→                          <div className="mt-2 p-2 rounded-lg bg-muted/30 inline-flex items-center gap-1.5">
+   793→                            <Calendar className="w-3 h-3 text-muted-foreground" />
+   794→                            <span className="text-[10px] text-muted-foreground">تاريخ الانضمام:</span>
+   795→                            <span className="text-[10px] font-medium text-foreground">{new Date(agent.joinedAt).toLocaleDateString('ar-SA')}</span>
+   796→                          </div>
+   797→                        )}
+   798→                      </div>
+   799→                    </motion.div>
+   800→                  )}
+   801→                </AnimatePresence>
+   802→              </div>
+   803→            </motion.div>
+   804→          );
+   805→        })}
+   806→        {filteredAgents.length === 0 && (
+   807→          <div className="text-center py-12">
+   808→            <Users className="w-10 h-10 mx-auto text-muted-foreground/30 mb-3" />
+   809→            <p className="text-sm text-muted-foreground">لا يوجد وكلاء</p>
+   810→            <p className="text-xs text-muted-foreground/60 mt-1">أضف وكيل جديد لبدء إدارة الوكلاء</p>
+   811→          </div>
+   812→        )}
+   813→      </div>
+   814→    </div>
+   815→  );
+   816→
+   817→  // ── Render: Tab 3 - Reports ──
+   818→  const renderReportsTab = () => {
+   819→    const maxDailyValue = Math.max(...dailyReportData.map(d => d.deposits + d.withdrawals), 1);
+   820→    const totalDeposits = officeReports.reduce((sum, r) => sum + r.totalDeposits, 0);
+   821→    const totalWithdrawals = officeReports.reduce((sum, r) => sum + r.totalWithdrawals, 0);
+   822→    const totalCommission = officeReports.reduce((sum, r) => sum + r.commissionEarned, 0);
+   823→    const totalTransactions = officeReports.reduce((sum, r) => sum + r.transactionCount, 0);
+   824→
+   825→    return (
+   826→      <div className="space-y-4">
+   827→        {/* Period Filter */}
+   828→        <div className="flex flex-wrap items-center gap-2">
+   829→          <div className="flex gap-2">
+   830→            {(['daily', 'weekly', 'monthly'] as const).map(p => (
+   831→              <button
+   832→                key={p}
+   833→                onClick={() => setReportPeriod(p)}
+   834→                className={cn(
+   835→                  'px-4 py-2 rounded-xl text-sm font-medium transition-all',
+   836→                  reportPeriod === p
+   837→                    ? 'bg-purple-500 text-white shadow-lg shadow-purple-500/25'
+   838→                    : 'ios-card text-muted-foreground'
+   839→                )}
+   840→              >
+   841→                {p === 'daily' ? 'يومي' : p === 'weekly' ? 'أسبوعي' : 'شهري'}
+   842→              </button>
+   843→            ))}
+   844→          </div>
+   845→          <div className="flex items-center gap-2 mr-auto">
+   846→            <Input
+   847→              type="date"
+   848→              value={reportDateFrom}
+   849→              onChange={(e) => setReportDateFrom(e.target.value)}
+   850→              className="w-36 text-xs"
+   851→            />
+   852→            <span className="text-xs text-muted-foreground">إلى</span>
+   853→            <Input
+   854→              type="date"
+   855→              value={reportDateTo}
+   856→              onChange={(e) => setReportDateTo(e.target.value)}
+   857→              className="w-36 text-xs"
+   858→            />
+   859→          </div>
+   860→          <button
+   861→            onClick={handleExportData}
+   862→            className="px-3 py-2 rounded-xl ios-card text-xs font-medium flex items-center gap-1.5 card-press"
+   863→          >
+   864→            <Download className="w-3.5 h-3.5" />
+   865→            تصدير
+   866→          </button>
+   867→          <button
+   868→            onClick={() => setReportSeed(Date.now())}
+   869→            className="px-3 py-2 rounded-xl ios-card text-xs font-medium flex items-center gap-1.5 card-press"
+   870→          >
+   871→            <RefreshCw className="w-3.5 h-3.5" />
+   872→            تحديث
+   873→          </button>
+   874→        </div>
+   875→
+   876→        {/* Summary Stats */}
+   877→        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+   878→          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
+   879→            <div className="ios-card p-4">
+   880→              <div className="p-2 rounded-xl w-fit bg-green-500/10">
+   881→                <ArrowDownCircle className="w-4 h-4 text-green-500" />
+   882→              </div>
+   883→              <p className="text-lg font-bold text-foreground mt-2">{formatNumber(totalDeposits)}</p>
+   884→              <p className="text-[11px] text-muted-foreground">إجمالي الإيداعات (ر.ي)</p>
+   885→            </div>
+   886→          </motion.div>
+   887→          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}>
+   888→            <div className="ios-card p-4">
+   889→              <div className="p-2 rounded-xl w-fit bg-orange-500/10">
+   890→                <ArrowUpCircle className="w-4 h-4 text-orange-500" />
+   891→              </div>
+   892→              <p className="text-lg font-bold text-foreground mt-2">{formatNumber(totalWithdrawals)}</p>
+   893→              <p className="text-[11px] text-muted-foreground">إجمالي السحوبات (ر.ي)</p>
+   894→            </div>
+   895→          </motion.div>
+   896→          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
+   897→            <div className="ios-card p-4">
+   898→              <div className="p-2 rounded-xl w-fit bg-purple-500/10">
+   899→                <BarChart3 className="w-4 h-4 text-purple-500" />
+   900→              </div>
+   901→              <p className="text-lg font-bold text-foreground mt-2">{formatNumber(totalCommission)}</p>
+   902→              <p className="text-[11px] text-muted-foreground">العمولات المحققة (ر.ي)</p>
+   903→            </div>
+   904→          </motion.div>
+   905→          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}>
+   906→            <div className="ios-card p-4">
+   907→              <div className="p-2 rounded-xl w-fit bg-emerald-500/10">
+   908→                <Activity className="w-4 h-4 text-emerald-500" />
+   909→              </div>
+   910→              <p className="text-lg font-bold text-foreground mt-2">{formatNumber(totalTransactions)}</p>
+   911→              <p className="text-[11px] text-muted-foreground">إجمالي المعاملات</p>
+   912→            </div>
+   913→          </motion.div>
+   914→        </div>
+   915→
+   916→        {/* Bar Chart */}
+   917→        <div className="ios-card p-4">
+   918→          <div className="flex items-center justify-between mb-4">
+   919→            <h3 className="text-sm font-semibold text-foreground">تحليل المعاملات (30 يوم)</h3>
+   920→            <div className="flex items-center gap-3 text-[10px]">
+   921→              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-green-500" /> إيداعات</span>
+   922→              <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-orange-500" /> سحوبات</span>
+   923→            </div>
+   924→          </div>
+   925→          <div className="flex items-end gap-[3px] h-40 overflow-x-auto scrollbar-thin pb-5 relative">
+   926→            {/* Y axis labels */}
+   927→            <div className="absolute left-0 top-0 h-32 flex flex-col justify-between text-[8px] text-muted-foreground z-10">
+   928→              <span>{formatNumber(maxDailyValue)}</span>
+   929→              <span>{formatNumber(Math.floor(maxDailyValue / 2))}</span>
+   930→              <span>0</span>
+   931→            </div>
+   932→            <div className="flex items-end gap-[3px] h-32 mr-8 min-w-0 flex-1">
+   933→              {dailyReportData.map((d, idx) => (
+   934→                <div key={idx} className="flex-1 min-w-[8px] flex flex-col items-center gap-[1px] h-full justify-end group relative">
+   935→                  <div className="absolute -top-6 bg-foreground text-background text-[7px] px-1 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-20">
+   936→                    {formatNumber(d.deposits + d.withdrawals)}
+   937→                  </div>
+   938→                  <div
+   939→                    className="w-full rounded-t-sm bg-green-500/80 transition-all hover:bg-green-500"
+   940→                    style={{ height: `${(d.deposits / maxDailyValue) * 100}%` }}
+   941→                  />
+   942→                  <div
+   943→                    className="w-full rounded-t-sm bg-orange-500/80 transition-all hover:bg-orange-500"
+   944→                    style={{ height: `${(d.withdrawals / maxDailyValue) * 100}%` }}
+   945→                  />
+   946→                  {idx % 5 === 0 && (
+   947→                    <span className="text-[7px] text-muted-foreground mt-1 whitespace-nowrap">{d.day}</span>
+   948→                  )}
+   949→                </div>
+   950→              ))}
+   951→            </div>
+   952→          </div>
+   953→        </div>
+   954→
+   955→        {/* Office Reports */}
+   956→        <div className="ios-card p-4">
+   957→          <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
+   958→            <Building2 className="w-4 h-4 text-purple-500" />
+   959→            تقارير المكاتب
+   960→          </h3>
+   961→          <div className="space-y-2 max-h-72 overflow-y-auto scrollbar-thin">
+   962→            {officeReports.map((report) => {
+   963→              const maxOfficeValue = Math.max(...officeReports.map(r => r.totalDeposits + r.totalWithdrawals), 1);
+   964→              const totalValue = report.totalDeposits + report.totalWithdrawals;
+   965→              const depositWidth = (report.totalDeposits / maxOfficeValue) * 100;
+   966→              const withdrawWidth = (report.totalWithdrawals / maxOfficeValue) * 100;
+   967→
+   968→              return (
+   969→                <div key={report.officeId} className="p-3 rounded-xl bg-muted/30">
+   970→                  <div className="flex items-center justify-between mb-2">
+   971→                    <p className="text-xs font-medium text-foreground">{report.officeName}</p>
+   972→                    <p className="text-[10px] text-muted-foreground">{formatNumber(report.transactionCount)} معاملة</p>
+   973→                  </div>
+   974→                  <div className="space-y-1.5">
+   975→                    <div>
+   976→                      <div className="flex items-center justify-between text-[10px] mb-0.5">
+   977→                        <span className="text-green-500">إيداعات</span>
+   978→                        <span className="text-foreground">{formatNumber(report.totalDeposits)} ر.ي</span>
+   979→                      </div>
+   980→                      <div className="h-2 bg-muted/50 rounded-full overflow-hidden">
+   981→                        <div className="h-full bg-green-500 rounded-full transition-all" style={{ width: `${depositWidth}%` }} />
+   982→                      </div>
+   983→                    </div>
+   984→                    <div>
+   985→                      <div className="flex items-center justify-between text-[10px] mb-0.5">
+   986→                        <span className="text-orange-500">سحوبات</span>
+   987→                        <span className="text-foreground">{formatNumber(report.totalWithdrawals)} ر.ي</span>
+   988→                      </div>
+   989→                      <div className="h-2 bg-muted/50 rounded-full overflow-hidden">
+   990→                        <div className="h-full bg-orange-500 rounded-full transition-all" style={{ width: `${withdrawWidth}%` }} />
+   991→                      </div>
+   992→                    </div>
+   993→                  </div>
+   994→                  <div className="mt-2 pt-2 border-t border-border/30 flex items-center justify-between">
+   995→                    <span className="text-[10px] text-muted-foreground">العمولة المحققة</span>
+   996→                    <span className="text-xs font-bold text-purple-500">{formatNumber(report.commissionEarned)} ر.ي</span>
+   997→                  </div>
+   998→                </div>
+   999→              );
+  1000→            })}
+  1001→            {officeReports.length === 0 && (
+  1002→              <p className="text-center text-sm text-muted-foreground py-6">لا توجد بيانات تقارير</p>
+  1003→            )}
+  1004→          </div>
+  1005→        </div>
+  1006→
+  1007→        {/* Agent Reports */}
+  1008→        <div className="ios-card p-4">
+  1009→          <h3 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
+  1010→            <Users className="w-4 h-4 text-green-500" />
+  1011→            تقارير الوكلاء
+  1012→          </h3>
+  1013→          <div className="space-y-2 max-h-72 overflow-y-auto scrollbar-thin">
+  1014→            {agentReports.map((report) => {
+  1015→              const maxAgentValue = Math.max(...agentReports.map(r => r.totalDeposits + r.totalWithdrawals), 1);
+  1016→              const depositWidth = (report.totalDeposits / maxAgentValue) * 100;
+  1017→              const withdrawWidth = (report.totalWithdrawals / maxAgentValue) * 100;
+  1018→
+  1019→              return (
+  1020→                <div key={report.agentId} className="p-3 rounded-xl bg-muted/30">
+  1021→                  <div className="flex items-center justify-between mb-2">
+  1022→                    <div>
+  1023→                      <p className="text-xs font-medium text-foreground">{report.agentName}</p>
+  1024→                      <p className="text-[10px] text-muted-foreground">{report.officeName}</p>
+  1025→                    </div>
+  1026→                    <p className="text-[10px] text-muted-foreground">{formatNumber(report.transactionCount)} معاملة</p>
+  1027→                  </div>
+  1028→                  <div className="space-y-1.5">
+  1029→                    <div>
+  1030→                      <div className="flex items-center justify-between text-[10px] mb-0.5">
+  1031→                        <span className="text-green-500">إيداعات</span>
+  1032→                        <span className="text-foreground">{formatNumber(report.totalDeposits)} ر.ي</span>
+  1033→                      </div>
+  1034→                      <div className="h-2 bg-muted/50 rounded-full overflow-hidden">
+  1035→                        <div className="h-full bg-green-500 rounded-full transition-all" style={{ width: `${depositWidth}%` }} />
+  1036→                      </div>
+  1037→                    </div>
+  1038→                    <div>
+  1039→                      <div className="flex items-center justify-between text-[10px] mb-0.5">
+  1040→                        <span className="text-orange-500">سحوبات</span>
+  1041→                        <span className="text-foreground">{formatNumber(report.totalWithdrawals)} ر.ي</span>
+  1042→                      </div>
+  1043→                      <div className="h-2 bg-muted/50 rounded-full overflow-hidden">
+  1044→                        <div className="h-full bg-orange-500 rounded-full transition-all" style={{ width: `${withdrawWidth}%` }} />
+  1045→                      </div>
+  1046→                    </div>
+  1047→                  </div>
+  1048→                  <div className="mt-2 pt-2 border-t border-border/30 flex items-center justify-between">
+  1049→                    <span className="text-[10px] text-muted-foreground">العمولة المحققة</span>
+  1050→                    <span className="text-xs font-bold text-purple-500">{formatNumber(report.commissionEarned)} ر.ي</span>
+  1051→                  </div>
+  1052→                </div>
+  1053→              );
+  1054→            })}
+  1055→            {agentReports.length === 0 && (
+  1056→              <p className="text-center text-sm text-muted-foreground py-6">لا توجد بيانات تقارير</p>
+  1057→            )}
+  1058→          </div>
+  1059→        </div>
+  1060→      </div>
+  1061→    );
+  1062→  };
+  1063→
+  1064→  // ── Render: Office Dialog ──
+  1065→  const renderOfficeDialog = () => (
+  1066→    <Dialog open={officeDialog} onOpenChange={(open) => { if (!open) { setOfficeDialog(false); resetOfficeForm(); } }}>
+  1067→      <DialogContent className="max-h-[90vh] overflow-y-auto">
+  1068→        <DialogHeader>
+  1069→          <DialogTitle>{editingOffice ? 'تعديل المكتب' : 'إضافة مكتب جديد'}</DialogTitle>
+  1070→        </DialogHeader>
+  1071→        <div className="space-y-4">
+  1072→          <div>
+  1073→            <Label>اسم المكتب *</Label>
+  1074→            <Input
+  1075→              value={officeForm.name}
+  1076→              onChange={(e) => setOfficeForm(prev => ({ ...prev, name: e.target.value }))}
+  1077→              placeholder="مثال: مكتب عدن الرئيسي"
+  1078→            />
+  1079→          </div>
+  1080→          <div>
+  1081→            <Label>العنوان</Label>
+  1082→            <Input
+  1083→              value={officeForm.address}
+  1084→              onChange={(e) => setOfficeForm(prev => ({ ...prev, address: e.target.value }))}
+  1085→              placeholder="العنوان التفصيلي"
+  1086→            />
+  1087→          </div>
+  1088→          <div>
+  1089→            <Label>المحافظة *</Label>
+  1090→            <Select value={officeForm.governorate} onValueChange={(val) => setOfficeForm(prev => ({ ...prev, governorate: val }))}>
+  1091→              <SelectTrigger>
+  1092→                <SelectValue placeholder="اختر المحافظة" />
+  1093→              </SelectTrigger>
+  1094→              <SelectContent>
+  1095→                {GOVERNORATES.map(g => (
+  1096→                  <SelectItem key={g} value={g}>{g}</SelectItem>
+  1097→                ))}
+  1098→              </SelectContent>
+  1099→            </Select>
+  1100→          </div>
+  1101→          <div className="grid grid-cols-2 gap-3">
+  1102→            <div>
+  1103→              <Label>الهاتف</Label>
+  1104→              <Input
+  1105→                value={officeForm.phone}
+  1106→                onChange={(e) => setOfficeForm(prev => ({ ...prev, phone: e.target.value }))}
+  1107→                placeholder="+967..."
+  1108→                dir="ltr"
+  1109→              />
+  1110→            </div>
+  1111→            <div>
+  1112→              <Label>واتساب</Label>
+  1113→              <Input
+  1114→                value={officeForm.whatsapp}
+  1115→                onChange={(e) => setOfficeForm(prev => ({ ...prev, whatsapp: e.target.value }))}
+  1116→                placeholder="+967..."
+  1117→                dir="ltr"
+  1118→              />
+  1119→            </div>
+  1120→          </div>
+  1121→          <div>
+  1122→            <Label>اسم المدير</Label>
+  1123→            <Input
+  1124→              value={officeForm.managerName}
+  1125→              onChange={(e) => setOfficeForm(prev => ({ ...prev, managerName: e.target.value }))}
+  1126→              placeholder="اسم مدير المكتب"
+  1127→            />
+  1128→          </div>
+  1129→          <div>
+  1130→            <Label>ساعات العمل</Label>
+  1131→            <Input
+  1132→              value={officeForm.workingHours}
+  1133→              onChange={(e) => setOfficeForm(prev => ({ ...prev, workingHours: e.target.value }))}
+  1134→              placeholder="8:00 ص - 4:00 م"
+  1135→            />
+  1136→          </div>
+  1137→          <div className="grid grid-cols-2 gap-3">
+  1138→            <div>
+  1139→              <Label>خط العرض (Latitude)</Label>
+  1140→              <Input
+  1141→                type="number"
+  1142→                value={officeForm.location.lat || ''}
+  1143→                onChange={(e) => setOfficeForm(prev => ({ ...prev, location: { ...prev.location, lat: parseFloat(e.target.value) || 0 } }))}
+  1144→                placeholder="0.0"
+  1145→                dir="ltr"
+  1146→              />
+  1147→            </div>
+  1148→            <div>
+  1149→              <Label>خط الطول (Longitude)</Label>
+  1150→              <Input
+  1151→                type="number"
+  1152→                value={officeForm.location.lng || ''}
+  1153→                onChange={(e) => setOfficeForm(prev => ({ ...prev, location: { ...prev.location, lng: parseFloat(e.target.value) || 0 } }))}
+  1154→                placeholder="0.0"
+  1155→                dir="ltr"
+  1156→              />
+  1157→            </div>
+  1158→          </div>
+  1159→          <div className="grid grid-cols-3 gap-3">
+  1160→            <div>
+  1161→              <Label>الرصيد (ر.ي)</Label>
+  1162→              <Input
+  1163→                type="number"
+  1164→                value={officeForm.balance || ''}
+  1165→                onChange={(e) => setOfficeForm(prev => ({ ...prev, balance: parseFloat(e.target.value) || 0 }))}
+  1166→                placeholder="0"
+  1167→                dir="ltr"
+  1168→              />
+  1169→            </div>
+  1170→            <div>
+  1171→              <Label>الحد اليومي (ر.ي)</Label>
+  1172→              <Input
+  1173→                type="number"
+  1174→                value={officeForm.maxDailyTransaction || ''}
+  1175→                onChange={(e) => setOfficeForm(prev => ({ ...prev, maxDailyTransaction: parseFloat(e.target.value) || 0 }))}
+  1176→                placeholder="500000"
+  1177→                dir="ltr"
+  1178→              />
+  1179→            </div>
+  1180→            <div>
+  1181→              <Label>نسبة العمولة %</Label>
+  1182→              <Input
+  1183→                type="number"
+  1184→                step="0.1"
+  1185→                value={officeForm.commissionPercentage || ''}
+  1186→                onChange={(e) => setOfficeForm(prev => ({ ...prev, commissionPercentage: parseFloat(e.target.value) || 0 }))}
+  1187→                placeholder="2"
+  1188→                dir="ltr"
+  1189→              />
+  1190→            </div>
+  1191→          </div>
+  1192→          <div className="flex items-center gap-3 p-3 rounded-xl bg-muted/30">
+  1193→            <div
+  1194→              onClick={() => setOfficeForm(prev => ({ ...prev, isActive: !prev.isActive }))}
+  1195→              className={cn('ios-toggle shrink-0 !w-[46px] !h-[28px]', officeForm.isActive && 'active')}
+  1196→            />
+  1197→            <div>
+  1198→              <p className="text-sm font-medium text-foreground">{officeForm.isActive ? 'نشط' : 'معطل'}</p>
+  1199→              <p className="text-[10px] text-muted-foreground">تفعيل أو تعطيل المكتب</p>
+  1200→            </div>
+  1201→          </div>
+  1202→        </div>
+  1203→        <DialogFooter>
+  1204→          <Button variant="outline" onClick={() => { setOfficeDialog(false); resetOfficeForm(); }}>إلغاء</Button>
+  1205→          <Button onClick={handleSaveOffice} disabled={saving}>
+  1206→            {saving ? <Loader2 className="w-4 h-4 animate-spin ml-1" /> : null}
+  1207→            {editingOffice ? 'تحديث' : 'إضافة'}
+  1208→          </Button>
+  1209→        </DialogFooter>
+  1210→      </DialogContent>
+  1211→    </Dialog>
+  1212→  );
+  1213→
+  1214→  // ── Render: Agent Dialog ──
+  1215→  const renderAgentDialog = () => (
+  1216→    <Dialog open={agentDialog} onOpenChange={(open) => { if (!open) { setAgentDialog(false); resetAgentForm(); } }}>
+  1217→      <DialogContent className="max-h-[90vh] overflow-y-auto">
+  1218→        <DialogHeader>
+  1219→          <DialogTitle>{editingAgent ? 'تعديل الوكيل' : 'إضافة وكيل جديد'}</DialogTitle>
+  1220→        </DialogHeader>
+  1221→        <div className="space-y-4">
+  1222→          <div>
+  1223→            <Label>اسم الوكيل *</Label>
+  1224→            <Input
+  1225→              value={agentForm.name}
+  1226→              onChange={(e) => setAgentForm(prev => ({ ...prev, name: e.target.value }))}
+  1227→              placeholder="اسم الوكيل الكامل"
+  1228→            />
+  1229→          </div>
+  1230→          <div className="grid grid-cols-2 gap-3">
+  1231→            <div>
+  1232→              <Label>الهاتف *</Label>
+  1233→              <Input
+  1234→                value={agentForm.phone}
+  1235→                onChange={(e) => setAgentForm(prev => ({ ...prev, phone: e.target.value }))}
+  1236→                placeholder="+967..."
+  1237→                dir="ltr"
+  1238→              />
+  1239→            </div>
+  1240→            <div>
+  1241→              <Label>واتساب</Label>
+  1242→              <Input
+  1243→                value={agentForm.whatsapp}
+  1244→                onChange={(e) => setAgentForm(prev => ({ ...prev, whatsapp: e.target.value }))}
+  1245→                placeholder="+967..."
+  1246→                dir="ltr"
+  1247→              />
+  1248→            </div>
+  1249→          </div>
+  1250→          <div>
+  1251→            <Label>البريد الإلكتروني</Label>
+  1252→            <Input
+  1253→              type="email"
+  1254→              value={agentForm.email}
+  1255→              onChange={(e) => setAgentForm(prev => ({ ...prev, email: e.target.value }))}
+  1256→              placeholder="example@email.com"
+  1257→              dir="ltr"
+  1258→            />
+  1259→          </div>
+  1260→          <div>
+  1261→            <Label>المحافظة</Label>
+  1262→            <Select value={agentForm.governorate} onValueChange={(val) => setAgentForm(prev => ({ ...prev, governorate: val }))}>
+  1263→              <SelectTrigger>
+  1264→                <SelectValue placeholder="اختر المحافظة" />
+  1265→              </SelectTrigger>
+  1266→              <SelectContent>
+  1267→                {GOVERNORATES.map(g => (
+  1268→                  <SelectItem key={g} value={g}>{g}</SelectItem>
+  1269→                ))}
+  1270→              </SelectContent>
+  1271→            </Select>
+  1272→          </div>
+  1273→          <div>
+  1274→            <Label>المكتب التابع له</Label>
+  1275→            <Select value={agentForm.officeId || 'none'} onValueChange={(val) => setAgentForm(prev => ({ ...prev, officeId: val === 'none' ? '' : val }))}>
+  1276→              <SelectTrigger>
+  1277→                <SelectValue placeholder="اختر المكتب" />
+  1278→              </SelectTrigger>
+  1279→              <SelectContent>
+  1280→                <SelectItem value="none">بدون مكتب</SelectItem>
+  1281→                {activeOfficesList.map(o => (
+  1282→                  <SelectItem key={o.id} value={o.id!}>{o.name} ({o.governorate})</SelectItem>
+  1283→                ))}
+  1284→              </SelectContent>
+  1285→            </Select>
+  1286→          </div>
+  1287→          <div className="grid grid-cols-3 gap-3">
+  1288→            <div>
+  1289→              <Label>الرصيد (ر.ي)</Label>
+  1290→              <Input
+  1291→                type="number"
+  1292→                value={agentForm.balance || ''}
+  1293→                onChange={(e) => setAgentForm(prev => ({ ...prev, balance: parseFloat(e.target.value) || 0 }))}
+  1294→                placeholder="0"
+  1295→                dir="ltr"
+  1296→              />
+  1297→            </div>
+  1298→            <div>
+  1299→              <Label>الحد اليومي (ر.ي)</Label>
+  1300→              <Input
+  1301→                type="number"
+  1302→                value={agentForm.maxDailyTransaction || ''}
+  1303→                onChange={(e) => setAgentForm(prev => ({ ...prev, maxDailyTransaction: parseFloat(e.target.value) || 0 }))}
+  1304→                placeholder="200000"
+  1305→                dir="ltr"
+  1306→              />
+  1307→            </div>
+  1308→            <div>
+  1309→              <Label>نسبة العمولة %</Label>
+  1310→              <Input
+  1311→                type="number"
+  1312→                step="0.1"
+  1313→                value={agentForm.commissionPercentage || ''}
+  1314→                onChange={(e) => setAgentForm(prev => ({ ...prev, commissionPercentage: parseFloat(e.target.value) || 0 }))}
+  1315→                placeholder="1.5"
+  1316→                dir="ltr"
+  1317→              />
+  1318→            </div>
+  1319→          </div>
+  1320→          <div className="flex items-center gap-3 p-3 rounded-xl bg-muted/30">
+  1321→            <div
+  1322→              onClick={() => setAgentForm(prev => ({ ...prev, isActive: !prev.isActive }))}
+  1323→              className={cn('ios-toggle shrink-0 !w-[46px] !h-[28px]', agentForm.isActive && 'active')}
+  1324→            />
+  1325→            <div>
+  1326→              <p className="text-sm font-medium text-foreground">{agentForm.isActive ? 'نشط' : 'معطل'}</p>
+  1327→              <p className="text-[10px] text-muted-foreground">تفعيل أو تعطيل الوكيل</p>
+  1328→            </div>
+  1329→          </div>
+  1330→        </div>
+  1331→        <DialogFooter>
+  1332→          <Button variant="outline" onClick={() => { setAgentDialog(false); resetAgentForm(); }}>إلغاء</Button>
+  1333→          <Button onClick={handleSaveAgent} disabled={saving}>
+  1334→            {saving ? <Loader2 className="w-4 h-4 animate-spin ml-1" /> : null}
+  1335→            {editingAgent ? 'تحديث' : 'إضافة'}
+  1336→          </Button>
+  1337→        </DialogFooter>
+  1338→      </DialogContent>
+  1339→    </Dialog>
+  1340→  );
+  1341→
+  1342→  // ── Main Render ──
+  1343→  return (
+  1344→    <div className="space-y-6">
+  1345→      {/* Header */}
+  1346→      <div className="flex items-center justify-between">
+  1347→        <div>
+  1348→          <h1 className="ios-large-title">المكاتب والوكلاء</h1>
+  1349→          <p className="text-muted-foreground text-sm mt-1">
+  1350→            {formatNumber(offices.length)} مكتب • {formatNumber(agents.length)} وكيل
+  1351→          </p>
+  1352→        </div>
+  1353→      </div>
+  1354→
+  1355→      {/* Stats */}
+  1356→      {renderStatsCards()}
+  1357→
+  1358→      {/* Tabs */}
+  1359→      <Tabs value={activeTab} onValueChange={setActiveTab}>
+  1360→        <TabsList className="w-full grid grid-cols-3 h-12">
+  1361→          <TabsTrigger value="offices" className="flex items-center gap-1.5 text-xs">
+  1362→            <Building2 className="w-4 h-4" />
+  1363→            المكاتب
+  1364→          </TabsTrigger>
+  1365→          <TabsTrigger value="agents" className="flex items-center gap-1.5 text-xs">
+  1366→            <Users className="w-4 h-4" />
+  1367→            الوكلاء
+  1368→          </TabsTrigger>
+  1369→          <TabsTrigger value="reports" className="flex items-center gap-1.5 text-xs">
+  1370→            <BarChart3 className="w-4 h-4" />
+  1371→            التقارير
+  1372→          </TabsTrigger>
+  1373→        </TabsList>
+  1374→
+  1375→        <TabsContent value="offices" className="mt-4">
+  1376→          {renderOfficesTab()}
+  1377→        </TabsContent>
+  1378→
+  1379→        <TabsContent value="agents" className="mt-4">
+  1380→          {renderAgentsTab()}
+  1381→        </TabsContent>
+  1382→
+  1383→        <TabsContent value="reports" className="mt-4">
+  1384→          {renderReportsTab()}
+  1385→        </TabsContent>
+  1386→      </Tabs>
+  1387→
+  1388→      {/* Dialogs */}
+  1389→      {renderOfficeDialog()}
+  1390→      {renderAgentDialog()}
+  1391→    </div>
+  1392→  );
+  1393→}
+  1394→

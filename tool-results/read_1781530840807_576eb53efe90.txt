@@ -1,0 +1,1276 @@
+     1→'use client';
+     2→
+     3→import { useState, useEffect, useRef, useCallback } from 'react';
+     4→import { motion, AnimatePresence } from 'framer-motion';
+     5→import { ref, onValue, push, set, update, get, off } from 'firebase/database';
+     6→import { database } from '@/lib/firebase';
+     7→import { useStore } from '@/lib/store';
+     8→import { useAdminSettings } from '@/lib/use-admin-settings';
+     9→import { formatBalance, formatNumber, timeAgo } from '@/lib/utils';
+    10→import {
+    11→  ArrowRight,
+    12→  Shield,
+    13→  Plus,
+    14→  Search,
+    15→  MessageCircle,
+    16→  AlertTriangle,
+    17→  CheckCircle,
+    18→  Clock,
+    19→  XCircle,
+    20→  Copy,
+    21→  ChevronDown,
+    22→  Send,
+    23→  Gamepad2,
+    24→  Bitcoin,
+    25→  Globe,
+    26→  Package,
+    27→  Eye,
+    28→  EyeOff,
+    29→  Hash,
+    30→  DollarSign,
+    31→  UserCheck,
+    32→  Handshake,
+    33→  Lock,
+    34→  Unlock,
+    35→  FileText,
+    36→  RefreshCw,
+    37→  Info,
+    38→} from 'lucide-react';
+    39→import { toast } from 'sonner';
+    40→
+    41→// ─── Types ───────────────────────────────────────────────────────────
+    42→
+    43→type EscrowDealType = 'game_accounts' | 'crypto' | 'digital_assets' | 'other';
+    44→type EscrowRole = 'seller' | 'buyer';
+    45→type EscrowStatus = 'pending' | 'accepted' | 'funded' | 'delivered' | 'completed' | 'disputed' | 'cancelled';
+    46→
+    47→interface EscrowMessage {
+    48→  id: string;
+    49→  senderId: string;
+    50→  senderName: string;
+    51→  text: string;
+    52→  createdAt: string;
+    53→}
+    54→
+    55→interface EscrowDeal {
+    56→  id: string;
+    57→  title: string;
+    58→  description: string;
+    59→  dealType: EscrowDealType;
+    60→  amount: number;
+    61→  currency: string;
+    62→  commissionRate: number;
+    63→  commissionAmount: number;
+    64→  sellerId: string;
+    65→  sellerName: string;
+    66→  buyerId: string;
+    67→  buyerName: string;
+    68→  status: EscrowStatus;
+    69→  inviteCode: string;
+    70→  createdAt: string;
+    71→  acceptedAt?: string;
+    72→  fundedAt?: string;
+    73→  deliveredAt?: string;
+    74→  completedAt?: string;
+    75→  disputedAt?: string;
+    76→  cancelledAt?: string;
+    77→  disputeReason?: string;
+    78→  disputeBy?: string;
+    79→  adminResolution?: 'buyer' | 'seller';
+    80→  adminResolvedAt?: string;
+    81→}
+    82→
+    83→// ─── Constants ───────────────────────────────────────────────────────
+    84→
+    85→const DEAL_TYPE_OPTIONS: { value: EscrowDealType; label: string; icon: React.ElementType; color: string }[] = [
+    86→  { value: 'game_accounts', label: 'حسابات الألعاب', icon: Gamepad2, color: 'text-purple-500' },
+    87→  { value: 'crypto', label: 'عملات رقمية', icon: Bitcoin, color: 'text-amber-500' },
+    88→  { value: 'digital_assets', label: 'أصول رقمية', icon: Globe, color: 'text-blue-500' },
+    89→  { value: 'other', label: 'أخرى', icon: Package, color: 'text-gray-500' },
+    90→];
+    91→
+    92→const STATUS_CONFIG: Record<EscrowStatus, { label: string; color: string; bgColor: string; icon: React.ElementType }> = {
+    93→  pending: { label: 'بانتظار القبول', color: 'text-amber-500', bgColor: 'bg-amber-500/10', icon: Clock },
+    94→  accepted: { label: 'مقبول', color: 'text-blue-500', bgColor: 'bg-blue-500/10', icon: UserCheck },
+    95→  funded: { label: 'ممول', color: 'text-indigo-500', bgColor: 'bg-indigo-500/10', icon: Lock },
+    96→  delivered: { label: 'تم التسليم', color: 'text-teal-500', bgColor: 'bg-teal-500/10', icon: Handshake },
+    97→  completed: { label: 'مكتمل', color: 'text-green-500', bgColor: 'bg-green-500/10', icon: CheckCircle },
+    98→  disputed: { label: 'نزاع', color: 'text-red-500', bgColor: 'bg-red-500/10', icon: AlertTriangle },
+    99→  cancelled: { label: 'ملغي', color: 'text-gray-500', bgColor: 'bg-gray-500/10', icon: XCircle },
+   100→};
+   101→
+   102→function generateInviteCode(): string {
+   103→  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+   104→  let code = 'ESC-';
+   105→  for (let i = 0; i < 8; i++) {
+   106→    code += chars.charAt(Math.floor(Math.random() * chars.length));
+   107→  }
+   108→  return code;
+   109→}
+   110→
+   111→// ─── Sub-Components ──────────────────────────────────────────────────
+   112→
+   113→function StatusBadge({ status }: { status: EscrowStatus }) {
+   114→  const cfg = STATUS_CONFIG[status];
+   115→  const Icon = cfg.icon;
+   116→  return (
+   117→    <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium ${cfg.bgColor} ${cfg.color}`}>
+   118→      <Icon className="w-3 h-3" />
+   119→      {cfg.label}
+   120→    </span>
+   121→  );
+   122→}
+   123→
+   124→function StepIndicator({ currentStatus }: { currentStatus: EscrowStatus }) {
+   125→  const steps: { key: EscrowStatus; label: string }[] = [
+   126→    { key: 'pending', label: 'إنشاء' },
+   127→    { key: 'accepted', label: 'قبول' },
+   128→    { key: 'funded', label: 'دفع' },
+   129→    { key: 'delivered', label: 'تسليم' },
+   130→    { key: 'completed', label: 'إتمام' },
+   131→  ];
+   132→
+   133→  const statusOrder: EscrowStatus[] = ['pending', 'accepted', 'funded', 'delivered', 'completed'];
+   134→  const currentIndex = statusOrder.indexOf(currentStatus);
+   135→  const isDisputedOrCancelled = currentStatus === 'disputed' || currentStatus === 'cancelled';
+   136→
+   137→  return (
+   138→    <div className="flex items-center justify-between gap-1 px-2">
+   139→      {steps.map((step, idx) => {
+   140→        const isActive = idx <= currentIndex && !isDisputedOrCancelled;
+   141→        const isCurrent = step.key === currentStatus;
+   142→        return (
+   143→          <div key={step.key} className="flex flex-col items-center gap-1 flex-1">
+   144→            <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold transition-all ${
+   145→              isActive
+   146→                ? isCurrent
+   147→                  ? 'bg-green-500 text-white ring-2 ring-green-500/30'
+   148→                  : 'bg-green-500/20 text-green-600'
+   149→                : 'bg-muted text-muted-foreground'
+   150→            }`}>
+   151→              {idx + 1}
+   152→            </div>
+   153→            <span className={`text-[9px] ${isActive ? 'text-green-600 font-medium' : 'text-muted-foreground'}`}>
+   154→              {step.label}
+   155→            </span>
+   156→          </div>
+   157→        );
+   158→      })}
+   159→    </div>
+   160→  );
+   161→}
+   162→
+   163→// ─── Main Component ──────────────────────────────────────────────────
+   164→
+   165→export function EscrowScreen() {
+   166→  const { user, navigateBack, pushScreen } = useStore();
+   167→  const { settings } = useAdminSettings();
+   168→
+   169→  // Core state
+   170→  const [deals, setDeals] = useState<EscrowDeal[]>([]);
+   171→  const [loading, setLoading] = useState(true);
+   172→  const [activeView, setActiveView] = useState<'list' | 'create' | 'join' | 'detail' | 'chat'>('list');
+   173→  const [filterStatus, setFilterStatus] = useState<EscrowStatus | 'all'>('all');
+   174→
+   175→  // Selected deal for detail/chat
+   176→  const [selectedDeal, setSelectedDeal] = useState<EscrowDeal | null>(null);
+   177→  const [messages, setMessages] = useState<EscrowMessage[]>([]);
+   178→  const [chatInput, setChatInput] = useState('');
+   179→
+   180→  // Create deal form
+   181→  const [formTitle, setFormTitle] = useState('');
+   182→  const [formDesc, setFormDesc] = useState('');
+   183→  const [formType, setFormType] = useState<EscrowDealType>('game_accounts');
+   184→  const [formAmount, setFormAmount] = useState('');
+   185→  const [formCounterparty, setFormCounterparty] = useState('');
+   186→  const [formRole, setFormRole] = useState<EscrowRole>('seller');
+   187→  const [creating, setCreating] = useState(false);
+   188→
+   189→  // Join deal
+   190→  const [joinCode, setJoinCode] = useState('');
+   191→  const [joining, setJoining] = useState(false);
+   192→
+   193→  // Dispute
+   194→  const [disputeReason, setDisputeReason] = useState('');
+   195→  const [showDisputeSheet, setShowDisputeSheet] = useState(false);
+   196→
+   197→  // Confirm delivery / fund
+   198→  const [confirming, setConfirming] = useState(false);
+   199→
+   200→  const chatEndRef = useRef<HTMLDivElement>(null);
+   201→  const commissionRate = settings?.featureFlags?.escrowCommission ?? 3;
+   202→
+   203→  // ─── Firebase listeners ──────────────────────────────────────────
+   204→
+   205→  useEffect(() => {
+   206→    if (!user) return;
+   207→    const dealsRef = ref(database, 'escrowDeals');
+   208→
+   209→    const unsubscribe = onValue(dealsRef, (snapshot) => {
+   210→      try {
+   211→        const data = snapshot.val() || {};
+   212→        const allDeals: EscrowDeal[] = Object.entries(data).map(([id, val]: [string, any]) => ({ id, ...val }));
+   213→        // Filter to only deals where the current user is buyer or seller
+   214→        const myDeals = allDeals.filter(
+   215→          (d) => d.sellerId === user.id || d.buyerId === user.id
+   216→        );
+   217→        // Sort by createdAt descending
+   218→        myDeals.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+   219→        setDeals(myDeals);
+   220→      } catch (err) {
+   221→        console.error('Error loading escrow deals:', err);
+   222→      }
+   223→      setLoading(false);
+   224→    });
+   225→
+   226→    return () => off(dealsRef);
+   227→  }, [user]);
+   228→
+   229→  // Chat messages listener
+   230→  useEffect(() => {
+   231→    if (!selectedDeal) { setMessages([]); return; }
+   232→    const msgRef = ref(database, `escrowChats/${selectedDeal.id}`);
+   233→    const unsubscribe = onValue(msgRef, (snapshot) => {
+   234→      try {
+   235→        const data = snapshot.val() || {};
+   236→        const msgs: EscrowMessage[] = Object.entries(data).map(([id, val]: [string, any]) => ({ id, ...val }));
+   237→        msgs.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+   238→        setMessages(msgs);
+   239→      } catch {
+   240→        setMessages([]);
+   241→      }
+   242→    });
+   243→    return () => off(msgRef);
+   244→  }, [selectedDeal]);
+   245→
+   246→  // Auto-scroll chat
+   247→  useEffect(() => {
+   248→    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+   249→  }, [messages]);
+   250→
+   251→  // ─── Handlers ────────────────────────────────────────────────────
+   252→
+   253→  const handleCreateDeal = useCallback(async () => {
+   254→    if (!user) return;
+   255→    if (!formTitle.trim()) { toast.error('يرجى إدخال عنوان الصفقة'); return; }
+   256→    if (!formAmount || parseFloat(formAmount) <= 0) { toast.error('يرجى إدخال مبلغ صحيح'); return; }
+   257→    if (!formCounterparty.trim()) { toast.error('يرجى إدخال معرف الطرف الآخر'); return; }
+   258→
+   259→    const amount = parseFloat(formAmount);
+   260→    const commission = (amount * commissionRate) / 100;
+   261→    const inviteCode = generateInviteCode();
+   262→
+   263→    setCreating(true);
+   264→    try {
+   265→      // Look up counterparty user
+   266→      let counterpartyId = formCounterparty.trim();
+   267→      let counterpartyName = formCounterparty.trim();
+   268→
+   269→      // Try to find by username/id in users node
+   270→      try {
+   271→        const usersRef = ref(database, 'users');
+   272→        const usersSnap = await get(usersRef);
+   273→        if (usersSnap.exists()) {
+   274→          const usersData = usersSnap.val();
+   275→          for (const [uid, udata] of Object.entries(usersData) as [string, any][]) {
+   276→            if (uid === formCounterparty.trim() || udata.name === formCounterparty.trim() || udata.phone === formCounterparty.trim()) {
+   277→              counterpartyId = uid;
+   278→              counterpartyName = udata.name || udata.firstName || uid;
+   279→              break;
+   280→            }
+   281→          }
+   282→        }
+   283→      } catch {}
+   284→
+   285→      const dealData: Omit<EscrowDeal, 'id'> = {
+   286→        title: formTitle.trim(),
+   287→        description: formDesc.trim(),
+   288→        dealType: formType,
+   289→        amount,
+   290→        currency: 'USD',
+   291→        commissionRate,
+   292→        commissionAmount: commission,
+   293→        sellerId: formRole === 'seller' ? user.id : counterpartyId,
+   294→        sellerName: formRole === 'seller' ? (user.name || user.id) : counterpartyName,
+   295→        buyerId: formRole === 'buyer' ? user.id : counterpartyId,
+   296→        buyerName: formRole === 'buyer' ? (user.name || user.id) : counterpartyName,
+   297→        status: 'pending',
+   298→        inviteCode,
+   299→        createdAt: new Date().toISOString(),
+   300→      };
+   301→
+   302→      const dealRef = push(ref(database, 'escrowDeals'));
+   303→      await set(dealRef, dealData);
+   304→
+   305→      toast.success('تم إنشاء الصفقة بنجاح');
+   306→      // Reset form
+   307→      setFormTitle(''); setFormDesc(''); setFormAmount('');
+   308→      setFormCounterparty(''); setFormRole('seller'); setFormType('game_accounts');
+   309→      setActiveView('list');
+   310→    } catch (err) {
+   311→      console.error('Create deal error:', err);
+   312→      toast.error('حدث خطأ في إنشاء الصفقة');
+   313→    } finally {
+   314→      setCreating(false);
+   315→    }
+   316→  }, [user, formTitle, formDesc, formType, formAmount, formCounterparty, formRole, commissionRate]);
+   317→
+   318→  const handleJoinDeal = useCallback(async () => {
+   319→    if (!user) return;
+   320→    if (!joinCode.trim()) { toast.error('يرجى إدخال رمز الدعوة'); return; }
+   321→
+   322→    setJoining(true);
+   323→    try {
+   324→      const dealsRef = ref(database, 'escrowDeals');
+   325→      const snapshot = await get(dealsRef);
+   326→      if (!snapshot.exists()) { toast.error('رمز الدعوة غير صالح'); setJoining(false); return; }
+   327→
+   328→      const data = snapshot.val();
+   329→      let foundDealId: string | null = null;
+   330→      let foundDeal: any = null;
+   331→
+   332→      for (const [id, deal] of Object.entries(data) as [string, any][]) {
+   333→        if (deal.inviteCode === joinCode.trim().toUpperCase()) {
+   334→          foundDealId = id;
+   335→          foundDeal = deal;
+   336→          break;
+   337→        }
+   338→      }
+   339→
+   340→      if (!foundDealId || !foundDeal) {
+   341→        toast.error('رمز الدعوة غير صالح');
+   342→        setJoining(false);
+   343→        return;
+   344→      }
+   345→
+   346→      if (foundDeal.status !== 'pending') {
+   347→        toast.error('هذه الصفقة لم تعد متاحة للقبول');
+   348→        setJoining(false);
+   349→        return;
+   350→      }
+   351→
+   352→      // Check if user is the counterparty
+   353→      const isSeller = foundDeal.sellerId === user.id;
+   354→      const isBuyer = foundDeal.buyerId === user.id;
+   355→
+   356→      if (!isSeller && !isBuyer) {
+   357→        toast.error('أنت لست الطرف المحدد في هذه الصفقة');
+   358→        setJoining(false);
+   359→        return;
+   360→      }
+   361→
+   362→      // Accept the deal
+   363→      await update(ref(database, `escrowDeals/${foundDealId}`), {
+   364→        status: 'accepted',
+   365→        acceptedAt: new Date().toISOString(),
+   366→      });
+   367→
+   368→      toast.success('تم قبول الصفقة بنجاح');
+   369→      setJoinCode('');
+   370→      setActiveView('list');
+   371→    } catch (err) {
+   372→      console.error('Join deal error:', err);
+   373→      toast.error('حدث خطأ');
+   374→    } finally {
+   375→      setJoining(false);
+   376→    }
+   377→  }, [user, joinCode]);
+   378→
+   379→  const handleFundDeal = useCallback(async () => {
+   380→    if (!user || !selectedDeal) return;
+   381→    const amount = selectedDeal.amount;
+   382→    const userBalance = user.balances?.USD || 0;
+   383→
+   384→    if (userBalance < amount) {
+   385→      toast.error('رصيدك غير كافي لتمويل هذه الصفقة');
+   386→      return;
+   387→    }
+   388→
+   389→    setConfirming(true);
+   390→    try {
+   391→      // Deduct from buyer balance
+   392→      const buyerRef = ref(database, `users/${user.id}`);
+   393→      const buyerSnap = await get(buyerRef);
+   394→      if (buyerSnap.exists()) {
+   395→        const buyerData = buyerSnap.val();
+   396→        const currentBalance = buyerData.balanceUSD || 0;
+   397→        if (currentBalance < amount) {
+   398→          toast.error('رصيدك غير كافي');
+   399→          setConfirming(false);
+   400→          return;
+   401→        }
+   402→        await update(buyerRef, { balanceUSD: currentBalance - amount });
+   403→      }
+   404→
+   405→      // Update deal status
+   406→      await update(ref(database, `escrowDeals/${selectedDeal.id}`), {
+   407→        status: 'funded',
+   408→        fundedAt: new Date().toISOString(),
+   409→      });
+   410→
+   411→      // Add transaction record
+   412→      const txRef = push(ref(database, `transactions/${user.id}`));
+   413→      await set(txRef, {
+   414→        type: 'escrow',
+   415→        amount,
+   416→        currency: 'USD',
+   417→        status: 'pending',
+   418→        description: `إيداع في صفقة وسيط: ${selectedDeal.title}`,
+   419→        createdAt: new Date().toISOString(),
+   420→      });
+   421→
+   422→      toast.success('تم تمويل الصفقة بنجاح - المبلغ محجوز في الضمان');
+   423→      setSelectedDeal({ ...selectedDeal, status: 'funded', fundedAt: new Date().toISOString() });
+   424→    } catch (err) {
+   425→      console.error('Fund deal error:', err);
+   426→      toast.error('حدث خطأ في تمويل الصفقة');
+   427→    } finally {
+   428→      setConfirming(false);
+   429→    }
+   430→  }, [user, selectedDeal]);
+   431→
+   432→  const handleConfirmDelivery = useCallback(async () => {
+   433→    if (!user || !selectedDeal) return;
+   434→
+   435→    setConfirming(true);
+   436→    try {
+   437→      await update(ref(database, `escrowDeals/${selectedDeal.id}`), {
+   438→        status: 'delivered',
+   439→        deliveredAt: new Date().toISOString(),
+   440→      });
+   441→
+   442→      toast.success('تم تأكيد التسليم');
+   443→      setSelectedDeal({ ...selectedDeal, status: 'delivered', deliveredAt: new Date().toISOString() });
+   444→    } catch (err) {
+   445→      console.error('Confirm delivery error:', err);
+   446→      toast.error('حدث خطأ');
+   447→    } finally {
+   448→      setConfirming(false);
+   449→    }
+   450→  }, [user, selectedDeal]);
+   451→
+   452→  const handleConfirmReceipt = useCallback(async () => {
+   453→    if (!user || !selectedDeal) return;
+   454→
+   455→    setConfirming(true);
+   456→    try {
+   457→      // Release funds to seller (minus commission)
+   458→      const netAmount = selectedDeal.amount - selectedDeal.commissionAmount;
+   459→
+   460→      // Credit seller
+   461→      const sellerRef = ref(database, `users/${selectedDeal.sellerId}`);
+   462→      const sellerSnap = await get(sellerRef);
+   463→      if (sellerSnap.exists()) {
+   464→        const sellerData = sellerSnap.val();
+   465→        const currentBalance = sellerData.balanceUSD || 0;
+   466→        await update(sellerRef, { balanceUSD: currentBalance + netAmount });
+   467→      }
+   468→
+   469→      // Credit commission to app revenue
+   470→      try {
+   471→        const revenueRef = ref(database, 'appRevenue/escrow');
+   472→        const revenueSnap = await get(revenueRef);
+   473→        const currentRevenue = revenueSnap.exists() ? revenueSnap.val() : 0;
+   474→        await set(revenueRef, currentRevenue + selectedDeal.commissionAmount);
+   475→      } catch {}
+   476→
+   477→      // Add transaction for seller
+   478→      const sellerTxRef = push(ref(database, `transactions/${selectedDeal.sellerId}`));
+   479→      await set(sellerTxRef, {
+   480→        type: 'escrow',
+   481→        amount: netAmount,
+   482→        currency: 'USD',
+   483→        status: 'completed',
+   484→        description: `استلام من صفقة وسيط: ${selectedDeal.title} (بعد خصم عمولة ${selectedDeal.commissionAmount}$)`,
+   485→        createdAt: new Date().toISOString(),
+   486→      });
+   487→
+   488→      // Update deal
+   489→      await update(ref(database, `escrowDeals/${selectedDeal.id}`), {
+   490→        status: 'completed',
+   491→        completedAt: new Date().toISOString(),
+   492→      });
+   493→
+   494→      // Add transaction for buyer (mark as completed)
+   495→      const buyerTxRef = push(ref(database, `transactions/${selectedDeal.buyerId}`));
+   496→      await set(buyerTxRef, {
+   497→        type: 'escrow',
+   498→        amount: selectedDeal.amount,
+   499→        currency: 'USD',
+   500→        status: 'completed',
+   501→        description: `صفقة وسيط مكتملة: ${selectedDeal.title}`,
+   502→        createdAt: new Date().toISOString(),
+   503→      });
+   504→
+   505→      toast.success('تم إتمام الصفقة بنجاح وتحرير المبلغ للبائع');
+   506→      setSelectedDeal({ ...selectedDeal, status: 'completed', completedAt: new Date().toISOString() });
+   507→    } catch (err) {
+   508→      console.error('Confirm receipt error:', err);
+   509→      toast.error('حدث خطأ في إتمام الصفقة');
+   510→    } finally {
+   511→      setConfirming(false);
+   512→    }
+   513→  }, [user, selectedDeal]);
+   514→
+   515→  const handleOpenDispute = useCallback(async () => {
+   516→    if (!user || !selectedDeal) return;
+   517→    if (!disputeReason.trim()) { toast.error('يرجى إدخال سبب النزاع'); return; }
+   518→
+   519→    setConfirming(true);
+   520→    try {
+   521→      await update(ref(database, `escrowDeals/${selectedDeal.id}`), {
+   522→        status: 'disputed',
+   523→        disputedAt: new Date().toISOString(),
+   524→        disputeReason: disputeReason.trim(),
+   525→        disputeBy: user.id,
+   526→      });
+   527→
+   528→      toast.success('تم فتح نزاع - سيقوم المشرف بالمراجعة');
+   529→      setSelectedDeal({ ...selectedDeal, status: 'disputed', disputedAt: new Date().toISOString(), disputeReason: disputeReason.trim(), disputeBy: user.id });
+   530→      setShowDisputeSheet(false);
+   531→      setDisputeReason('');
+   532→    } catch (err) {
+   533→      console.error('Open dispute error:', err);
+   534→      toast.error('حدث خطأ');
+   535→    } finally {
+   536→      setConfirming(false);
+   537→    }
+   538→  }, [user, selectedDeal, disputeReason]);
+   539→
+   540→  const handleSendMessage = useCallback(async () => {
+   541→    if (!user || !selectedDeal || !chatInput.trim()) return;
+   542→
+   543→    try {
+   544→      const msgRef = push(ref(database, `escrowChats/${selectedDeal.id}`));
+   545→      await set(msgRef, {
+   546→        senderId: user.id,
+   547→        senderName: user.name || user.id,
+   548→        text: chatInput.trim(),
+   549→        createdAt: new Date().toISOString(),
+   550→      });
+   551→      setChatInput('');
+   552→    } catch (err) {
+   553→      console.error('Send message error:', err);
+   554→      toast.error('حدث خطأ في إرسال الرسالة');
+   555→    }
+   556→  }, [user, selectedDeal, chatInput]);
+   557→
+   558→  const handleCopyCode = useCallback((code: string) => {
+   559→    navigator.clipboard.writeText(code).then(() => {
+   560→      toast.success('تم نسخ رمز الدعوة');
+   561→    }).catch(() => {
+   562→      toast.error('فشل النسخ');
+   563→    });
+   564→  }, []);
+   565→
+   566→  // ─── Filtered Deals ──────────────────────────────────────────────
+   567→
+   568→  const filteredDeals = deals.filter((d) => {
+   569→    if (filterStatus === 'all') return true;
+   570→    return d.status === filterStatus;
+   571→  });
+   572→
+   573→  const activeDealsCount = deals.filter((d) => ['pending', 'accepted', 'funded', 'delivered'].includes(d.status)).length;
+   574→  const completedDealsCount = deals.filter((d) => d.status === 'completed').length;
+   575→  const disputedDealsCount = deals.filter((d) => d.status === 'disputed').length;
+   576→
+   577→  // ─── My role in selected deal ────────────────────────────────────
+   578→
+   579→  const myRole = selectedDeal
+   580→    ? selectedDeal.sellerId === user?.id ? 'seller' : 'buyer'
+   581→    : null;
+   582→
+   583→  // ─── Render ──────────────────────────────────────────────────────
+   584→
+   585→  if (!user) return null;
+   586→
+   587→  return (
+   588→    <div className="min-h-screen bg-background">
+   589→      {/* ─── Header ─── */}
+   590→      <div className="bg-navy-gradient px-4 pt-6 pb-6">
+   591→        <div className="flex items-center gap-3 mb-4">
+   592→          <button onClick={navigateBack} className="p-2 glass rounded-xl">
+   593→            <ArrowRight className="h-5 w-5 text-white" />
+   594→          </button>
+   595→          <div className="flex items-center gap-2">
+   596→            <Shield className="h-6 w-6 text-green-400" />
+   597→            <h1 className="text-white text-lg font-bold">الوسيط</h1>
+   598→          </div>
+   599→        </div>
+   600→
+   601→        {/* Stats Row */}
+   602→        <div className="grid grid-cols-3 gap-3">
+   603→          <div className="glass-dark rounded-xl p-3 text-center">
+   604→            <p className="text-white text-lg font-bold">{activeDealsCount}</p>
+   605→            <p className="text-white/50 text-[10px]">صفقات نشطة</p>
+   606→          </div>
+   607→          <div className="glass-dark rounded-xl p-3 text-center">
+   608→            <p className="text-green-400 text-lg font-bold">{completedDealsCount}</p>
+   609→            <p className="text-white/50 text-[10px]">مكتملة</p>
+   610→          </div>
+   611→          <div className="glass-dark rounded-xl p-3 text-center">
+   612→            <p className="text-red-400 text-lg font-bold">{disputedDealsCount}</p>
+   613→            <p className="text-white/50 text-[10px]">نزاعات</p>
+   614→          </div>
+   615→        </div>
+   616→      </div>
+   617→
+   618→      {/* ─── Main Content ─── */}
+   619→      <AnimatePresence mode="wait">
+   620→        {/* ─── LIST VIEW ─── */}
+   621→        {activeView === 'list' && (
+   622→          <motion.div
+   623→            key="list"
+   624→            initial={{ opacity: 0, x: -20 }}
+   625→            animate={{ opacity: 1, x: 0 }}
+   626→            exit={{ opacity: 0, x: 20 }}
+   627→            className="px-4 mt-4 pb-24"
+   628→          >
+   629→            {/* Action Buttons */}
+   630→            <div className="flex gap-3 mb-4">
+   631→              <button
+   632→                onClick={() => setActiveView('create')}
+   633→                className="flex-1 py-3 bg-[#8B1E3A] text-white rounded-xl text-sm font-bold flex items-center justify-center gap-2 card-press"
+   634→              >
+   635→                <Plus className="w-4 h-4" />
+   636→                صفقة جديدة
+   637→              </button>
+   638→              <button
+   639→                onClick={() => setActiveView('join')}
+   640→                className="flex-1 py-3 bg-green-600 text-white rounded-xl text-sm font-bold flex items-center justify-center gap-2 card-press"
+   641→              >
+   642→                <Hash className="w-4 h-4" />
+   643→                انضمام برمز
+   644→              </button>
+   645→            </div>
+   646→
+   647→            {/* Commission Info */}
+   648→            <div className="glass-card rounded-xl p-3 mb-4 flex items-center gap-3">
+   649→              <div className="w-9 h-9 rounded-lg bg-[#8B1E3A]/10 flex items-center justify-center flex-shrink-0">
+   650→                <Info className="w-5 h-5 text-[#8B1E3A]" />
+   651→              </div>
+   652→              <div>
+   653→                <p className="text-xs font-medium">عمولة الوسيط: {commissionRate}%</p>
+   654→                <p className="text-[10px] text-muted-foreground">تُخصم من المبلغ عند إتمام الصفقة</p>
+   655→              </div>
+   656→            </div>
+   657→
+   658→            {/* Filter Tabs */}
+   659→            <div className="flex gap-2 mb-4 overflow-x-auto scrollbar-none">
+   660→              {[
+   661→                { key: 'all' as const, label: 'الكل' },
+   662→                { key: 'pending' as const, label: 'قيد الانتظار' },
+   663→                { key: 'funded' as const, label: 'ممولة' },
+   664→                { key: 'completed' as const, label: 'مكتملة' },
+   665→                { key: 'disputed' as const, label: 'نزاعات' },
+   666→              ].map((f) => (
+   667→                <button
+   668→                  key={f.key}
+   669→                  onClick={() => setFilterStatus(f.key)}
+   670→                  className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-all ${
+   671→                    filterStatus === f.key
+   672→                      ? 'bg-[#8B1E3A] text-white'
+   673→                      : 'bg-muted text-muted-foreground'
+   674→                  }`}
+   675→                >
+   676→                  {f.label}
+   677→                </button>
+   678→              ))}
+   679→            </div>
+   680→
+   681→            {/* Deals List */}
+   682→            {loading ? (
+   683→              <div className="flex items-center justify-center py-12">
+   684→                <RefreshCw className="w-6 h-6 text-muted-foreground animate-spin" />
+   685→              </div>
+   686→            ) : filteredDeals.length === 0 ? (
+   687→              <div className="glass-card rounded-2xl p-8 text-center">
+   688→                <Shield className="h-14 w-14 text-muted-foreground mx-auto mb-3" />
+   689→                <p className="text-muted-foreground text-sm mb-1">لا توجد صفقات</p>
+   690→                <p className="text-muted-foreground text-xs">أنشئ صفقة جديدة أو انضم بواسطة رمز الدعوة</p>
+   691→              </div>
+   692→            ) : (
+   693→              <div className="space-y-3">
+   694→                {filteredDeals.map((deal, idx) => {
+   695→                  const dealTypeConfig = DEAL_TYPE_OPTIONS.find((d) => d.value === deal.dealType) || DEAL_TYPE_OPTIONS[3];
+   696→                  const TypeIcon = dealTypeConfig.icon;
+   697→                  const isSeller = deal.sellerId === user.id;
+   698→
+   699→                  return (
+   700→                    <motion.button
+   701→                      key={deal.id}
+   702→                      initial={{ opacity: 0, y: 10 }}
+   703→                      animate={{ opacity: 1, y: 0 }}
+   704→                      transition={{ delay: idx * 0.05 }}
+   705→                      onClick={() => { setSelectedDeal(deal); setActiveView('detail'); }}
+   706→                      className="w-full glass-card rounded-2xl p-4 text-right card-press"
+   707→                    >
+   708→                      <div className="flex items-start gap-3">
+   709→                        <div className={`w-11 h-11 rounded-xl ${dealTypeConfig.color === 'text-purple-500' ? 'bg-purple-500/10' : dealTypeConfig.color === 'text-amber-500' ? 'bg-amber-500/10' : dealTypeConfig.color === 'text-blue-500' ? 'bg-blue-500/10' : 'bg-gray-500/10'} flex items-center justify-center flex-shrink-0`}>
+   710→                          <TypeIcon className={`w-5 h-5 ${dealTypeConfig.color}`} />
+   711→                        </div>
+   712→                        <div className="flex-1 min-w-0">
+   713→                          <div className="flex items-center justify-between mb-1">
+   714→                            <h4 className="font-bold text-sm truncate">{deal.title}</h4>
+   715→                            <StatusBadge status={deal.status} />
+   716→                          </div>
+   717→                          <p className="text-xs text-muted-foreground mb-2 truncate">{deal.description || dealTypeConfig.label}</p>
+   718→                          <div className="flex items-center justify-between">
+   719→                            <span className="text-sm font-bold text-[#8B1E3A]">{deal.amount}$</span>
+   720→                            <span className="text-[10px] text-muted-foreground">
+   721→                              {isSeller ? 'بائع' : 'مشتري'} • {timeAgo(deal.createdAt)}
+   722→                            </span>
+   723→                          </div>
+   724→                        </div>
+   725→                      </div>
+   726→                    </motion.button>
+   727→                  );
+   728→                })}
+   729→              </div>
+   730→            )}
+   731→          </motion.div>
+   732→        )}
+   733→
+   734→        {/* ─── CREATE DEAL VIEW ─── */}
+   735→        {activeView === 'create' && (
+   736→          <motion.div
+   737→            key="create"
+   738→            initial={{ opacity: 0, x: 20 }}
+   739→            animate={{ opacity: 1, x: 0 }}
+   740→            exit={{ opacity: 0, x: -20 }}
+   741→            className="px-4 mt-4 pb-24"
+   742→          >
+   743→            <div className="flex items-center gap-2 mb-4">
+   744→              <button onClick={() => setActiveView('list')} className="p-2 glass rounded-xl">
+   745→                <ArrowRight className="h-4 w-4" />
+   746→              </button>
+   747→              <h2 className="text-base font-bold">إنشاء صفقة جديدة</h2>
+   748→            </div>
+   749→
+   750→            <div className="glass-card rounded-2xl p-5 space-y-5">
+   751→              {/* Deal Type */}
+   752→              <div>
+   753→                <label className="text-sm text-muted-foreground mb-2 block">نوع الصفقة</label>
+   754→                <div className="grid grid-cols-2 gap-2">
+   755→                  {DEAL_TYPE_OPTIONS.map((opt) => (
+   756→                    <button
+   757→                      key={opt.value}
+   758→                      onClick={() => setFormType(opt.value)}
+   759→                      className={`p-3 rounded-xl text-xs font-medium flex items-center gap-2 transition-all ${
+   760→                        formType === opt.value
+   761→                          ? 'bg-[#8B1E3A] text-white'
+   762→                          : 'bg-muted text-muted-foreground'
+   763→                      }`}
+   764→                    >
+   765→                      <opt.icon className="w-4 h-4" />
+   766→                      {opt.label}
+   767→                    </button>
+   768→                  ))}
+   769→                </div>
+   770→              </div>
+   771→
+   772→              {/* Role */}
+   773→              <div>
+   774→                <label className="text-sm text-muted-foreground mb-2 block">دورك في الصفقة</label>
+   775→                <div className="flex gap-2">
+   776→                  <button
+   777→                    onClick={() => setFormRole('seller')}
+   778→                    className={`flex-1 py-3 rounded-xl text-sm font-medium flex items-center justify-center gap-2 transition-all ${
+   779→                      formRole === 'seller'
+   780→                        ? 'bg-[#8B1E3A] text-white'
+   781→                        : 'bg-muted text-muted-foreground'
+   782→                    }`}
+   783→                  >
+   784→                    <Unlock className="w-4 h-4" />
+   785→                    بائع
+   786→                  </button>
+   787→                  <button
+   788→                    onClick={() => setFormRole('buyer')}
+   789→                    className={`flex-1 py-3 rounded-xl text-sm font-medium flex items-center justify-center gap-2 transition-all ${
+   790→                      formRole === 'buyer'
+   791→                        ? 'bg-green-600 text-white'
+   792→                        : 'bg-muted text-muted-foreground'
+   793→                    }`}
+   794→                  >
+   795→                    <Lock className="w-4 h-4" />
+   796→                    مشتري
+   797→                  </button>
+   798→                </div>
+   799→              </div>
+   800→
+   801→              {/* Title */}
+   802→              <div>
+   803→                <label className="text-sm text-muted-foreground mb-2 block">عنوان الصفقة</label>
+   804→                <input
+   805→                  type="text"
+   806→                  placeholder="مثال: بيع حساب PUBG"
+   807→                  value={formTitle}
+   808→                  onChange={(e) => setFormTitle(e.target.value)}
+   809→                  className="w-full px-4 py-3 bg-muted rounded-xl text-sm border-none focus:ring-2 focus:ring-[#8B1E3A]/30"
+   810→                />
+   811→              </div>
+   812→
+   813→              {/* Description */}
+   814→              <div>
+   815→                <label className="text-sm text-muted-foreground mb-2 block">وصف الصفقة</label>
+   816→                <textarea
+   817→                  placeholder="تفاصيل الصفقة، ما يتم بيعه، شروط التسليم..."
+   818→                  value={formDesc}
+   819→                  onChange={(e) => setFormDesc(e.target.value)}
+   820→                  rows={3}
+   821→                  className="w-full px-4 py-3 bg-muted rounded-xl text-sm border-none focus:ring-2 focus:ring-[#8B1E3A]/30 resize-none"
+   822→                />
+   823→              </div>
+   824→
+   825→              {/* Amount */}
+   826→              <div>
+   827→                <label className="text-sm text-muted-foreground mb-2 block">المبلغ (دولار أمريكي)</label>
+   828→                <div className="relative">
+   829→                  <input
+   830→                    type="number"
+   831→                    placeholder="0"
+   832→                    value={formAmount}
+   833→                    onChange={(e) => setFormAmount(e.target.value)}
+   834→                    className="w-full px-4 py-3 bg-muted rounded-xl text-lg font-bold border-none focus:ring-2 focus:ring-[#8B1E3A]/30"
+   835→                    dir="ltr"
+   836→                  />
+   837→                  <span className="absolute left-4 top-3.5 text-muted-foreground text-sm">$</span>
+   838→                </div>
+   839→                {formAmount && parseFloat(formAmount) > 0 && (
+   840→                  <div className="mt-2 bg-[#8B1E3A]/5 rounded-xl p-3">
+   841→                    <div className="flex justify-between text-xs">
+   842→                      <span className="text-muted-foreground">عمولة الوسيط ({commissionRate}%)</span>
+   843→                      <span className="font-medium">{((parseFloat(formAmount) * commissionRate) / 100).toFixed(2)}$</span>
+   844→                    </div>
+   845→                    <div className="flex justify-between text-xs mt-1">
+   846→                      <span className="text-muted-foreground">سيستلم البائع</span>
+   847→                      <span className="font-bold text-green-600">{(parseFloat(formAmount) - (parseFloat(formAmount) * commissionRate) / 100).toFixed(2)}$</span>
+   848→                    </div>
+   849→                  </div>
+   850→                )}
+   851→              </div>
+   852→
+   853→              {/* Counterparty */}
+   854→              <div>
+   855→                <label className="text-sm text-muted-foreground mb-2 block">معرف الطرف الآخر (اسم المستخدم أو ID)</label>
+   856→                <input
+   857→                  type="text"
+   858→                  placeholder="أدخل معرف أو اسم المستخدم"
+   859→                  value={formCounterparty}
+   860→                  onChange={(e) => setFormCounterparty(e.target.value)}
+   861→                  className="w-full px-4 py-3 bg-muted rounded-xl text-sm border-none focus:ring-2 focus:ring-[#8B1E3A]/30"
+   862→                />
+   863→              </div>
+   864→
+   865→              {/* Submit */}
+   866→              <button
+   867→                onClick={handleCreateDeal}
+   868→                disabled={creating}
+   869→                className="w-full py-3.5 bg-[#8B1E3A] text-white rounded-xl text-sm font-bold disabled:opacity-50 card-press"
+   870→              >
+   871→                {creating ? 'جاري الإنشاء...' : 'إنشاء الصفقة'}
+   872→              </button>
+   873→            </div>
+   874→          </motion.div>
+   875→        )}
+   876→
+   877→        {/* ─── JOIN DEAL VIEW ─── */}
+   878→        {activeView === 'join' && (
+   879→          <motion.div
+   880→            key="join"
+   881→            initial={{ opacity: 0, x: 20 }}
+   882→            animate={{ opacity: 1, x: 0 }}
+   883→            exit={{ opacity: 0, x: -20 }}
+   884→            className="px-4 mt-4 pb-24"
+   885→          >
+   886→            <div className="flex items-center gap-2 mb-4">
+   887→              <button onClick={() => setActiveView('list')} className="p-2 glass rounded-xl">
+   888→                <ArrowRight className="h-4 w-4" />
+   889→              </button>
+   890→              <h2 className="text-base font-bold">الانضمام لصفقة</h2>
+   891→            </div>
+   892→
+   893→            <div className="glass-card rounded-2xl p-5">
+   894→              <div className="text-center mb-6">
+   895→                <div className="w-16 h-16 rounded-2xl bg-green-500/10 flex items-center justify-center mx-auto mb-3">
+   896→                  <Hash className="w-8 h-8 text-green-500" />
+   897→                </div>
+   898→                <h3 className="font-bold mb-1">أدخل رمز الدعوة</h3>
+   899→                <p className="text-xs text-muted-foreground">أدخل الرمز الذي أرسله لك الطرف الآخر لقبول الصفقة</p>
+   900→              </div>
+   901→
+   902→              <input
+   903→                type="text"
+   904→                placeholder="ESC-XXXXXXXX"
+   905→                value={joinCode}
+   906→                onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+   907→                className="w-full px-4 py-3 bg-muted rounded-xl text-center text-lg font-bold tracking-wider border-none focus:ring-2 focus:ring-green-500/30"
+   908→                dir="ltr"
+   909→                maxLength={12}
+   910→              />
+   911→
+   912→              <button
+   913→                onClick={handleJoinDeal}
+   914→                disabled={joining}
+   915→                className="w-full mt-4 py-3.5 bg-green-600 text-white rounded-xl text-sm font-bold disabled:opacity-50 card-press"
+   916→              >
+   917→                {joining ? 'جاري البحث...' : 'قبول الصفقة'}
+   918→              </button>
+   919→            </div>
+   920→          </motion.div>
+   921→        )}
+   922→
+   923→        {/* ─── DEAL DETAIL VIEW ─── */}
+   924→        {activeView === 'detail' && selectedDeal && (
+   925→          <motion.div
+   926→            key="detail"
+   927→            initial={{ opacity: 0, x: 20 }}
+   928→            animate={{ opacity: 1, x: 0 }}
+   929→            exit={{ opacity: 0, x: -20 }}
+   930→            className="pb-24"
+   931→          >
+   932→            {/* Deal Header */}
+   933→            <div className="bg-navy-gradient px-4 pt-4 pb-6">
+   934→              <div className="flex items-center gap-3 mb-4">
+   935→                <button onClick={() => { setSelectedDeal(null); setActiveView('list'); }} className="p-2 glass rounded-xl">
+   936→                  <ArrowRight className="h-4 w-4 text-white" />
+   937→                </button>
+   938→                <div className="flex-1 min-w-0">
+   939→                  <h2 className="text-white text-sm font-bold truncate">{selectedDeal.title}</h2>
+   940→                  <p className="text-white/50 text-[10px]">
+   941→                    {myRole === 'seller' ? 'أنت البائع' : 'أنت المشتري'} • {DEAL_TYPE_OPTIONS.find((d) => d.value === selectedDeal.dealType)?.label}
+   942→                  </p>
+   943→                </div>
+   944→                <StatusBadge status={selectedDeal.status} />
+   945→              </div>
+   946→
+   947→              {/* Steps */}
+   948→              <div className="glass-dark rounded-xl p-3">
+   949→                <StepIndicator currentStatus={selectedDeal.status} />
+   950→              </div>
+   951→            </div>
+   952→
+   953→            <div className="px-4 mt-4 space-y-4">
+   954→              {/* Deal Info Card */}
+   955→              <div className="glass-card rounded-2xl p-4 space-y-3">
+   956→                <div className="flex items-center justify-between">
+   957→                  <span className="text-xs text-muted-foreground">المبلغ</span>
+   958→                  <span className="text-lg font-bold text-[#8B1E3A]">{selectedDeal.amount}$</span>
+   959→                </div>
+   960→                <div className="flex items-center justify-between">
+   961→                  <span className="text-xs text-muted-foreground">عمولة الوسيط ({selectedDeal.commissionRate}%)</span>
+   962→                  <span className="text-sm font-medium text-amber-500">{selectedDeal.commissionAmount.toFixed(2)}$</span>
+   963→                </div>
+   964→                <div className="border-t pt-2 flex items-center justify-between">
+   965→                  <span className="text-xs text-muted-foreground">سيستلم البائع</span>
+   966→                  <span className="text-sm font-bold text-green-600">{(selectedDeal.amount - selectedDeal.commissionAmount).toFixed(2)}$</span>
+   967→                </div>
+   968→                {selectedDeal.description && (
+   969→                  <div className="border-t pt-2">
+   970→                    <p className="text-xs text-muted-foreground mb-1">الوصف</p>
+   971→                    <p className="text-xs">{selectedDeal.description}</p>
+   972→                  </div>
+   973→                )}
+   974→              </div>
+   975→
+   976→              {/* Parties Card */}
+   977→              <div className="glass-card rounded-2xl p-4 space-y-3">
+   978→                <h4 className="text-xs font-bold text-muted-foreground">أطراف الصفقة</h4>
+   979→                <div className="flex items-center gap-3">
+   980→                  <div className="w-9 h-9 rounded-lg bg-[#8B1E3A]/10 flex items-center justify-center">
+   981→                    <Unlock className="w-4 h-4 text-[#8B1E3A]" />
+   982→                  </div>
+   983→                  <div className="flex-1">
+   984→                    <p className="text-xs text-muted-foreground">البائع</p>
+   985→                    <p className="text-sm font-medium">{selectedDeal.sellerName} {selectedDeal.sellerId === user.id && <span className="text-[10px] text-[#8B1E3A]">(أنت)</span>}</p>
+   986→                  </div>
+   987→                </div>
+   988→                <div className="flex items-center gap-3">
+   989→                  <div className="w-9 h-9 rounded-lg bg-green-500/10 flex items-center justify-center">
+   990→                    <Lock className="w-4 h-4 text-green-500" />
+   991→                  </div>
+   992→                  <div className="flex-1">
+   993→                    <p className="text-xs text-muted-foreground">المشتري</p>
+   994→                    <p className="text-sm font-medium">{selectedDeal.buyerName} {selectedDeal.buyerId === user.id && <span className="text-[10px] text-green-600">(أنت)</span>}</p>
+   995→                  </div>
+   996→                </div>
+   997→              </div>
+   998→
+   999→              {/* Invite Code Card (for pending deals) */}
+  1000→              {selectedDeal.status === 'pending' && myRole === 'seller' && (
+  1001→                <div className="glass-card rounded-2xl p-4">
+  1002→                  <h4 className="text-xs font-bold text-muted-foreground mb-2">رمز الدعوة</h4>
+  1003→                  <p className="text-xs text-muted-foreground mb-3">أرسل هذا الرمز للمشتري لقبول الصفقة</p>
+  1004→                  <div className="flex items-center gap-2">
+  1005→                    <div className="flex-1 py-3 bg-muted rounded-xl text-center font-mono text-lg font-bold tracking-wider" dir="ltr">
+  1006→                      {selectedDeal.inviteCode}
+  1007→                    </div>
+  1008→                    <button
+  1009→                      onClick={() => handleCopyCode(selectedDeal.inviteCode)}
+  1010→                      className="p-3 bg-[#8B1E3A] text-white rounded-xl card-press"
+  1011→                    >
+  1012→                      <Copy className="w-5 h-5" />
+  1013→                    </button>
+  1014→                  </div>
+  1015→                </div>
+  1016→              )}
+  1017→
+  1018→              {/* Dispute Info Card */}
+  1019→              {selectedDeal.status === 'disputed' && selectedDeal.disputeReason && (
+  1020→                <div className="glass-card rounded-2xl p-4 border border-red-500/20">
+  1021→                  <div className="flex items-center gap-2 mb-2">
+  1022→                    <AlertTriangle className="w-4 h-4 text-red-500" />
+  1023→                    <h4 className="text-xs font-bold text-red-500">تفاصيل النزاع</h4>
+  1024→                  </div>
+  1025→                  <p className="text-sm">{selectedDeal.disputeReason}</p>
+  1026→                  <p className="text-[10px] text-muted-foreground mt-2">تم فتح النزاع {selectedDeal.disputedAt ? timeAgo(selectedDeal.disputedAt) : ''} - بانتظار قرار المشرف</p>
+  1027→                </div>
+  1028→              )}
+  1029→
+  1030→              {/* Admin Resolution Card */}
+  1031→              {selectedDeal.status === 'completed' && selectedDeal.adminResolution && (
+  1032→                <div className="glass-card rounded-2xl p-4 border border-green-500/20">
+  1033→                  <div className="flex items-center gap-2 mb-2">
+  1034→                    <Shield className="w-4 h-4 text-green-500" />
+  1035→                    <h4 className="text-xs font-bold text-green-500">قرار المشرف</h4>
+  1036→                  </div>
+  1037→                  <p className="text-sm">
+  1038→                    تم تحرير الأموال إلى {selectedDeal.adminResolution === 'seller' ? 'البائع' : 'المشتري'}
+  1039→                  </p>
+  1040→                </div>
+  1041→              )}
+  1042→
+  1043→              {/* Timeline Card */}
+  1044→              <div className="glass-card rounded-2xl p-4">
+  1045→                <h4 className="text-xs font-bold text-muted-foreground mb-3">الجدول الزمني</h4>
+  1046→                <div className="space-y-2">
+  1047→                  {[
+  1048→                    { label: 'إنشاء الصفقة', date: selectedDeal.createdAt, icon: FileText },
+  1049→                    selectedDeal.acceptedAt ? { label: 'قبول الصفقة', date: selectedDeal.acceptedAt, icon: UserCheck } : null,
+  1050→                    selectedDeal.fundedAt ? { label: 'تمويل الصفقة', date: selectedDeal.fundedAt, icon: DollarSign } : null,
+  1051→                    selectedDeal.deliveredAt ? { label: 'تأكيد التسليم', date: selectedDeal.deliveredAt, icon: Handshake } : null,
+  1052→                    selectedDeal.completedAt ? { label: 'إتمام الصفقة', date: selectedDeal.completedAt, icon: CheckCircle } : null,
+  1053→                    selectedDeal.disputedAt ? { label: 'فتح نزاع', date: selectedDeal.disputedAt, icon: AlertTriangle } : null,
+  1054→                  ].filter(Boolean).map((item: any, idx: number) => (
+  1055→                    <div key={idx} className="flex items-center gap-3">
+  1056→                      <div className="w-7 h-7 rounded-lg bg-green-500/10 flex items-center justify-center flex-shrink-0">
+  1057→                        <item.icon className="w-3.5 h-3.5 text-green-500" />
+  1058→                      </div>
+  1059→                      <div className="flex-1">
+  1060→                        <p className="text-xs font-medium">{item.label}</p>
+  1061→                        <p className="text-[10px] text-muted-foreground">{timeAgo(item.date)}</p>
+  1062→                      </div>
+  1063→                    </div>
+  1064→                  ))}
+  1065→                </div>
+  1066→              </div>
+  1067→
+  1068→              {/* Action Buttons */}
+  1069→              <div className="space-y-3">
+  1070→                {/* Buyer: Fund the deal (when accepted) */}
+  1071→                {myRole === 'buyer' && selectedDeal.status === 'accepted' && (
+  1072→                  <button
+  1073→                    onClick={handleFundDeal}
+  1074→                    disabled={confirming}
+  1075→                    className="w-full py-3.5 bg-green-600 text-white rounded-xl text-sm font-bold disabled:opacity-50 card-press flex items-center justify-center gap-2"
+  1076→                  >
+  1077→                    <Lock className="w-4 h-4" />
+  1078→                    {confirming ? 'جاري التمويل...' : `تمويل الصفقة (${selectedDeal.amount}$)`}
+  1079→                  </button>
+  1080→                )}
+  1081→
+  1082→                {/* Seller: Mark as delivered (when funded) */}
+  1083→                {myRole === 'seller' && selectedDeal.status === 'funded' && (
+  1084→                  <button
+  1085→                    onClick={handleConfirmDelivery}
+  1086→                    disabled={confirming}
+  1087→                    className="w-full py-3.5 bg-blue-600 text-white rounded-xl text-sm font-bold disabled:opacity-50 card-press flex items-center justify-center gap-2"
+  1088→                  >
+  1089→                    <Handshake className="w-4 h-4" />
+  1090→                    {confirming ? 'جاري التأكيد...' : 'تأكيد التسليم'}
+  1091→                  </button>
+  1092→                )}
+  1093→
+  1094→                {/* Buyer: Confirm receipt (when delivered) */}
+  1095→                {myRole === 'buyer' && selectedDeal.status === 'delivered' && (
+  1096→                  <button
+  1097→                    onClick={handleConfirmReceipt}
+  1098→                    disabled={confirming}
+  1099→                    className="w-full py-3.5 bg-green-600 text-white rounded-xl text-sm font-bold disabled:opacity-50 card-press flex items-center justify-center gap-2"
+  1100→                  >
+  1101→                    <CheckCircle className="w-4 h-4" />
+  1102→                    {confirming ? 'جاري الإتمام...' : 'تأكيد الاستلام وتحرير المبلغ'}
+  1103→                  </button>
+  1104→                )}
+  1105→
+  1106→                {/* Dispute button (for funded or delivered deals) */}
+  1107→                {['funded', 'delivered'].includes(selectedDeal.status) && (
+  1108→                  <button
+  1109→                    onClick={() => setShowDisputeSheet(true)}
+  1110→                    className="w-full py-3 bg-red-500/10 text-red-500 rounded-xl text-sm font-bold card-press flex items-center justify-center gap-2"
+  1111→                  >
+  1112→                    <AlertTriangle className="w-4 h-4" />
+  1113→                    فتح نزاع
+  1114→                  </button>
+  1115→                )}
+  1116→
+  1117→                {/* Chat button */}
+  1118→                {['accepted', 'funded', 'delivered'].includes(selectedDeal.status) && (
+  1119→                  <button
+  1120→                    onClick={() => setActiveView('chat')}
+  1121→                    className="w-full py-3 bg-muted rounded-xl text-sm font-medium card-press flex items-center justify-center gap-2"
+  1122→                  >
+  1123→                    <MessageCircle className="w-4 h-4" />
+  1124→                    محادثة الصفقة
+  1125→                    {messages.length > 0 && (
+  1126→                      <span className="px-1.5 py-0.5 bg-[#8B1E3A] text-white rounded-full text-[10px]">{messages.length}</span>
+  1127→                    )}
+  1128→                  </button>
+  1129→                )}
+  1130→              </div>
+  1131→            </div>
+  1132→          </motion.div>
+  1133→        )}
+  1134→
+  1135→        {/* ─── CHAT VIEW ─── */}
+  1136→        {activeView === 'chat' && selectedDeal && (
+  1137→          <motion.div
+  1138→            key="chat"
+  1139→            initial={{ opacity: 0, x: 20 }}
+  1140→            animate={{ opacity: 1, x: 0 }}
+  1141→            exit={{ opacity: 0, x: -20 }}
+  1142→            className="flex flex-col h-[calc(100vh-0px)]"
+  1143→          >
+  1144→            {/* Chat Header */}
+  1145→            <div className="bg-navy-gradient px-4 pt-4 pb-3">
+  1146→              <div className="flex items-center gap-3">
+  1147→                <button onClick={() => setActiveView('detail')} className="p-2 glass rounded-xl">
+  1148→                  <ArrowRight className="h-4 w-4 text-white" />
+  1149→                </button>
+  1150→                <div className="flex-1 min-w-0">
+  1151→                  <h2 className="text-white text-sm font-bold truncate">{selectedDeal.title}</h2>
+  1152→                  <p className="text-white/50 text-[10px]">محادثة الصفقة</p>
+  1153→                </div>
+  1154→                <Shield className="w-5 h-5 text-green-400" />
+  1155→              </div>
+  1156→            </div>
+  1157→
+  1158→            {/* Messages */}
+  1159→            <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
+  1160→              {/* System message */}
+  1161→              <div className="text-center">
+  1162→                <span className="inline-block px-3 py-1 bg-muted rounded-full text-[10px] text-muted-foreground">
+  1163→                  المحادثة مؤمنة ضمن نظام الوسيط
+  1164→                </span>
+  1165→              </div>
+  1166→
+  1167→              {messages.map((msg) => {
+  1168→                const isMe = msg.senderId === user.id;
+  1169→                return (
+  1170→                  <motion.div
+  1171→                    key={msg.id}
+  1172→                    initial={{ opacity: 0, y: 5 }}
+  1173→                    animate={{ opacity: 1, y: 0 }}
+  1174→                    className={`flex ${isMe ? 'justify-start' : 'justify-end'}`}
+  1175→                  >
+  1176→                    <div className={`max-w-[80%] rounded-2xl px-4 py-2.5 ${
+  1177→                      isMe
+  1178→                        ? 'bg-[#8B1E3A] text-white rounded-br-md'
+  1179→                        : 'bg-muted rounded-bl-md'
+  1180→                    }`}>
+  1181→                      {!isMe && (
+  1182→                        <p className={`text-[10px] font-medium mb-1 ${isMe ? 'text-white/70' : 'text-muted-foreground'}`}>
+  1183→                          {msg.senderName}
+  1184→                        </p>
+  1185→                      )}
+  1186→                      <p className="text-sm">{msg.text}</p>
+  1187→                      <p className={`text-[9px] mt-1 ${isMe ? 'text-white/50' : 'text-muted-foreground'}`}>
+  1188→                        {timeAgo(msg.createdAt)}
+  1189→                      </p>
+  1190→                    </div>
+  1191→                  </motion.div>
+  1192→                );
+  1193→              })}
+  1194→              <div ref={chatEndRef} />
+  1195→            </div>
+  1196→
+  1197→            {/* Chat Input */}
+  1198→            <div className="px-4 py-3 border-t bg-background">
+  1199→              <div className="flex items-center gap-2">
+  1200→                <input
+  1201→                  type="text"
+  1202→                  placeholder="اكتب رسالة..."
+  1203→                  value={chatInput}
+  1204→                  onChange={(e) => setChatInput(e.target.value)}
+  1205→                  onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSendMessage(); } }}
+  1206→                  className="flex-1 px-4 py-2.5 bg-muted rounded-xl text-sm border-none focus:ring-2 focus:ring-[#8B1E3A]/30"
+  1207→                />
+  1208→                <button
+  1209→                  onClick={handleSendMessage}
+  1210→                  disabled={!chatInput.trim()}
+  1211→                  className="p-2.5 bg-[#8B1E3A] text-white rounded-xl disabled:opacity-50 card-press"
+  1212→                >
+  1213→                  <Send className="w-4 h-4" />
+  1214→                </button>
+  1215→              </div>
+  1216→            </div>
+  1217→          </motion.div>
+  1218→        )}
+  1219→      </AnimatePresence>
+  1220→
+  1221→      {/* ─── Dispute Bottom Sheet ─── */}
+  1222→      <AnimatePresence>
+  1223→        {showDisputeSheet && (
+  1224→          <motion.div
+  1225→            initial={{ opacity: 0 }}
+  1226→            animate={{ opacity: 1 }}
+  1227→            exit={{ opacity: 0 }}
+  1228→            className="fixed inset-0 z-50 bg-black/50"
+  1229→            onClick={() => setShowDisputeSheet(false)}
+  1230→          >
+  1231→            <motion.div
+  1232→              initial={{ y: '100%' }}
+  1233→              animate={{ y: 0 }}
+  1234→              exit={{ y: '100%' }}
+  1235→              transition={{ type: 'spring', damping: 25 }}
+  1236→              onClick={(e) => e.stopPropagation()}
+  1237→              className="absolute bottom-0 left-0 right-0 bg-background rounded-t-3xl p-6"
+  1238→            >
+  1239→              <div className="w-12 h-1.5 bg-muted rounded-full mx-auto mb-6" />
+  1240→              <div className="flex items-center gap-2 mb-4">
+  1241→                <AlertTriangle className="w-5 h-5 text-red-500" />
+  1242→                <h3 className="text-lg font-bold">فتح نزاع</h3>
+  1243→              </div>
+  1244→              <p className="text-sm text-muted-foreground mb-4">
+  1245→                إذا واجهت مشكلة في الصفقة، يمكنك فتح نزاع وسيقوم المشرف بمراجعة الأمر واتخاذ قرار. لا يمكن التراجع عن فتح النزاع.
+  1246→              </p>
+  1247→              <textarea
+  1248→                placeholder="اشرح سبب النزاع بالتفصيل..."
+  1249→                value={disputeReason}
+  1250→                onChange={(e) => setDisputeReason(e.target.value)}
+  1251→                rows={4}
+  1252→                className="w-full px-4 py-3 bg-muted rounded-xl text-sm border-none focus:ring-2 focus:ring-red-500/30 resize-none mb-4"
+  1253→              />
+  1254→              <div className="flex gap-3">
+  1255→                <button
+  1256→                  onClick={() => setShowDisputeSheet(false)}
+  1257→                  className="flex-1 py-3 bg-muted rounded-xl text-sm font-medium"
+  1258→                >
+  1259→                  إلغاء
+  1260→                </button>
+  1261→                <button
+  1262→                  onClick={handleOpenDispute}
+  1263→                  disabled={confirming || !disputeReason.trim()}
+  1264→                  className="flex-1 py-3 bg-red-500 text-white rounded-xl text-sm font-bold disabled:opacity-50 card-press"
+  1265→                >
+  1266→                  {confirming ? 'جاري الفتح...' : 'فتح النزاع'}
+  1267→                </button>
+  1268→              </div>
+  1269→            </motion.div>
+  1270→          </motion.div>
+  1271→        )}
+  1272→      </AnimatePresence>
+  1273→    </div>
+  1274→  );
+  1275→}
+  1276→

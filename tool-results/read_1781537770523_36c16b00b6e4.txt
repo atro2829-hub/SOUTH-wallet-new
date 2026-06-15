@@ -1,0 +1,775 @@
+     1→'use client';
+     2→
+     3→import { useState, useEffect } from 'react';
+     4→import { ref, onValue, update, remove, push, set, get } from 'firebase/database';
+     5→import { database } from '@/lib/firebase';
+     6→import { useAdminStore } from '@/lib/store';
+     7→import { formatBalance, formatNumber, currencySymbols, timeAgo, generateId, formatDateAr } from '@/lib/utils';
+     8→import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+     9→import { Input } from '@/components/ui/input';
+    10→import { Button } from '@/components/ui/button';
+    11→import { Badge } from '@/components/ui/badge';
+    12→import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+    13→import { Label } from '@/components/ui/label';
+    14→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+    15→import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+    16→import { Switch } from '@/components/ui/switch';
+    17→import { Textarea } from '@/components/ui/textarea';
+    18→import {
+    19→  Search, UserCheck, UserX, DollarSign, Shield, Eye, Loader2,
+    20→  Edit, Lock, Key, CreditCard, FileDown, Bell, Activity,
+    21→  ArrowDownCircle, ArrowUpCircle, ShoppingCart, TrendingUp,
+    22→} from 'lucide-react';
+    23→import { motion } from 'framer-motion';
+    24→import { notifyAccountStatus, notifyKycStatus, sendNotificationToUser } from '@/lib/notifications';
+    25→
+    26→export default function UsersPanel() {
+    27→  const { adminUser, showToast } = useAdminStore();
+    28→  const [users, setUsers] = useState<any[]>([]);
+    29→  const [search, setSearch] = useState('');
+    30→  const [filter, setFilter] = useState('all');
+    31→  const [selectedUser, setSelectedUser] = useState<any>(null);
+    32→  const [detailOpen, setDetailOpen] = useState(false);
+    33→  const [loading, setLoading] = useState(true);
+    34→
+    35→  // Balance dialog
+    36→  const [balanceDialog, setBalanceDialog] = useState(false);
+    37→  const [balanceAction, setBalanceAction] = useState<'add' | 'subtract'>('add');
+    38→  const [balanceAmount, setBalanceAmount] = useState('');
+    39→  const [balanceCurrency, setBalanceCurrency] = useState('YER');
+    40→
+    41→  // Role dialog
+    42→  const [roleDialog, setRoleDialog] = useState(false);
+    43→  const [newRole, setNewRole] = useState('');
+    44→
+    45→  // Edit info dialog
+    46→  const [editInfoDialog, setEditInfoDialog] = useState(false);
+    47→  const [editName, setEditName] = useState('');
+    48→  const [editPhone, setEditPhone] = useState('');
+    49→  const [editEmail, setEditEmail] = useState('');
+    50→  const [editGovernorate, setEditGovernorate] = useState('');
+    51→
+    52→  // Block dialog
+    53→  const [blockDialog, setBlockDialog] = useState(false);
+    54→  const [blockReason, setBlockReason] = useState('');
+    55→
+    56→  // KYC dialog
+    57→  const [kycDialog, setKycDialog] = useState(false);
+    58→  const [newKycStatus, setNewKycStatus] = useState('');
+    59→
+    60→  // Card dialog
+    61→  const [cardDialog, setCardDialog] = useState(false);
+    62→  const [cardType, setCardType] = useState('');
+    63→  const [cardNumber, setCardNumber] = useState('');
+    64→
+    65→  // Password dialog
+    66→  const [passwordDialog, setPasswordDialog] = useState(false);
+    67→  const [newPassword, setNewPassword] = useState('');
+    68→
+    69→  // PIN reset dialog
+    70→  const [pinDialog, setPinDialog] = useState(false);
+    71→
+    72→  // Send notification dialog
+    73→  const [notifDialog, setNotifDialog] = useState(false);
+    74→  const [notifTitle, setNotifTitle] = useState('');
+    75→  const [notifBody, setNotifBody] = useState('');
+    76→
+    77→  // User details tabs
+    78→  const [userTab, setUserTab] = useState('info');
+    79→  const [userTransactions, setUserTransactions] = useState<any[]>([]);
+    80→  const [userInvestments, setUserInvestments] = useState<any[]>([]);
+    81→  const [userActivityLog, setUserActivityLog] = useState<any[]>([]);
+    82→
+    83→  useEffect(() => {
+    84→    const usersRef = ref(database, 'users');
+    85→    const unsub = onValue(usersRef, (snapshot) => {
+    86→      const data = snapshot.val() || {};
+    87→      const list = Object.entries(data).map(([uid, val]: [string, any]) => ({ uid, ...val }));
+    88→      setUsers(list);
+    89→      setLoading(false);
+    90→    });
+    91→    return () => unsub();
+    92→  }, []);
+    93→
+    94→  const loadUserDetails = async (user: any) => {
+    95→    try {
+    96→      // Load transactions
+    97→      const txSnapshot = await get(ref(database, `users/${user.uid}/transactions`));
+    98→      const txData = txSnapshot.val() || {};
+    99→      const txList = Object.entries(txData).map(([id, val]: [string, any]) => ({ id, ...val }));
+   100→      txList.sort((a: any, b: any) => new Date(b.createdAt || b.timestamp).getTime() - new Date(a.createdAt || a.timestamp).getTime());
+   101→      setUserTransactions(txList.slice(0, 50));
+   102→
+   103→      // Load investments
+   104→      const invSnapshot = await get(ref(database, `users/${user.uid}/investments`));
+   105→      const invData = invSnapshot.val() || {};
+   106→      const invList = Object.entries(invData).map(([id, val]: [string, any]) => ({ id, ...val }));
+   107→      setUserInvestments(invList);
+   108→
+   109→      // Load activity log
+   110→      const logSnapshot = await get(ref(database, `users/${user.uid}/activityLog`));
+   111→      const logData = logSnapshot.val() || {};
+   112→      const logList = Object.entries(logData).map(([id, val]: [string, any]) => ({ id, ...val }));
+   113→      logList.sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+   114→      setUserActivityLog(logList.slice(0, 50));
+   115→    } catch (e) {
+   116→      console.error('Error loading user details:', e);
+   117→    }
+   118→  };
+   119→
+   120→  const filteredUsers = users.filter((u) => {
+   121→    const matchesSearch =
+   122→      !search ||
+   123→      (u.name && u.name.includes(search)) ||
+   124→      (u.firstName && u.firstName.includes(search)) ||
+   125→      (u.email && u.email.includes(search)) ||
+   126→      (u.phone && u.phone.includes(search)) ||
+   127→      (u.userId && u.userId.includes(search));
+   128→    const matchesFilter =
+   129→      filter === 'all' ||
+   130→      (filter === 'blocked' && u.isBlocked) ||
+   131→      (filter === 'kyc-submitted' && u.kycStatus === 'submitted') ||
+   132→      (filter === 'admin' && (u.role === 'admin' || u.role === 'owner'));
+   133→    return matchesSearch && matchesFilter;
+   134→  });
+   135→
+   136→  const handleBlockUser = async (block: boolean) => {
+   137→    if (!selectedUser) return;
+   138→    try {
+   139→      await update(ref(database, `users/${selectedUser.uid}`), {
+   140→        isBlocked: block,
+   141→        blockReason: block ? blockReason : '',
+   142→        blockedAt: block ? new Date().toISOString() : '',
+   143→      });
+   144→
+   145→      // Send push notification to the user about account status change
+   146→      try {
+   147→        await notifyAccountStatus(selectedUser.uid, block);
+   148→      } catch (notifError) {
+   149→        console.warn('Failed to send account status notification:', notifError);
+   150→      }
+   151→
+   152→      showToast(block ? 'تم حظر المستخدم' : 'تم إلغاء حظر المستخدم', 'success');
+   153→      setBlockDialog(false);
+   154→      setBlockReason('');
+   155→    } catch (e) {
+   156→      showToast('حدث خطأ', 'error');
+   157→    }
+   158→  };
+   159→
+   160→  const handleBalanceAdjust = async () => {
+   161→    if (!selectedUser || !balanceAmount) return;
+   162→    const amount = parseFloat(balanceAmount);
+   163→    if (isNaN(amount) || amount <= 0) return;
+   164→
+   165→    try {
+   166→      const balanceKey = `balance${balanceCurrency}`;
+   167→      const currentBalance = selectedUser[balanceKey] || 0;
+   168→      const newBalance = balanceAction === 'add' ? currentBalance + amount : Math.max(0, currentBalance - amount);
+   169→
+   170→      await update(ref(database, `users/${selectedUser.uid}`), { [balanceKey]: newBalance });
+   171→
+   172→      // Send FCM push notification + in-app notification to the user
+   173→      try {
+   174→        await sendNotificationToUser(selectedUser.uid, {
+   175→          title: balanceAction === 'add' ? 'إضافة رصيد' : 'خصم رصيد',
+   176→          body: balanceAction === 'add'
+   177→            ? `تم إضافة ${amount} ${currencySymbols[balanceCurrency]} إلى رصيدك`
+   178→            : `تم خصم ${amount} ${currencySymbols[balanceCurrency]} من رصيدك`,
+   179→          type: 'transaction',
+   180→          data: { action: 'balance_adjust', balanceAction, amount, currency: balanceCurrency },
+   181→        });
+   182→      } catch {}
+   183→
+   184→      // Log transaction
+   185→      const logEntry = {
+   186→        id: generateId(),
+   187→        type: 'admin',
+   188→        action: balanceAction === 'add' ? 'إضافة رصيد' : 'خصم رصيد',
+   189→        details: `${balanceAction === 'add' ? 'إضافة' : 'خصم'} ${amount} ${currencySymbols[balanceCurrency]} ${balanceAction === 'add' ? 'إلى' : 'من'} حساب ${selectedUser.name || selectedUser.email}`,
+   190→        adminId: adminUser?.uid,
+   191→        adminName: adminUser?.displayName,
+   192→        timestamp: new Date().toISOString(),
+   193→      };
+   194→      await push(ref(database, 'ownerSettings/activityLog'), logEntry);
+   195→
+   196→      showToast(
+   197→        `تم ${balanceAction === 'add' ? 'إضافة' : 'خصم'} ${amount} ${currencySymbols[balanceCurrency]}`,
+   198→        'success'
+   199→      );
+   200→      setBalanceDialog(false);
+   201→      setBalanceAmount('');
+   202→    } catch (e) {
+   203→      showToast('حدث خطأ', 'error');
+   204→    }
+   205→  };
+   206→
+   207→  const handleChangeRole = async () => {
+   208→    if (!selectedUser || !newRole) return;
+   209→    try {
+   210→      await update(ref(database, `users/${selectedUser.uid}`), { role: newRole });
+   211→
+   212→      // Notify user about role change
+   213→      try {
+   214→        const { sendNotificationToUser } = await import('@/lib/notifications');
+   215→        await sendNotificationToUser(selectedUser.uid, {
+   216→          title: 'تحديث الصلاحيات',
+   217→          body: `تم تحديث صلاحيات حسابك إلى: ${newRole}`,
+   218→          type: 'security',
+   219→          data: { action: 'role_change', role: newRole },
+   220→        });
+   221→      } catch (e) { console.warn('Role change notification failed:', e); }
+   222→
+   223→      showToast('تم تغيير الصلاحية', 'success');
+   224→      setRoleDialog(false);
+   225→      setNewRole('');
+   226→    } catch (e) {
+   227→      showToast('حدث خطأ', 'error');
+   228→    }
+   229→  };
+   230→
+   231→  const handleEditInfo = async () => {
+   232→    if (!selectedUser) return;
+   233→    try {
+   234→      const updates: any = {};
+   235→      if (editName) updates.name = editName;
+   236→      if (editPhone) updates.phone = editPhone;
+   237→      if (editEmail) updates.email = editEmail;
+   238→      if (editGovernorate) updates.governorate = editGovernorate;
+   239→      await update(ref(database, `users/${selectedUser.uid}`), updates);
+   240→      showToast('تم تحديث بيانات المستخدم', 'success');
+   241→      setEditInfoDialog(false);
+   242→    } catch (e) {
+   243→      showToast('حدث خطأ', 'error');
+   244→    }
+   245→  };
+   246→
+   247→  const handleChangeKYC = async () => {
+   248→    if (!selectedUser || !newKycStatus) return;
+   249→    try {
+   250→      await update(ref(database, `users/${selectedUser.uid}`), {
+   251→        kycStatus: newKycStatus,
+   252→        kycUpdatedAt: new Date().toISOString(),
+   253→      });
+   254→
+   255→      // Send push notification to the user about KYC status change
+   256→      try {
+   257→        await notifyKycStatus(selectedUser.uid, newKycStatus);
+   258→      } catch (notifError) {
+   259→        console.warn('Failed to send KYC status notification:', notifError);
+   260→      }
+   261→
+   262→      showToast('تم تغيير حالة التحقق', 'success');
+   263→      setKycDialog(false);
+   264→    } catch (e) {
+   265→      showToast('حدث خطأ', 'error');
+   266→    }
+   267→  };
+   268→
+   269→  const handleChangeCard = async () => {
+   270→    if (!selectedUser) return;
+   271→    try {
+   272→      const updates: any = {};
+   273→      if (cardType) updates.cardType = cardType;
+   274→      if (cardNumber) updates.cardNumber = cardNumber;
+   275→      await update(ref(database, `users/${selectedUser.uid}`), updates);
+   276→      showToast('تم تحديث بيانات البطاقة', 'success');
+   277→      setCardDialog(false);
+   278→    } catch (e) {
+   279→      showToast('حدث خطأ', 'error');
+   280→    }
+   281→  };
+   282→
+   283→  const handleResetPIN = async () => {
+   284→    if (!selectedUser) return;
+   285→    try {
+   286→      await update(ref(database, `users/${selectedUser.uid}`), {
+   287→        pin: null,
+   288→        pinResetAt: new Date().toISOString(),
+   289→      });
+   290→
+   291→      // Notify user about PIN reset
+   292→      try {
+   293→        const { sendNotificationToUser } = await import('@/lib/notifications');
+   294→        await sendNotificationToUser(selectedUser.uid, {
+   295→          title: 'تم إعادة تعيين الرقم السري',
+   296→          body: 'تم إعادة تعيين الرقم السري لحسابك. يرجى تسجيل الدخول وإعداد رقم سري جديد.',
+   297→          type: 'security',
+   298→          data: { action: 'pin_reset' },
+   299→        });
+   300→      } catch (e) { console.warn('PIN reset notification failed:', e); }
+   301→
+   302→      showToast('تم إعادة تعيين رمز PIN', 'success');
+   303→      setPinDialog(false);
+   304→    } catch (e) {
+   305→      showToast('حدث خطأ', 'error');
+   306→    }
+   307→  };
+   308→
+   309→  const handleSendNotification = async () => {
+   310→    if (!selectedUser || !notifTitle || !notifBody) return;
+   311→    try {
+   312→      // Send notification with FCM push
+   313→      await sendNotificationToUser(selectedUser.uid, {
+   314→        title: notifTitle,
+   315→        body: notifBody,
+   316→        type: 'info',
+   317→      });
+   318→      showToast('تم إرسال الإشعار للمستخدم', 'success');
+   319→      setNotifDialog(false);
+   320→      setNotifTitle('');
+   321→      setNotifBody('');
+   322→    } catch (e) {
+   323→      showToast('حدث خطأ', 'error');
+   324→    }
+   325→  };
+   326→
+   327→  const handleExportUser = () => {
+   328→    if (!selectedUser) return;
+   329→    const exportData = {
+   330→      uid: selectedUser.uid,
+   331→      name: selectedUser.name,
+   332→      email: selectedUser.email,
+   333→      phone: selectedUser.phone,
+   334→      userId: selectedUser.userId,
+   335→      balanceYER: selectedUser.balanceYER || 0,
+   336→      balanceSAR: selectedUser.balanceSAR || 0,
+   337→      balanceUSD: selectedUser.balanceUSD || 0,
+   338→      kycStatus: selectedUser.kycStatus,
+   339→      role: selectedUser.role,
+   340→      isBlocked: selectedUser.isBlocked,
+   341→      createdAt: selectedUser.createdAt,
+   342→    };
+   343→    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+   344→    const url = URL.createObjectURL(blob);
+   345→    const a = document.createElement('a');
+   346→    a.href = url;
+   347→    a.download = `user_${selectedUser.uid}.json`;
+   348→    a.click();
+   349→    URL.revokeObjectURL(url);
+   350→    showToast('تم تصدير بيانات المستخدم', 'success');
+   351→  };
+   352→
+   353→  if (loading) {
+   354→    return <div className="flex items-center justify-center min-h-[400px]"><div className="w-8 h-8 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" /></div>;
+   355→  }
+   356→
+   357→  return (
+   358→    <div className="space-y-6">
+   359→      <div>
+   360→        <h1 className="text-2xl font-bold">إدارة المستخدمين</h1>
+   361→        <p className="text-muted-foreground text-sm mt-1">إجمالي {formatNumber(users.length)} مستخدم</p>
+   362→      </div>
+   363→
+   364→      {/* Search & Filter */}
+   365→      <div className="flex gap-3">
+   366→        <div className="relative flex-1">
+   367→          <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+   368→          <Input
+   369→            placeholder="بحث بالاسم، البريد، الهاتف..."
+   370→            value={search}
+   371→            onChange={(e) => setSearch(e.target.value)}
+   372→            className="pr-10"
+   373→          />
+   374→        </div>
+   375→        <Select value={filter} onValueChange={setFilter}>
+   376→          <SelectTrigger className="w-40">
+   377→            <SelectValue />
+   378→          </SelectTrigger>
+   379→          <SelectContent>
+   380→            <SelectItem value="all">الكل</SelectItem>
+   381→            <SelectItem value="blocked">محظور</SelectItem>
+   382→            <SelectItem value="kyc-submitted">بانتظار التحقق</SelectItem>
+   383→            <SelectItem value="admin">مديرين</SelectItem>
+   384→          </SelectContent>
+   385→        </Select>
+   386→      </div>
+   387→
+   388→      {/* Users List */}
+   389→      <div className="space-y-3 max-h-[calc(100vh-280px)] overflow-y-auto scrollbar-thin">
+   390→        {filteredUsers.map((user, index) => (
+   391→          <motion.div
+   392→            key={user.uid}
+   393→            initial={{ opacity: 0, y: 10 }}
+   394→            animate={{ opacity: 1, y: 0 }}
+   395→            transition={{ delay: index * 0.02 }}
+   396→          >
+   397→            <Card className="admin-card border-0 shadow-none cursor-pointer card-press" onClick={() => {
+   398→              setSelectedUser(user);
+   399→              setUserTab('info');
+   400→              setDetailOpen(true);
+   401→              loadUserDetails(user);
+   402→            }}>
+   403→              <CardContent className="p-4">
+   404→                <div className="flex items-center justify-between">
+   405→                  <div className="flex items-center gap-3">
+   406→                    <div className="w-10 h-10 rounded-full bg-purple-500/10 flex items-center justify-center text-purple-600 font-bold text-sm">
+   407→                      {(user.name || user.firstName || '?')[0]}
+   408→                    </div>
+   409→                    <div>
+   410→                      <p className="font-medium text-sm">{user.name || `${user.firstName || ''} ${user.familyName || ''}`}</p>
+   411→                      <p className="text-xs text-muted-foreground">{user.email || user.phone || user.userId}</p>
+   412→                    </div>
+   413→                  </div>
+   414→                  <div className="flex items-center gap-2">
+   415→                    {user.isBlocked && <Badge className="bg-red-500/20 text-red-500 text-xs">محظور</Badge>}
+   416→                    {user.role === 'owner' && <Badge className="bg-purple-500/20 text-purple-500 text-xs">مالك</Badge>}
+   417→                    {user.role === 'admin' && <Badge className="bg-blue-500/20 text-blue-500 text-xs">مدير</Badge>}
+   418→                    {user.kycStatus === 'verified' && <Badge className="bg-green-500/20 text-green-500 text-xs">موثق</Badge>}
+   419→                  </div>
+   420→                </div>
+   421→                <div className="flex gap-4 mt-3 text-xs text-muted-foreground">
+   422→                  <span>ر.ي: {formatNumber(user.balanceYER || 0)}</span>
+   423→                  <span>ر.س: {formatNumber(user.balanceSAR || 0)}</span>
+   424→                  <span>$: {formatNumber(user.balanceUSD || 0)}</span>
+   425→                </div>
+   426→              </CardContent>
+   427→            </Card>
+   428→          </motion.div>
+   429→        ))}
+   430→        {filteredUsers.length === 0 && (
+   431→          <p className="text-center text-muted-foreground py-8">لا توجد نتائج</p>
+   432→        )}
+   433→      </div>
+   434→
+   435→      {/* User Detail Dialog */}
+   436→      <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
+   437→        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+   438→          <DialogHeader>
+   439→            <DialogTitle>تفاصيل المستخدم</DialogTitle>
+   440→          </DialogHeader>
+   441→          {selectedUser && (
+   442→            <Tabs value={userTab} onValueChange={setUserTab}>
+   443→              <TabsList className="w-full">
+   444→                <TabsTrigger value="info" className="flex-1">المعلومات</TabsTrigger>
+   445→                <TabsTrigger value="transactions" className="flex-1">العمليات</TabsTrigger>
+   446→                <TabsTrigger value="investments" className="flex-1">الاستثمارات</TabsTrigger>
+   447→                <TabsTrigger value="activity" className="flex-1">النشاط</TabsTrigger>
+   448→              </TabsList>
+   449→
+   450→              <TabsContent value="info" className="space-y-4">
+   451→                <div className="grid grid-cols-2 gap-3 text-sm">
+   452→                  <div><Label className="text-muted-foreground">الاسم</Label><p className="font-medium">{selectedUser.name || '-'}</p></div>
+   453→                  <div><Label className="text-muted-foreground">البريد</Label><p className="font-medium" dir="ltr">{selectedUser.email || '-'}</p></div>
+   454→                  <div><Label className="text-muted-foreground">الهاتف</Label><p className="font-medium" dir="ltr">{selectedUser.phone || '-'}</p></div>
+   455→                  <div><Label className="text-muted-foreground">رقم الحساب</Label><p className="font-medium">{selectedUser.userId || '-'}</p></div>
+   456→                  <div><Label className="text-muted-foreground">المحافظة</Label><p className="font-medium">{selectedUser.governorate || '-'}</p></div>
+   457→                  <div><Label className="text-muted-foreground">الصلاحية</Label><p className="font-medium">{selectedUser.role === 'owner' ? 'مالك' : selectedUser.role === 'admin' ? 'مدير' : 'مستخدم'}</p></div>
+   458→                  <div><Label className="text-muted-foreground">حالة التحقق</Label><p className="font-medium">{selectedUser.kycStatus === 'verified' ? 'موثق' : selectedUser.kycStatus === 'submitted' ? 'مقدم' : selectedUser.kycStatus === 'rejected' ? 'مرفوض' : 'لم يقدم'}</p></div>
+   459→                  <div><Label className="text-muted-foreground">نوع البطاقة</Label><p className="font-medium">{selectedUser.cardType || '-'}</p></div>
+   460→                  <div><Label className="text-muted-foreground">رقم البطاقة</Label><p className="font-medium" dir="ltr">{selectedUser.cardNumber || '-'}</p></div>
+   461→                  <div><Label className="text-muted-foreground">الحالة</Label>
+   462→                    <Badge className={selectedUser.isBlocked ? 'bg-red-500/20 text-red-500' : 'bg-green-500/20 text-green-500'}>
+   463→                      {selectedUser.isBlocked ? 'محظور' : 'نشط'}
+   464→                    </Badge>
+   465→                  </div>
+   466→                </div>
+   467→
+   468→                <div className="grid grid-cols-3 gap-3">
+   469→                  <Card className="admin-card border-0 shadow-none"><CardContent className="p-3 text-center"><p className="text-xs text-muted-foreground">ر.ي</p><p className="font-bold text-lg">{formatNumber(selectedUser.balanceYER || 0)}</p></CardContent></Card>
+   470→                  <Card className="admin-card border-0 shadow-none"><CardContent className="p-3 text-center"><p className="text-xs text-muted-foreground">ر.س</p><p className="font-bold text-lg">{formatNumber(selectedUser.balanceSAR || 0)}</p></CardContent></Card>
+   471→                  <Card className="admin-card border-0 shadow-none"><CardContent className="p-3 text-center"><p className="text-xs text-muted-foreground">$</p><p className="font-bold text-lg">{formatNumber(selectedUser.balanceUSD || 0)}</p></CardContent></Card>
+   472→                </div>
+   473→
+   474→                {/* Action Buttons */}
+   475→                <div className="grid grid-cols-2 gap-2">
+   476→                  <Button onClick={() => { setBalanceDialog(true); setBalanceAction('add'); }} className="bg-green-600 hover:bg-green-700" size="sm">
+   477→                    <DollarSign className="w-4 h-4 ml-1" /> إضافة رصيد
+   478→                  </Button>
+   479→                  <Button onClick={() => { setBalanceDialog(true); setBalanceAction('subtract'); }} className="bg-orange-600 hover:bg-orange-700" size="sm">
+   480→                    <DollarSign className="w-4 h-4 ml-1" /> خصم رصيد
+   481→                  </Button>
+   482→                  <Button onClick={() => {
+   483→                    setEditName(selectedUser.name || '');
+   484→                    setEditPhone(selectedUser.phone || '');
+   485→                    setEditEmail(selectedUser.email || '');
+   486→                    setEditGovernorate(selectedUser.governorate || '');
+   487→                    setEditInfoDialog(true);
+   488→                  }} variant="outline" size="sm">
+   489→                    <Edit className="w-4 h-4 ml-1" /> تعديل البيانات
+   490→                  </Button>
+   491→                  <Button onClick={() => {
+   492→                    setNewKycStatus(selectedUser.kycStatus || 'none');
+   493→                    setKycDialog(true);
+   494→                  }} variant="outline" size="sm">
+   495→                    <Shield className="w-4 h-4 ml-1" /> تغيير التحقق
+   496→                  </Button>
+   497→                  <Button onClick={() => {
+   498→                    setCardType(selectedUser.cardType || '');
+   499→                    setCardNumber(selectedUser.cardNumber || '');
+   500→                    setCardDialog(true);
+   501→                  }} variant="outline" size="sm">
+   502→                    <CreditCard className="w-4 h-4 ml-1" /> بيانات البطاقة
+   503→                  </Button>
+   504→                  <Button onClick={() => setPinDialog(true)} variant="outline" size="sm">
+   505→                    <Key className="w-4 h-4 ml-1" /> إعادة PIN
+   506→                  </Button>
+   507→                  <Button onClick={() => {
+   508→                    setBlockReason(selectedUser.blockReason || '');
+   509→                    setBlockDialog(true);
+   510→                  }} variant={selectedUser.isBlocked ? 'default' : 'destructive'} size="sm">
+   511→                    {selectedUser.isBlocked ? <UserCheck className="w-4 h-4 ml-1" /> : <UserX className="w-4 h-4 ml-1" />}
+   512→                    {selectedUser.isBlocked ? 'إلغاء الحظر' : 'حظر'}
+   513→                  </Button>
+   514→                  <Button onClick={() => setNotifDialog(true)} variant="outline" size="sm">
+   515→                    <Bell className="w-4 h-4 ml-1" /> إرسال إشعار
+   516→                  </Button>
+   517→                  <Button onClick={() => setRoleDialog(true)} variant="outline" size="sm" className={adminUser?.role === 'owner' ? '' : 'opacity-50'}>
+   518→                    <Shield className="w-4 h-4 ml-1" /> تغيير الصلاحية
+   519→                  </Button>
+   520→                  <Button onClick={handleExportUser} variant="outline" size="sm">
+   521→                    <FileDown className="w-4 h-4 ml-1" /> تصدير البيانات
+   522→                  </Button>
+   523→                </div>
+   524→              </TabsContent>
+   525→
+   526→              <TabsContent value="transactions" className="space-y-2">
+   527→                <div className="max-h-[400px] overflow-y-auto scrollbar-thin">
+   528→                  {userTransactions.map((tx: any) => (
+   529→                    <Card key={tx.id} className="admin-card border-0 shadow-none mb-2">
+   530→                      <CardContent className="p-3">
+   531→                        <div className="flex items-center justify-between">
+   532→                          <div className="flex items-center gap-2">
+   533→                            {tx.type === 'deposit' ? <ArrowDownCircle className="w-4 h-4 text-green-500" /> :
+   534→                             tx.type === 'withdraw' ? <ArrowUpCircle className="w-4 h-4 text-red-500" /> :
+   535→                             <ShoppingCart className="w-4 h-4 text-purple-500" />}
+   536→                            <div>
+   537→                              <p className="text-xs font-medium">{tx.description || tx.type}</p>
+   538→                              <p className="text-xs text-muted-foreground">{tx.createdAt ? formatDateAr(tx.createdAt) : ''}</p>
+   539→                            </div>
+   540→                          </div>
+   541→                          <p className="text-sm font-bold">{formatNumber(tx.amount || 0)} {currencySymbols[tx.currency || 'YER']}</p>
+   542→                        </div>
+   543→                      </CardContent>
+   544→                    </Card>
+   545→                  ))}
+   546→                  {userTransactions.length === 0 && <p className="text-center text-muted-foreground py-4">لا توجد عمليات</p>}
+   547→                </div>
+   548→              </TabsContent>
+   549→
+   550→              <TabsContent value="investments" className="space-y-2">
+   551→                <div className="max-h-[400px] overflow-y-auto scrollbar-thin">
+   552→                  {userInvestments.map((inv: any) => (
+   553→                    <Card key={inv.id} className="admin-card border-0 shadow-none mb-2">
+   554→                      <CardContent className="p-3">
+   555→                        <div className="flex items-center justify-between">
+   556→                          <div className="flex items-center gap-2">
+   557→                            <TrendingUp className="w-4 h-4 text-green-500" />
+   558→                            <div>
+   559→                              <p className="text-xs font-medium">{inv.planName || 'استثمار'}</p>
+   560→                              <p className="text-xs text-muted-foreground">{inv.startDate ? formatDateAr(inv.startDate) : ''}</p>
+   561→                            </div>
+   562→                          </div>
+   563→                          <div className="text-left">
+   564→                            <p className="text-sm font-bold">{formatNumber(inv.amount || 0)}</p>
+   565→                            <Badge className={inv.status === 'active' ? 'bg-green-500/20 text-green-500' : inv.status === 'completed' ? 'bg-blue-500/20 text-blue-500' : 'bg-red-500/20 text-red-500'} style={{ fontSize: 10 }}>
+   566→                              {inv.status === 'active' ? 'نشط' : inv.status === 'completed' ? 'مكتمل' : 'ملغي'}
+   567→                            </Badge>
+   568→                          </div>
+   569→                        </div>
+   570→                      </CardContent>
+   571→                    </Card>
+   572→                  ))}
+   573→                  {userInvestments.length === 0 && <p className="text-center text-muted-foreground py-4">لا توجد استثمارات</p>}
+   574→                </div>
+   575→              </TabsContent>
+   576→
+   577→              <TabsContent value="activity" className="space-y-2">
+   578→                <div className="max-h-[400px] overflow-y-auto scrollbar-thin">
+   579→                  {userActivityLog.map((log: any) => (
+   580→                    <Card key={log.id} className="admin-card border-0 shadow-none mb-2">
+   581→                      <CardContent className="p-3">
+   582→                        <div className="flex items-center gap-2">
+   583→                          <Activity className="w-4 h-4 text-purple-500" />
+   584→                          <div>
+   585→                            <p className="text-xs font-medium">{log.action || log.type}</p>
+   586→                            <p className="text-xs text-muted-foreground">{log.details || ''}</p>
+   587→                            <p className="text-xs text-muted-foreground">{log.timestamp ? formatDateAr(log.timestamp) : ''}</p>
+   588→                          </div>
+   589→                        </div>
+   590→                      </CardContent>
+   591→                    </Card>
+   592→                  ))}
+   593→                  {userActivityLog.length === 0 && <p className="text-center text-muted-foreground py-4">لا يوجد سجل نشاط</p>}
+   594→                </div>
+   595→              </TabsContent>
+   596→            </Tabs>
+   597→          )}
+   598→        </DialogContent>
+   599→      </Dialog>
+   600→
+   601→      {/* Balance Dialog */}
+   602→      <Dialog open={balanceDialog} onOpenChange={setBalanceDialog}>
+   603→        <DialogContent>
+   604→          <DialogHeader>
+   605→            <DialogTitle>{balanceAction === 'add' ? 'إضافة رصيد' : 'خصم رصيد'}</DialogTitle>
+   606→          </DialogHeader>
+   607→          <div className="space-y-4">
+   608→            <div>
+   609→              <Label>العملة</Label>
+   610→              <Select value={balanceCurrency} onValueChange={setBalanceCurrency}>
+   611→                <SelectTrigger><SelectValue /></SelectTrigger>
+   612→                <SelectContent>
+   613→                  <SelectItem value="YER">ريال يمني</SelectItem>
+   614→                  <SelectItem value="SAR">ريال سعودي</SelectItem>
+   615→                  <SelectItem value="USD">دولار</SelectItem>
+   616→                </SelectContent>
+   617→              </Select>
+   618→            </div>
+   619→            <div>
+   620→              <Label>المبلغ</Label>
+   621→              <Input type="number" value={balanceAmount} onChange={(e) => setBalanceAmount(e.target.value)} placeholder="0" dir="ltr" />
+   622→            </div>
+   623→          </div>
+   624→          <DialogFooter>
+   625→            <Button variant="outline" onClick={() => setBalanceDialog(false)}>إلغاء</Button>
+   626→            <Button onClick={handleBalanceAdjust} className={balanceAction === 'add' ? 'bg-green-600 hover:bg-green-700' : 'bg-orange-600 hover:bg-orange-700'}>
+   627→              {balanceAction === 'add' ? 'إضافة' : 'خصم'}
+   628→            </Button>
+   629→          </DialogFooter>
+   630→        </DialogContent>
+   631→      </Dialog>
+   632→
+   633→      {/* Role Dialog */}
+   634→      <Dialog open={roleDialog} onOpenChange={setRoleDialog}>
+   635→        <DialogContent>
+   636→          <DialogHeader>
+   637→            <DialogTitle>تغيير صلاحية المستخدم</DialogTitle>
+   638→          </DialogHeader>
+   639→          <div>
+   640→            <Label>الصلاحية الجديدة</Label>
+   641→            <Select value={newRole} onValueChange={setNewRole}>
+   642→              <SelectTrigger><SelectValue /></SelectTrigger>
+   643→              <SelectContent>
+   644→                <SelectItem value="user">مستخدم</SelectItem>
+   645→                <SelectItem value="admin">مدير</SelectItem>
+   646→                <SelectItem value="owner">مالك</SelectItem>
+   647→              </SelectContent>
+   648→            </Select>
+   649→          </div>
+   650→          <DialogFooter>
+   651→            <Button variant="outline" onClick={() => setRoleDialog(false)}>إلغاء</Button>
+   652→            <Button onClick={handleChangeRole}>تغيير</Button>
+   653→          </DialogFooter>
+   654→        </DialogContent>
+   655→      </Dialog>
+   656→
+   657→      {/* Edit Info Dialog */}
+   658→      <Dialog open={editInfoDialog} onOpenChange={setEditInfoDialog}>
+   659→        <DialogContent>
+   660→          <DialogHeader>
+   661→            <DialogTitle>تعديل بيانات المستخدم</DialogTitle>
+   662→          </DialogHeader>
+   663→          <div className="space-y-4">
+   664→            <div><Label>الاسم</Label><Input value={editName} onChange={(e) => setEditName(e.target.value)} /></div>
+   665→            <div><Label>الهاتف</Label><Input value={editPhone} onChange={(e) => setEditPhone(e.target.value)} dir="ltr" /></div>
+   666→            <div><Label>البريد الإلكتروني</Label><Input value={editEmail} onChange={(e) => setEditEmail(e.target.value)} dir="ltr" /></div>
+   667→            <div><Label>المحافظة</Label><Input value={editGovernorate} onChange={(e) => setEditGovernorate(e.target.value)} /></div>
+   668→          </div>
+   669→          <DialogFooter>
+   670→            <Button variant="outline" onClick={() => setEditInfoDialog(false)}>إلغاء</Button>
+   671→            <Button onClick={handleEditInfo}>حفظ</Button>
+   672→          </DialogFooter>
+   673→        </DialogContent>
+   674→      </Dialog>
+   675→
+   676→      {/* Block Dialog */}
+   677→      <Dialog open={blockDialog} onOpenChange={setBlockDialog}>
+   678→        <DialogContent>
+   679→          <DialogHeader>
+   680→            <DialogTitle>{selectedUser?.isBlocked ? 'إلغاء حظر المستخدم' : 'حظر المستخدم'}</DialogTitle>
+   681→          </DialogHeader>
+   682→          {!selectedUser?.isBlocked && (
+   683→            <div>
+   684→              <Label>سبب الحظر</Label>
+   685→              <Textarea value={blockReason} onChange={(e) => setBlockReason(e.target.value)} placeholder="أدخل سبب الحظر..." />
+   686→            </div>
+   687→          )}
+   688→          <DialogFooter>
+   689→            <Button variant="outline" onClick={() => setBlockDialog(false)}>إلغاء</Button>
+   690→            <Button
+   691→              variant={selectedUser?.isBlocked ? 'default' : 'destructive'}
+   692→              onClick={() => handleBlockUser(!selectedUser?.isBlocked)}
+   693→            >
+   694→              {selectedUser?.isBlocked ? 'إلغاء الحظر' : 'حظر'}
+   695→            </Button>
+   696→          </DialogFooter>
+   697→        </DialogContent>
+   698→      </Dialog>
+   699→
+   700→      {/* KYC Dialog */}
+   701→      <Dialog open={kycDialog} onOpenChange={setKycDialog}>
+   702→        <DialogContent>
+   703→          <DialogHeader>
+   704→            <DialogTitle>تغيير حالة التحقق</DialogTitle>
+   705→          </DialogHeader>
+   706→          <div>
+   707→            <Label>حالة التحقق الجديدة</Label>
+   708→            <Select value={newKycStatus} onValueChange={setNewKycStatus}>
+   709→              <SelectTrigger><SelectValue /></SelectTrigger>
+   710→              <SelectContent>
+   711→                <SelectItem value="none">لم يقدم</SelectItem>
+   712→                <SelectItem value="submitted">مقدم</SelectItem>
+   713→                <SelectItem value="verified">موثق</SelectItem>
+   714→                <SelectItem value="rejected">مرفوض</SelectItem>
+   715→              </SelectContent>
+   716→            </Select>
+   717→          </div>
+   718→          <DialogFooter>
+   719→            <Button variant="outline" onClick={() => setKycDialog(false)}>إلغاء</Button>
+   720→            <Button onClick={handleChangeKYC}>تغيير</Button>
+   721→          </DialogFooter>
+   722→        </DialogContent>
+   723→      </Dialog>
+   724→
+   725→      {/* Card Dialog */}
+   726→      <Dialog open={cardDialog} onOpenChange={setCardDialog}>
+   727→        <DialogContent>
+   728→          <DialogHeader>
+   729→            <DialogTitle>بيانات البطاقة</DialogTitle>
+   730→          </DialogHeader>
+   731→          <div className="space-y-4">
+   732→            <div><Label>نوع البطاقة</Label><Input value={cardType} onChange={(e) => setCardType(e.target.value)} placeholder="مثال: Visa" /></div>
+   733→            <div><Label>رقم البطاقة</Label><Input value={cardNumber} onChange={(e) => setCardNumber(e.target.value)} dir="ltr" placeholder="رقم البطاقة" /></div>
+   734→          </div>
+   735→          <DialogFooter>
+   736→            <Button variant="outline" onClick={() => setCardDialog(false)}>إلغاء</Button>
+   737→            <Button onClick={handleChangeCard}>حفظ</Button>
+   738→          </DialogFooter>
+   739→        </DialogContent>
+   740→      </Dialog>
+   741→
+   742→      {/* PIN Reset Dialog */}
+   743→      <Dialog open={pinDialog} onOpenChange={setPinDialog}>
+   744→        <DialogContent>
+   745→          <DialogHeader>
+   746→            <DialogTitle>إعادة تعيين رمز PIN</DialogTitle>
+   747→          </DialogHeader>
+   748→          <p className="text-sm text-muted-foreground">هل أنت متأكد من إعادة تعيين رمز PIN لهذا المستخدم؟ سيحتاج المستخدم إلى إنشاء رمز PIN جديد عند تسجيل الدخول.</p>
+   749→          <DialogFooter>
+   750→            <Button variant="outline" onClick={() => setPinDialog(false)}>إلغاء</Button>
+   751→            <Button variant="destructive" onClick={handleResetPIN}>إعادة تعيين</Button>
+   752→          </DialogFooter>
+   753→        </DialogContent>
+   754→      </Dialog>
+   755→
+   756→      {/* Send Notification Dialog */}
+   757→      <Dialog open={notifDialog} onOpenChange={setNotifDialog}>
+   758→        <DialogContent>
+   759→          <DialogHeader>
+   760→            <DialogTitle>إرسال إشعار للمستخدم</DialogTitle>
+   761→          </DialogHeader>
+   762→          <div className="space-y-4">
+   763→            <div><Label>عنوان الإشعار</Label><Input value={notifTitle} onChange={(e) => setNotifTitle(e.target.value)} /></div>
+   764→            <div><Label>محتوى الإشعار</Label><Textarea value={notifBody} onChange={(e) => setNotifBody(e.target.value)} className="min-h-[100px]" /></div>
+   765→          </div>
+   766→          <DialogFooter>
+   767→            <Button variant="outline" onClick={() => setNotifDialog(false)}>إلغاء</Button>
+   768→            <Button onClick={handleSendNotification} className="bg-purple-600 hover:bg-purple-700">إرسال</Button>
+   769→          </DialogFooter>
+   770→        </DialogContent>
+   771→      </Dialog>
+   772→    </div>
+   773→  );
+   774→}
+   775→

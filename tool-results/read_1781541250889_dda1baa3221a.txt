@@ -1,0 +1,602 @@
+   500→   500→   500→
+   501→   501→   501→CREATE INDEX IF NOT EXISTS idx_apiprod_provider ON public.api_products(api_provider_id);
+   502→   502→   502→CREATE INDEX IF NOT EXISTS idx_apiprod_category ON public.api_products(api_category_id);
+   503→   503→   503→CREATE INDEX IF NOT EXISTS idx_apiprod_linked ON public.api_products(provider_id);
+   504→   504→   504→
+   505→   505→   505→-- =====================================================
+   506→   506→   506→-- 13. API_BALANCE_LOG - سجل أرصدة API
+   507→   507→   507→-- =====================================================
+   508→   508→   508→CREATE TABLE IF NOT EXISTS public.api_balance_log (
+   509→   509→   509→  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+   510→   510→   510→  api_provider_id TEXT NOT NULL REFERENCES public.api_providers(id) ON DELETE CASCADE,
+   511→   511→   511→  
+   512→   512→   512→  balance NUMERIC(15,2) NOT NULL,
+   513→   513→   513→  currency TEXT DEFAULT 'USD',
+   514→   514→   514→  previous_balance NUMERIC(15,2) DEFAULT 0,
+   515→   515→   515→  change_amount NUMERIC(15,2) DEFAULT 0,
+   516→   516→   516→  
+   517→   517→   517→  checked_at TIMESTAMPTZ DEFAULT NOW()
+   518→   518→   518→);
+   519→   519→   519→
+   520→   520→   520→CREATE INDEX IF NOT EXISTS idx_apibal_provider ON public.api_balance_log(api_provider_id);
+   521→   521→   521→CREATE INDEX IF NOT EXISTS idx_apibal_checked ON public.api_balance_log(checked_at DESC);
+   522→   522→   522→
+   523→   523→   523→-- =====================================================
+   524→   524→   524→-- 14. EXCHANGE_RATES - أسعار الصرف
+   525→   525→   525→-- =====================================================
+   526→   526→   526→CREATE TABLE IF NOT EXISTS public.exchange_rates (
+   527→   527→   527→  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+   528→   528→   528→  
+   529→   529→   529→  usd_to_yer NUMERIC(10,4) NOT NULL DEFAULT 530,
+   530→   530→   530→  usd_to_sar NUMERIC(10,4) NOT NULL DEFAULT 3.75,
+   531→   531→   531→  sar_to_yer NUMERIC(10,4) NOT NULL DEFAULT 141.33,
+   532→   532→   532→  
+   533→   533→   533→  source TEXT DEFAULT 'manual' CHECK (source IN ('manual', 'auto', 'api')),
+   534→   534→   534→  is_active BOOLEAN DEFAULT TRUE,
+   535→   535→   535→  
+   536→   536→   536→  updated_by UUID REFERENCES public.users(id),
+   537→   537→   537→  created_at TIMESTAMPTZ DEFAULT NOW(),
+   538→   538→   538→  updated_at TIMESTAMPTZ DEFAULT NOW()
+   539→   539→   539→);
+   540→   540→   540→
+   541→   541→   541→-- =====================================================
+   542→   542→   542→-- 15. NOTIFICATIONS - الإشعارات
+   543→   543→   543→-- =====================================================
+   544→   544→   544→CREATE TABLE IF NOT EXISTS public.notifications (
+   545→   545→   545→  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+   546→   546→   546→  user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+   547→   547→   547→  
+   548→   548→   548→  title TEXT NOT NULL,
+   549→   549→   549→  body TEXT DEFAULT '',
+   550→   550→   550→  type TEXT DEFAULT 'info' CHECK (type IN ('info', 'success', 'warning', 'error', 'security', 'transaction', 'order', 'deposit', 'withdraw', 'promo', 'kyc')),
+   551→   551→   551→  
+   552→   552→   552→  is_read BOOLEAN DEFAULT FALSE,
+   553→   553→   553→  
+   554→   554→   554→  -- رابط التنقل عند الضغط
+   555→   555→   555→  navigation_target TEXT DEFAULT '',
+   556→   556→   556→  navigation_params JSONB DEFAULT '{}',
+   557→   557→   557→  
+   558→   558→   558→  data JSONB DEFAULT '{}',
+   559→   559→   559→  
+   560→   560→   560→  created_at TIMESTAMPTZ DEFAULT NOW()
+   561→   561→   561→);
+   562→   562→   562→
+   563→   563→   563→CREATE INDEX IF NOT EXISTS idx_notif_user ON public.notifications(user_id);
+   564→   564→   564→CREATE INDEX IF NOT EXISTS idx_notif_read ON public.notifications(is_read);
+   565→   565→   565→CREATE INDEX IF NOT EXISTS idx_notif_created ON public.notifications(created_at DESC);
+   566→   566→   566→CREATE INDEX IF NOT EXISTS idx_notif_type ON public.notifications(type);
+   567→   567→   567→
+   568→   568→   568→-- =====================================================
+   569→   569→   569→-- 16. ADMIN_NOTIFICATIONS - إشعارات الإدارة
+   570→   570→   570→-- =====================================================
+   571→   571→   571→CREATE TABLE IF NOT EXISTS public.admin_notifications (
+   572→   572→   572→  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+   573→   573→   573→  
+   574→   574→   574→  title TEXT NOT NULL,
+   575→   575→   575→  body TEXT DEFAULT '',
+   576→   576→   576→  type TEXT DEFAULT 'info' CHECK (type IN ('info', 'deposit', 'withdraw', 'order', 'kyc', 'support', 'security', 'system')),
+   577→   577→   577→  
+   578→   578→   578→  target_role TEXT DEFAULT 'admin' CHECK (target_role IN ('admin', 'owner', 'all')),
+   579→   579→   579→  is_read BOOLEAN DEFAULT FALSE,
+   580→   580→   580→  
+   581→   581→   581→  navigation_target TEXT DEFAULT '',
+   582→   582→   582→  navigation_params JSONB DEFAULT '{}',
+   583→   583→   583→  
+   584→   584→   584→  data JSONB DEFAULT '{}',
+   585→   585→   585→  sent_at TIMESTAMPTZ DEFAULT NOW()
+   586→   586→   586→);
+   587→   587→   587→
+   588→   588→   588→CREATE INDEX IF NOT EXISTS idx_adminnotif_type ON public.admin_notifications(type);
+   589→   589→   589→CREATE INDEX IF NOT EXISTS idx_adminnotif_read ON public.admin_notifications(is_read);
+   590→   590→   590→CREATE INDEX IF NOT EXISTS idx_adminnotif_sent ON public.admin_notifications(sent_at DESC);
+   591→   591→   591→
+   592→   592→   592→-- =====================================================
+   593→   593→   593→-- 17. BANNERS - البانرات الإعلانية
+   594→   594→   594→-- =====================================================
+   595→   595→   595→CREATE TABLE IF NOT EXISTS public.banners (
+   596→   596→   596→  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+   597→   597→   597→  
+   598→   598→   598→  title TEXT NOT NULL,
+   599→   599→   599→  description TEXT DEFAULT '',
+   600→   600→   600→  image_url TEXT NOT NULL,
+   601→   601→   601→  
+   602→   602→   602→  -- مكان العرض
+   603→   603→   603→  position TEXT DEFAULT 'home' CHECK (position IN ('login', 'home', 'services', 'wallet', 'all')),
+   604→   604→   604→  
+   605→   605→   605→  link_type TEXT DEFAULT 'none' CHECK (link_type IN ('none', 'url', 'screen', 'provider', 'promo')),
+   606→   606→   606→  link_target TEXT DEFAULT '',
+   607→   607→   607→  
+   608→   608→   608→  sort_order INTEGER DEFAULT 0,
+   609→   609→   609→  is_active BOOLEAN DEFAULT TRUE,
+   610→   610→   610→  
+   611→   611→   611→  start_date TIMESTAMPTZ,
+   612→   612→   612→  end_date TIMESTAMPTZ,
+   613→   613→   613→  
+   614→   614→   614→  created_at TIMESTAMPTZ DEFAULT NOW(),
+   615→   615→   615→  updated_at TIMESTAMPTZ DEFAULT NOW()
+   616→   616→   616→);
+   617→   617→   617→
+   618→   618→   618→CREATE INDEX IF NOT EXISTS idx_banners_position ON public.banners(position);
+   619→   619→   619→CREATE INDEX IF NOT EXISTS idx_banners_active ON public.banners(is_active);
+   620→   620→   620→
+   621→   621→   621→-- =====================================================
+   622→   622→   622→-- 18. GIFT_CODES - أكواد الهدايا
+   623→   623→   623→-- =====================================================
+   624→   624→   624→CREATE TABLE IF NOT EXISTS public.gift_codes (
+   625→   625→   625→  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+   626→   626→   626→  
+   627→   627→   627→  code TEXT UNIQUE NOT NULL,
+   628→   628→   628→  amount NUMERIC(15,2) NOT NULL CHECK (amount > 0),
+   629→   629→   629→  currency TEXT NOT NULL CHECK (currency IN ('YER', 'SAR', 'USD')),
+   630→   630→   630→  
+   631→   631→   631→  created_by UUID NOT NULL REFERENCES public.users(id),
+   632→   632→   632→  redeemed_by UUID REFERENCES public.users(id),
+   633→   633→   633→  redeemed_at TIMESTAMPTZ,
+   634→   634→   634→  
+   635→   635→   635→  status TEXT DEFAULT 'active' CHECK (status IN ('active', 'redeemed', 'expired', 'cancelled')),
+   636→   636→   636→  expires_at TIMESTAMPTZ,
+   637→   637→   637→  
+   638→   638→   638→  max_uses INTEGER DEFAULT 1,
+   639→   639→   639→  used_count INTEGER DEFAULT 0,
+   640→   640→   640→  
+   641→   641→   641→  transaction_id UUID REFERENCES public.transactions(id),
+   642→   642→   642→  
+   643→   643→   643→  created_at TIMESTAMPTZ DEFAULT NOW()
+   644→   644→   644→);
+   645→   645→   645→
+   646→   646→   646→CREATE INDEX IF NOT EXISTS idx_giftcode_code ON public.gift_codes(code);
+   647→   647→   647→CREATE INDEX IF NOT EXISTS idx_giftcode_status ON public.gift_codes(status);
+   648→   648→   648→
+   649→   649→   649→-- =====================================================
+   650→   650→   650→-- 19. PROMO_CODES - أكواد الخصم
+   651→   651→   651→-- =====================================================
+   652→   652→   652→CREATE TABLE IF NOT EXISTS public.promo_codes (
+   653→   653→   653→  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+   654→   654→   654→  
+   655→   655→   655→  code TEXT UNIQUE NOT NULL,
+   656→   656→   656→  discount_type TEXT NOT NULL CHECK (discount_type IN ('percentage', 'fixed')),
+   657→   657→   657→  discount_value NUMERIC(15,2) NOT NULL,
+   658→   658→   658→  currency TEXT DEFAULT 'YER' CHECK (currency IN ('YER', 'SAR', 'USD')),
+   659→   659→   659→  
+   660→   660→   660→  min_purchase NUMERIC(15,2) DEFAULT 0,
+   661→   661→   661→  max_discount NUMERIC(15,2) DEFAULT 0,
+   662→   662→   662→  
+   663→   663→   663→  max_uses INTEGER DEFAULT 100,
+   664→   664→   664→  used_count INTEGER DEFAULT 0,
+   665→   665→   665→  max_uses_per_user INTEGER DEFAULT 1,
+   666→   666→   666→  
+   667→   667→   667→  status TEXT DEFAULT 'active' CHECK (status IN ('active', 'paused', 'expired', 'cancelled')),
+   668→   668→   668→  starts_at TIMESTAMPTZ DEFAULT NOW(),
+   669→   669→   669→  expires_at TIMESTAMPTZ,
+   670→   670→   670→  
+   671→   671→   671→  applicable_providers TEXT[] DEFAULT '{}',
+   672→   672→   672→  applicable_categories TEXT[] DEFAULT '{}',
+   673→   673→   673→  
+   674→   674→   674→  created_by UUID REFERENCES public.users(id),
+   675→   675→   675→  created_at TIMESTAMPTZ DEFAULT NOW()
+   676→   676→   676→);
+   677→   677→   677→
+   678→   678→   678→-- =====================================================
+   679→   679→   679→-- 20. WALLET_ADDRESSES - عناوين المحافظ (كريبتو)
+   680→   680→   680→-- =====================================================
+   681→   681→   681→CREATE TABLE IF NOT EXISTS public.wallet_addresses (
+   682→   682→   682→  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+   683→   683→   683→  
+   684→   684→   684→  network TEXT NOT NULL CHECK (network IN ('TRC20', 'ERC20', 'BEP20', 'BTC', 'ETH', 'SOL', 'MATIC', 'OTHER')),
+   685→   685→   685→  network_name TEXT DEFAULT '',
+   686→   686→   686→  address TEXT NOT NULL,
+   687→   687→   687→  label TEXT DEFAULT '',
+   688→   688→   688→  
+   689→   689→   689→  qr_code_url TEXT DEFAULT '',
+   690→   690→   690→  is_active BOOLEAN DEFAULT TRUE,
+   691→   691→   691→  
+   692→   692→   692→  currency TEXT DEFAULT 'USDT',
+   693→   693→   693→  
+   694→   694→   694→  created_at TIMESTAMPTZ DEFAULT NOW(),
+   695→   695→   695→  updated_at TIMESTAMPTZ DEFAULT NOW()
+   696→   696→   696→);
+   697→   697→   697→
+   698→   698→   698→-- =====================================================
+   699→   699→   699→-- 21. SUPPORT_TICKETS - تذاكر الدعم
+   700→   700→   700→-- =====================================================
+   701→   701→   701→CREATE TABLE IF NOT EXISTS public.support_tickets (
+   702→   702→   702→  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+   703→   703→   703→  user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+   704→   704→   704→  
+   705→   705→   705→  subject TEXT NOT NULL,
+   706→   706→   706→  category TEXT DEFAULT 'general' CHECK (category IN ('general', 'technical', 'financial', 'complaint', 'suggestion')),
+   707→   707→   707→  priority TEXT DEFAULT 'medium' CHECK (priority IN ('low', 'medium', 'high', 'urgent')),
+   708→   708→   708→  
+   709→   709→   709→  status TEXT DEFAULT 'open' CHECK (status IN ('open', 'in_progress', 'waiting_user', 'resolved', 'closed')),
+   710→   710→   710→  
+   711→   711→   711→  assigned_to UUID REFERENCES public.users(id),
+   712→   712→   712→  
+   713→   713→   713→  created_at TIMESTAMPTZ DEFAULT NOW(),
+   714→   714→   714→  updated_at TIMESTAMPTZ DEFAULT NOW(),
+   715→   715→   715→  resolved_at TIMESTAMPTZ
+   716→   716→   716→);
+   717→   717→   717→
+   718→   718→   718→CREATE INDEX IF NOT EXISTS idx_tickets_user ON public.support_tickets(user_id);
+   719→   719→   719→CREATE INDEX IF NOT EXISTS idx_tickets_status ON public.support_tickets(status);
+   720→   720→   720→CREATE INDEX IF NOT EXISTS idx_tickets_assigned ON public.support_tickets(assigned_to);
+   721→   721→   721→
+   722→   722→   722→-- =====================================================
+   723→   723→   723→-- 22. SUPPORT_MESSAGES - رسائل الدعم
+   724→   724→   724→-- =====================================================
+   725→   725→   725→CREATE TABLE IF NOT EXISTS public.support_messages (
+   726→   726→   726→  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+   727→   727→   727→  ticket_id UUID NOT NULL REFERENCES public.support_tickets(id) ON DELETE CASCADE,
+   728→   728→   728→  
+   729→   729→   729→  sender_id UUID REFERENCES public.users(id),
+   730→   730→   730→  sender_type TEXT DEFAULT 'user' CHECK (sender_type IN ('user', 'admin', 'system')),
+   731→   731→   731→  message TEXT NOT NULL,
+   732→   732→   732→  
+   733→   733→   733→  attachments JSONB DEFAULT '[]',
+   734→   734→   734→  is_read BOOLEAN DEFAULT FALSE,
+   735→   735→   735→  
+   736→   736→   736→  created_at TIMESTAMPTZ DEFAULT NOW()
+   737→   737→   737→);
+   738→   738→   738→
+   739→   739→   739→CREATE INDEX IF NOT EXISTS idx_messages_ticket ON public.support_messages(ticket_id);
+   740→   740→   740→
+   741→   741→   741→-- =====================================================
+   742→   742→   742→-- 23. SUPPORT_LIVECHAT - المحادثات المباشرة
+   743→   743→   743→-- =====================================================
+   744→   744→   744→CREATE TABLE IF NOT EXISTS public.support_livechat (
+   745→   745→   745→  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+   746→   746→   746→  user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+   747→   747→   747→  
+   748→   748→   748→  admin_id UUID REFERENCES public.users(id),
+   749→   749→   749→  status TEXT DEFAULT 'waiting' CHECK (status IN ('waiting', 'active', 'closed')),
+   750→   750→   750→  
+   751→   751→   751→  last_message TEXT DEFAULT '',
+   752→   752→   752→  last_message_at TIMESTAMPTZ,
+   753→   753→   753→  unread_user INTEGER DEFAULT 0,
+   754→   754→   754→  unread_admin INTEGER DEFAULT 0,
+   755→   755→   755→  
+   756→   756→   756→  created_at TIMESTAMPTZ DEFAULT NOW(),
+   757→   757→   757→  updated_at TIMESTAMPTZ DEFAULT NOW()
+   758→   758→   758→);
+   759→   759→   759→
+   760→   760→   760→CREATE INDEX IF NOT EXISTS idx_livechat_user ON public.support_livechat(user_id);
+   761→   761→   761→CREATE INDEX IF NOT EXISTS idx_livechat_admin ON public.support_livechat(admin_id);
+   762→   762→   762→CREATE INDEX IF NOT EXISTS idx_livechat_status ON public.support_livechat(status);
+   763→   763→   763→
+   764→   764→   764→-- =====================================================
+   765→   765→   765→-- 24. LIVECHAT_MESSAGES - رسائل المحادثة المباشرة
+   766→   766→   766→-- =====================================================
+   767→   767→   767→CREATE TABLE IF NOT EXISTS public.livechat_messages (
+   768→   768→   768→  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+   769→   769→   769→  chat_id UUID NOT NULL REFERENCES public.support_livechat(id) ON DELETE CASCADE,
+   770→   770→   770→  
+   771→   771→   771→  sender_id UUID NOT NULL REFERENCES public.users(id),
+   772→   772→   772→  sender_type TEXT DEFAULT 'user' CHECK (sender_type IN ('user', 'admin', 'system')),
+   773→   773→   773→  message TEXT NOT NULL,
+   774→   774→   774→  message_type TEXT DEFAULT 'text' CHECK (message_type IN ('text', 'image', 'file', 'system')),
+   775→   775→   775→  
+   776→   776→   776→  attachments JSONB DEFAULT '[]',
+   777→   777→   777→  is_read BOOLEAN DEFAULT FALSE,
+   778→   778→   778→  
+   779→   779→   779→  created_at TIMESTAMPTZ DEFAULT NOW()
+   780→   780→   780→);
+   781→   781→   781→
+   782→   782→   782→CREATE INDEX IF NOT EXISTS idx_livemsg_chat ON public.livechat_messages(chat_id);
+   783→   783→   783→
+   784→   784→   784→-- =====================================================
+   785→   785→   785→-- 25. ACTIVITY_LOG - سجل النشاط
+   786→   786→   786→-- =====================================================
+   787→   787→   787→CREATE TABLE IF NOT EXISTS public.activity_log (
+   788→   788→   788→  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+   789→   789→   789→  user_id UUID REFERENCES public.users(id),
+   790→   790→   790→  
+   791→   791→   791→  action TEXT NOT NULL,
+   792→   792→   792→  resource_type TEXT DEFAULT '',
+   793→   793→   793→  resource_id TEXT DEFAULT '',
+   794→   794→   794→  details JSONB DEFAULT '{}',
+   795→   795→   795→  
+   796→   796→   796→  ip_address TEXT DEFAULT '',
+   797→   797→   797→  user_agent TEXT DEFAULT '',
+   798→   798→   798→  
+   799→   799→   799→  created_at TIMESTAMPTZ DEFAULT NOW()
+   800→   800→   800→);
+   801→   801→   801→
+   802→   802→   802→CREATE INDEX IF NOT EXISTS idx_activity_user ON public.activity_log(user_id);
+   803→   803→   803→CREATE INDEX IF NOT EXISTS idx_activity_action ON public.activity_log(action);
+   804→   804→   804→CREATE INDEX IF NOT EXISTS idx_activity_created ON public.activity_log(created_at DESC);
+   805→   805→   805→
+   806→   806→   806→-- =====================================================
+   807→   807→   807→-- 26. APP_CONFIG - إعدادات التطبيق
+   808→   808→   808→-- =====================================================
+   809→   809→   809→CREATE TABLE IF NOT EXISTS public.app_config (
+   810→   810→   810→  key TEXT PRIMARY KEY,
+   811→   811→   811→  value JSONB NOT NULL DEFAULT '{}',
+   812→   812→   812→  description TEXT DEFAULT '',
+   813→   813→   813→  
+   814→   814→   814→  updated_by UUID REFERENCES public.users(id),
+   815→   815→   815→  updated_at TIMESTAMPTZ DEFAULT NOW()
+   816→   816→   816→);
+   817→   817→   817→
+   818→   818→   818→-- =====================================================
+   819→   819→   819→-- 27. EMPLOYEES - الموظفين
+   820→   820→   820→-- =====================================================
+   821→   821→   821→CREATE TABLE IF NOT EXISTS public.employees (
+   822→   822→   822→  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+   823→   823→   823→  user_id UUID UNIQUE NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+   824→   824→   824→  
+   825→   825→   825→  role TEXT DEFAULT 'admin' CHECK (role IN ('admin', 'support', 'finance', 'viewer')),
+   826→   826→   826→  permissions JSONB DEFAULT '{}',
+   827→   827→   827→  
+   828→   828→   828→  is_active BOOLEAN DEFAULT TRUE,
+   829→   829→   829→  added_by UUID REFERENCES public.users(id),
+   830→   830→   830→  
+   831→   831→   831→  created_at TIMESTAMPTZ DEFAULT NOW()
+   832→   832→   832→);
+   833→   833→   833→
+   834→   834→   834→-- =====================================================
+   835→   835→   835→-- 28. COMMISSION_LOG - سجل العمولات
+   836→   836→   836→-- =====================================================
+   837→   837→   837→CREATE TABLE IF NOT EXISTS public.commission_log (
+   838→   838→   838→  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+   839→   839→   839→  order_id UUID REFERENCES public.orders(id),
+   840→   840→   840→  transaction_id UUID REFERENCES public.transactions(id),
+   841→   841→   841→  
+   842→   842→   842→  provider_id TEXT DEFAULT '',
+   843→   843→   843→  package_id TEXT DEFAULT '',
+   844→   844→   844→  
+   845→   845→   845→  commission_amount NUMERIC(15,2) NOT NULL,
+   846→   846→   846→  commission_currency TEXT DEFAULT 'USD',
+   847→   847→   847→  commission_type TEXT DEFAULT 'percentage',
+   848→   848→   848→  
+   849→   849→   849→  created_at TIMESTAMPTZ DEFAULT NOW()
+   850→   850→   850→);
+   851→   851→   851→
+   852→   852→   852→CREATE INDEX IF NOT EXISTS idx_commission_order ON public.commission_log(order_id);
+   853→   853→   853→CREATE INDEX IF NOT EXISTS idx_commission_created ON public.commission_log(created_at DESC);
+   854→   854→   854→
+   855→   855→   855→-- =====================================================
+   856→   856→   856→-- 29. BANKS - الحسابات البنكية
+   857→   857→   857→-- =====================================================
+   858→   858→   858→CREATE TABLE IF NOT EXISTS public.banks (
+   859→   859→   859→  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+   860→   860→   860→  
+   861→   861→   861→  bank_name TEXT NOT NULL,
+   862→   862→   862→  account_name TEXT DEFAULT '',
+   863→   863→   863→  account_number TEXT DEFAULT '',
+   864→   864→   864→  iban TEXT DEFAULT '',
+   865→   865→   865→  swift_code TEXT DEFAULT '',
+   866→   866→   866→  
+   867→   867→   867→  is_active BOOLEAN DEFAULT TRUE,
+   868→   868→   868→  
+   869→   869→   869→  created_at TIMESTAMPTZ DEFAULT NOW()
+   870→   870→   870→);
+   871→   871→   871→
+   872→   872→   872→-- =====================================================
+   873→   873→   873→-- 30. OFFICES - المكاتب والوكلاء
+   874→   874→   874→-- =====================================================
+   875→   875→   875→CREATE TABLE IF NOT EXISTS public.offices (
+   876→   876→   876→  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+   877→   877→   877→  user_id UUID REFERENCES public.users(id),
+   878→   878→   878→  
+   879→   879→   879→  name TEXT NOT NULL,
+   880→   880→   880→  phone TEXT DEFAULT '',
+   881→   881→   881→  address TEXT DEFAULT '',
+   882→   882→   882→  governorate TEXT DEFAULT '',
+   883→   883→   883→  
+   884→   884→   884→  commission_rate NUMERIC(5,2) DEFAULT 0,
+   885→   885→   885→  balance_yer NUMERIC(15,2) DEFAULT 0,
+   886→   886→   886→  balance_sar NUMERIC(15,2) DEFAULT 0,
+   887→   887→   887→  balance_usd NUMERIC(15,2) DEFAULT 0,
+   888→   888→   888→  
+   889→   889→   889→  is_active BOOLEAN DEFAULT TRUE,
+   890→   890→   890→  
+   891→   891→   891→  created_at TIMESTAMPTZ DEFAULT NOW(),
+   892→   892→   892→  updated_at TIMESTAMPTZ DEFAULT NOW()
+   893→   893→   893→);
+   894→   894→   894→
+   895→   895→   895→-- =====================================================
+   896→   896→   896→-- 31. KYC_DOCUMENTS - وثائق التحقق
+   897→   897→   897→-- =====================================================
+   898→   898→   898→CREATE TABLE IF NOT EXISTS public.kyc_documents (
+   899→   899→   899→  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+   900→   900→   900→  user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+   901→   901→   901→  
+   902→   902→   902→  document_type TEXT NOT NULL CHECK (document_type IN ('national_id_front', 'national_id_back', 'selfie', 'passport', 'utility_bill')),
+   903→   903→   903→  document_url TEXT NOT NULL,
+   904→   904→   904→  
+   905→   905→   905→  status TEXT DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'rejected')),
+   906→   906→   906→  rejection_reason TEXT DEFAULT '',
+   907→   907→   907→  
+   908→   908→   908→  ai_verification_result JSONB DEFAULT '{}',
+   909→   909→   909→  ai_confidence_score NUMERIC(5,2) DEFAULT 0,
+   910→   910→   910→  ai_verified_at TIMESTAMPTZ,
+   911→   911→   911→  
+   912→   912→   912→  reviewed_by UUID REFERENCES public.users(id),
+   913→   913→   913→  reviewed_at TIMESTAMPTZ,
+   914→   914→   914→  
+   915→   915→   915→  created_at TIMESTAMPTZ DEFAULT NOW()
+   916→   916→   916→);
+   917→   917→   917→
+   918→   918→   918→CREATE INDEX IF NOT EXISTS idx_kyc_user ON public.kyc_documents(user_id);
+   919→   919→   919→CREATE INDEX IF NOT EXISTS idx_kyc_status ON public.kyc_documents(status);
+   920→   920→   920→
+   921→   921→   921→-- =====================================================
+   922→   922→   922→-- 32. SOCIAL_LINKS - روابط التواصل
+   923→   923→   923→-- =====================================================
+   924→   924→   924→CREATE TABLE IF NOT EXISTS public.social_links (
+   925→   925→   925→  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+   926→   926→   926→  
+   927→   927→   927→  platform TEXT NOT NULL CHECK (platform IN ('whatsapp', 'telegram', 'facebook', 'twitter', 'instagram', 'tiktok', 'youtube', 'website', 'other')),
+   928→   928→   928→  url TEXT NOT NULL,
+   929→   929→   929→  label TEXT DEFAULT '',
+   930→   930→   930→  icon TEXT DEFAULT '',
+   931→   931→   931→  
+   932→   932→   932→  is_active BOOLEAN DEFAULT TRUE,
+   933→   933→   933→  sort_order INTEGER DEFAULT 0,
+   934→   934→   934→  
+   935→   935→   935→  created_at TIMESTAMPTZ DEFAULT NOW()
+   936→   936→   936→);
+   937→   937→   937→
+   938→   938→   938→-- =====================================================
+   939→   939→   939→-- 33. LEGAL_CONTENT - المحتوى القانوني
+   940→   940→   940→-- =====================================================
+   941→   941→   941→CREATE TABLE IF NOT EXISTS public.legal_content (
+   942→   942→   942→  id TEXT PRIMARY KEY,
+   943→   943→   943→  
+   944→   944→   944→  title TEXT NOT NULL,
+   945→   945→   945→  title_en TEXT DEFAULT '',
+   946→   946→   946→  content TEXT DEFAULT '',
+   947→   947→   947→  content_en TEXT DEFAULT '',
+   948→   948→   948→  
+   949→   949→   949→  is_active BOOLEAN DEFAULT TRUE,
+   950→   950→   950→  
+   951→   951→   951→  updated_at TIMESTAMPTZ DEFAULT NOW()
+   952→   952→   952→);
+   953→   953→   953→
+   954→   954→   954→-- =====================================================
+   955→   955→   955→-- 34. BRANDING - العلامة التجارية
+   956→   956→   956→-- =====================================================
+   957→   957→   957→CREATE TABLE IF NOT EXISTS public.branding (
+   958→   958→   958→  id TEXT PRIMARY KEY DEFAULT 'default',
+   959→   959→   959→  
+   960→   960→   960→  app_name TEXT DEFAULT 'محفظة الجنوب',
+   961→   961→   961→  app_name_en TEXT DEFAULT 'South Wallet',
+   962→   962→   962→  logo_url TEXT DEFAULT '',
+   963→   963→   963→  logo_dark_url TEXT DEFAULT '',
+   964→   964→   964→  favicon_url TEXT DEFAULT '',
+   965→   965→   965→  primary_color TEXT DEFAULT '#5C1A1B',
+   966→   966→   966→  secondary_color TEXT DEFAULT '#8B2252',
+   967→   967→   967→  accent_color TEXT DEFAULT '#D4547A',
+   968→   968→   968→  
+   969→   969→   969→  splash_background TEXT DEFAULT '#3D0F10',
+   970→   970→   970→  
+   971→   971→   971→  updated_at TIMESTAMPTZ DEFAULT NOW()
+   972→   972→   972→);
+   973→   973→   973→
+   974→   974→   974→-- =====================================================
+   975→   975→   975→-- 35. CURRENCY_CARDS - بطاقات العملات
+   976→   976→   976→-- =====================================================
+   977→   977→   977→CREATE TABLE IF NOT EXISTS public.currency_cards (
+   978→   978→   978→  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+   979→   979→   979→  
+   980→   980→   980→  currency TEXT NOT NULL CHECK (currency IN ('YER', 'SAR', 'USD')),
+   981→   981→   981→  card_name TEXT DEFAULT '',
+   982→   982→   982→  
+   983→   983→   983→  gradient_start TEXT DEFAULT '',
+   984→   984→   984→  gradient_end TEXT DEFAULT '',
+   985→   985→   985→  text_color TEXT DEFAULT '#FFFFFF',
+   986→   986→   986→  icon TEXT DEFAULT '',
+   987→   987→   987→  
+   988→   988→   988→  is_active BOOLEAN DEFAULT TRUE,
+   989→   989→   989→  
+   990→   990→   990→  created_at TIMESTAMPTZ DEFAULT NOW()
+   991→   991→   991→);
+   992→   992→   992→
+   993→   993→   993→-- =====================================================
+   994→   994→   994→-- 36. CARD_COLORS - ألوان البطاقات
+   995→   995→   995→-- =====================================================
+   996→   996→   996→CREATE TABLE IF NOT EXISTS public.card_colors (
+   997→   997→   997→  currency TEXT PRIMARY KEY CHECK (currency IN ('YER', 'SAR', 'USD')),
+   998→   998→   998→  
+   999→   999→   999→  primary_color TEXT NOT NULL DEFAULT '#5C1A1B',
+  1000→  1000→  1000→  secondary_color TEXT NOT NULL DEFAULT '#8B2252',
+  1001→  1001→  1001→  text_color TEXT NOT NULL DEFAULT '#FFFFFF',
+  1002→  1002→  1002→  gradient_direction TEXT DEFAULT 'to bottom right',
+  1003→  1003→  1003→  
+  1004→  1004→  1004→  updated_at TIMESTAMPTZ DEFAULT NOW()
+  1005→  1005→  1005→);
+  1006→  1006→  1006→
+  1007→  1007→  1007→-- إدخال ألوان افتراضية
+  1008→  1008→  1008→INSERT INTO public.card_colors (currency, primary_color, secondary_color, text_color) VALUES
+  1009→  1009→  1009→  ('YER', '#5C1A1B', '#3D0F10', '#FFFFFF'),
+  1010→  1010→  1010→  ('SAR', '#1A5C2B', '#0F3D1A', '#FFFFFF'),
+  1011→  1011→  1011→  ('USD', '#1A3A5C', '#0F2540', '#FFFFFF')
+  1012→  1012→  1012→ON CONFLICT (currency) DO NOTHING;
+  1013→  1013→  1013→
+  1014→  1014→  1014→-- =====================================================
+  1015→  1015→  1015→-- 37. LIMITS - الحدود والسقوف
+  1016→  1016→  1016→-- =====================================================
+  1017→  1017→  1017→CREATE TABLE IF NOT EXISTS public.limits (
+  1018→  1018→  1018→  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  1019→  1019→  1019→  
+  1020→  1020→  1020→  limit_type TEXT NOT NULL CHECK (limit_type IN ('daily_deposit', 'daily_withdraw', 'daily_transfer', 'monthly_deposit', 'monthly_withdraw', 'single_transaction', 'min_deposit', 'min_withdraw')),
+  1021→  1021→  1021→  currency TEXT NOT NULL CHECK (currency IN ('YER', 'SAR', 'USD')),
+  1022→  1022→  1022→  
+  1023→  1023→  1023→  min_amount NUMERIC(15,2) DEFAULT 0,
+  1024→  1024→  1024→  max_amount NUMERIC(15,2) DEFAULT 0,
+  1025→  1025→  1025→  
+  1026→  1026→  1026→  user_tier TEXT DEFAULT 'basic' CHECK (user_tier IN ('basic', 'verified', 'premium')),
+  1027→  1027→  1027→  
+  1028→  1028→  1028→  is_active BOOLEAN DEFAULT TRUE,
+  1029→  1029→  1029→  
+  1030→  1030→  1030→  created_at TIMESTAMPTZ DEFAULT NOW(),
+  1031→  1031→  1031→  updated_at TIMESTAMPTZ DEFAULT NOW()
+  1032→  1032→  1032→);
+  1033→  1033→  1033→
+  1034→  1034→  1034→-- =====================================================
+  1035→  1035→  1035→-- 38. USER_GIFT_CODES - قسائم الهدايا بين المستخدمين
+  1036→  1036→  1036→-- =====================================================
+  1037→  1037→  1037→CREATE TABLE IF NOT EXISTS public.user_gift_codes (
+  1038→  1038→  1038→  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  1039→  1039→  1039→  
+  1040→  1040→  1040→  sender_id UUID NOT NULL REFERENCES public.users(id),
+  1041→  1041→  1041→  receiver_id UUID REFERENCES public.users(id),
+  1042→  1042→  1042→  receiver_phone TEXT DEFAULT '',
+  1043→  1043→  1043→  
+  1044→  1044→  1044→  amount NUMERIC(15,2) NOT NULL,
+  1045→  1045→  1045→  currency TEXT NOT NULL CHECK (currency IN ('YER', 'SAR', 'USD')),
+  1046→  1046→  1046→  
+  1047→  1047→  1047→  code TEXT UNIQUE NOT NULL,
+  1048→  1048→  1048→  message TEXT DEFAULT '',
+  1049→  1049→  1049→  
+  1050→  1050→  1050→  status TEXT DEFAULT 'active' CHECK (status IN ('active', 'redeemed', 'expired', 'cancelled')),
+  1051→  1051→  1051→  expires_at TIMESTAMPTZ,
+  1052→  1052→  1052→  
+  1053→  1053→  1053→  redeemed_at TIMESTAMPTZ,
+  1054→  1054→  1054→  transaction_id UUID REFERENCES public.transactions(id),
+  1055→  1055→  1055→  
+  1056→  1056→  1056→  created_at TIMESTAMPTZ DEFAULT NOW()
+  1057→  1057→  1057→);
+  1058→  1058→  1058→
+  1059→  1059→  1059→-- =====================================================
+  1060→  1060→  1060→-- 39. BULK_CODES - أكواد الجملة
+  1061→  1061→  1061→-- =====================================================
+  1062→  1062→  1062→CREATE TABLE IF NOT EXISTS public.bulk_codes (
+  1063→  1063→  1063→  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  1064→  1064→  1064→  
+  1065→  1065→  1065→  provider_id TEXT NOT NULL,
+  1066→  1066→  1066→  package_id TEXT NOT NULL,
+  1067→  1067→  1067→  product_name TEXT DEFAULT '',
+  1068→  1068→  1068→  
+  1069→  1069→  1069→  codes JSONB NOT NULL DEFAULT '[]',
+  1070→  1070→  1070→  total_count INTEGER DEFAULT 0,
+  1071→  1071→  1071→  used_count INTEGER DEFAULT 0,
+  1072→  1072→  1072→  remaining_count INTEGER DEFAULT 0,
+  1073→  1073→  1073→  
+  1074→  1074→  1074→  cost_price NUMERIC(15,2) DEFAULT 0,
+  1075→  1075→  1075→  currency TEXT DEFAULT 'USD',
+  1076→  1076→  1076→  
+  1077→  1077→  1077→  added_by UUID REFERENCES public.users(id),
+  1078→  1078→  1078→  
+  1079→  1079→  1079→  created_at TIMESTAMPTZ DEFAULT NOW()
+  1080→  1080→  1080→);
+  1081→  1081→  1081→
+  1082→  1082→  1082→-- =====================================================
+  1083→  1083→  1083→-- 40. INVESTMENTS - الاستثمارات
+  1084→  1084→  1084→-- =====================================================
+  1085→  1085→  1085→CREATE TABLE IF NOT EXISTS public.investments (
+  1086→  1086→  1086→  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  1087→  1087→  1087→  user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+  1088→  1088→  1088→  
+  1089→  1089→  1089→  amount NUMERIC(15,2) NOT NULL,
+  1090→  1090→  1090→  currency TEXT NOT NULL CHECK (currency IN ('YER', 'SAR', 'USD')),
+  1091→  1091→  1091→  
+  1092→  1092→  1092→  plan_name TEXT DEFAULT '',
+  1093→  1093→  1093→  daily_return NUMERIC(5,2) DEFAULT 0,
+  1094→  1094→  1094→  total_return NUMERIC(15,2) DEFAULT 0,
+  1095→  1095→  1095→  
+  1096→  1096→  1096→  status TEXT DEFAULT 'active' CHECK (status IN ('active', 'matured', 'cancelled')),
+  1097→  1097→  1097→  starts_at TIMESTAMPTZ DEFAULT NOW(),
+  1098→  1098→  1098→  ends_at TIMESTAMPTZ,
+  1099→  1099→  1099→  
+
+[showing lines 500-1099 of 1762; use offset=1100 with limit to continue reading]

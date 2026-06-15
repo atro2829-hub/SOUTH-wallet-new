@@ -1,0 +1,1117 @@
+     1→'use client';
+     2→
+     3→import { useState, useEffect, useRef } from 'react';
+     4→import { useTheme } from 'next-themes';
+     5→import { motion, AnimatePresence } from 'framer-motion';
+     6→import {
+     7→  ChevronLeft,
+     8→  Phone,
+     9→  Wifi,
+    10→  Check,
+    11→  AlertTriangle,
+    12→  Loader2,
+    13→  Tag,
+    14→  RotateCcw,
+    15→  Receipt,
+    16→  Copy,
+    17→  CheckCircle2,
+    18→  Zap,
+    19→  Package,
+    20→  Edit3,
+    21→  X,
+    22→  Share2,
+    23→  Download,
+    24→} from 'lucide-react';
+    25→import { useAppStore, type Order } from '@/lib/store';
+    26→import { currencySymbols, currencyBadgeColors, generateReference } from '@/lib/utils';
+    27→import { ref, set, update } from 'firebase/database';
+    28→import { database } from '@/lib/firebase';
+    29→import { useToast } from '@/components/fahed/toast-provider';
+    30→import { serviceIcons } from '@/lib/service-icons';
+    31→import { LOGO_BASE64, RED_LOGO_FILTER } from '@/lib/logo';
+    32→
+    33→const telecomCompanies = [
+    34→  { id: 'yemen-mobile', name: 'يمن موبايل', nameEn: 'Yemen Mobile', color: '#5C1A1B', letter: 'YM', inputLabel: 'رقم الهاتف', inputType: 'phone' as const, inputPrefix: '+967' },
+    35→  { id: 'yo', name: 'يو', nameEn: 'YO', color: '#FF6B00', letter: 'YO', inputLabel: 'رقم الهاتف', inputType: 'phone' as const, inputPrefix: '+967' },
+    36→  { id: 'sabafon', name: 'سبأفون', nameEn: 'Sabafon', color: '#2563EB', letter: 'S', inputLabel: 'رقم الهاتف', inputType: 'phone' as const, inputPrefix: '+967' },
+    37→  { id: 'y', name: 'واي', nameEn: 'Y', color: '#059669', letter: 'Y', inputLabel: 'رقم الهاتف', inputType: 'phone' as const, inputPrefix: '+967' },
+    38→  { id: 'yemen-net', name: 'يمن نت', nameEn: 'Yemen Net', color: '#8B5CF6', letter: 'YN', inputLabel: 'رقم الحساب', inputType: 'text' as const, inputPrefix: '' },
+    39→];
+    40→
+    41→type RechargeMode = 'packages' | 'instant';
+    42→type OrderResult = 'success' | 'insufficient' | 'error' | null;
+    43→
+    44→export default function RechargeScreen() {
+    45→  const { theme } = useTheme();
+    46→  const isDark = theme === 'dark';
+    47→  const { user, packages, addOrder, addNotification, addTransaction, setUser, orders } = useAppStore();
+    48→  const { showToast } = useToast();
+    49→
+    50→  // Step state
+    51→  const [selectedCompanyId, setSelectedCompanyId] = useState<string | null>(null);
+    52→  const [rechargeMode, setRechargeMode] = useState<RechargeMode>('packages');
+    53→  const [selectedPackageId, setSelectedPackageId] = useState<string | null>(null);
+    54→  const [customAmount, setCustomAmount] = useState('');
+    55→  const [customerInput, setCustomerInput] = useState('');
+    56→
+    57→  // Order processing
+    58→  const [isProcessing, setIsProcessing] = useState(false);
+    59→  const [orderResult, setOrderResult] = useState<OrderResult>(null);
+    60→  const [errorMessage, setErrorMessage] = useState('');
+    61→  const [completedOrderId, setCompletedOrderId] = useState('');
+    62→  const [showReceipt, setShowReceipt] = useState(false);
+    63→
+    64→  // Promo
+    65→  const [promoCode, setPromoCode] = useState('');
+    66→  const [promoApplied, setPromoApplied] = useState(false);
+    67→  const [promoDiscount, setPromoDiscount] = useState(0);
+    68→
+    69→  // Refs
+    70→  const rechargeTypeRef = useRef<HTMLDivElement>(null);
+    71→  const contentRef = useRef<HTMLDivElement>(null);
+    72→
+    73→  const selectedCompany = telecomCompanies.find(c => c.id === selectedCompanyId);
+    74→  const providerPackages = packages.filter(
+    75→    pkg => pkg.providerId === selectedCompanyId && pkg.isActive
+    76→  );
+    77→  const selectedPackage = providerPackages.find(pkg => pkg.id === selectedPackageId);
+    78→
+    79→  // Always YER for recharge
+    80→  const CURRENCY = 'YER';
+    81→
+    82→  const getBalance = (): number => {
+    83→    if (!user) return 0;
+    84→    return user.balanceYER || 0;
+    85→  };
+    86→
+    87→  const effectivePrice = rechargeMode === 'packages' && selectedPackage
+    88→    ? (promoApplied ? Math.max(0, selectedPackage.price - promoDiscount) : selectedPackage.price)
+    89→    : rechargeMode === 'instant'
+    90→      ? (parseInt(customAmount) || 0)
+    91→      : 0;
+    92→
+    93→  // Quick recharge - find last order with this provider
+    94→  const lastOrder = orders.find(o => o.providerId === selectedCompanyId);
+    95→
+    96→  // Reset on company change
+    97→  useEffect(() => {
+    98→    setRechargeMode('packages');
+    99→    setSelectedPackageId(null);
+   100→    setCustomAmount('');
+   101→    setCustomerInput('');
+   102→    setOrderResult(null);
+   103→    setErrorMessage('');
+   104→    setPromoCode('');
+   105→    setPromoApplied(false);
+   106→    setPromoDiscount(0);
+   107→    setShowReceipt(false);
+   108→    setCompletedOrderId('');
+   109→  }, [selectedCompanyId]);
+   110→
+   111→  // Scroll to recharge type on company select
+   112→  useEffect(() => {
+   113→    if (selectedCompanyId && rechargeTypeRef.current) {
+   114→      setTimeout(() => {
+   115→        rechargeTypeRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+   116→      }, 200);
+   117→    }
+   118→  }, [selectedCompanyId]);
+   119→
+   120→  const handleCompanySelect = (companyId: string) => {
+   121→    setSelectedCompanyId(companyId);
+   122→  };
+   123→
+   124→  const handleApplyPromo = async () => {
+   125→    if (!promoCode.trim() || !selectedPackage) return;
+   126→    const promo = await useAppStore.getState().applyPromoCode(promoCode.trim().toUpperCase());
+   127→    if (promo) {
+   128→      const discount = promo.type === 'percentage'
+   129→        ? Math.round(selectedPackage.price * promo.discount / 100)
+   130→        : promo.type === 'fixed' ? promo.discount : 0;
+   131→      setPromoApplied(true);
+   132→      setPromoDiscount(discount);
+   133→      showToast('success', 'تم تطبيق الكود', `خصم ${discount.toLocaleString('ar-SA')} ${currencySymbols[CURRENCY]}`);
+   134→    } else {
+   135→      showToast('error', 'كود غير صالح', 'الكود الترويجي غير صالح أو منتهي الصلاحية');
+   136→    }
+   137→  };
+   138→
+   139→  const handleQuickRecharge = () => {
+   140→    if (lastOrder) {
+   141→      setCustomerInput(lastOrder.customerInput);
+   142→      if (lastOrder.packageId) {
+   143→        setSelectedPackageId(lastOrder.packageId);
+   144→        setRechargeMode('packages');
+   145→      }
+   146→      showToast('info', 'إعادة الطلب', 'تم ملء بيانات آخر طلب');
+   147→    }
+   148→  };
+   149→
+   150→  const handleConfirm = async () => {
+   151→    if (!user || !selectedCompany) {
+   152→      setErrorMessage('يرجى اختيار الشركة');
+   153→      return;
+   154→    }
+   155→
+   156→    if (!customerInput.trim()) {
+   157→      setErrorMessage('يرجى إدخال رقم الهاتف أو الحساب');
+   158→      return;
+   159→    }
+   160→
+   161→    let amount = 0;
+   162→    let packageName = '';
+   163→    let packageId = '';
+   164→
+   165→    if (rechargeMode === 'packages') {
+   166→      if (!selectedPackage) {
+   167→        setErrorMessage('يرجى اختيار الباقة');
+   168→        return;
+   169→      }
+   170→      amount = effectivePrice;
+   171→      packageName = selectedPackage.name;
+   172→      packageId = selectedPackage.id;
+   173→    } else {
+   174→      amount = parseInt(customAmount) || 0;
+   175→      if (amount < 50) {
+   176→        setErrorMessage('الحد الأدنى للشحن 50 ر.ي');
+   177→        return;
+   178→      }
+   179→      packageName = `شحن فوري ${amount.toLocaleString()} ر.ي`;
+   180→      packageId = `instant-${selectedCompany.id}`;
+   181→    }
+   182→
+   183→    const currentBalance = getBalance();
+   184→    if (currentBalance < amount) {
+   185→      setOrderResult('insufficient');
+   186→      return;
+   187→    }
+   188→
+   189→    setIsProcessing(true);
+   190→    setErrorMessage('');
+   191→
+   192→    try {
+   193→      const newBalance = currentBalance - amount;
+   194→      const updatedUser = { ...user, balanceYER: newBalance };
+   195→
+   196→      const orderId = generateReference();
+   197→      const newOrder: Order = {
+   198→        id: orderId,
+   199→        userId: user.id,
+   200→        userName: user.name,
+   201→        userPhone: user.phone,
+   202→        providerId: selectedCompany.id,
+   203→        providerName: selectedCompany.name,
+   204→        packageId: packageId,
+   205→        packageName: packageName,
+   206→        customerInput: customerInput.trim(),
+   207→        amount: amount,
+   208→        currency: CURRENCY,
+   209→        status: 'pending',
+   210→        executionType: 'manual',
+   211→        createdAt: new Date().toISOString(),
+   212→      };
+   213→
+   214→      try {
+   215→        const orderRef = ref(database, `orders/${orderId}`);
+   216→        await set(orderRef, newOrder);
+   217→      } catch {
+   218→        // Continue locally even if Firebase fails
+   219→      }
+   220→
+   221→      try {
+   222→        const userRef = ref(database, `users/${user.id}`);
+   223→        await update(userRef, { balanceYER: newBalance });
+   224→      } catch {
+   225→        // Continue locally
+   226→      }
+   227→
+   228→      const txId = generateReference();
+   229→      const newTx = {
+   230→        id: txId,
+   231→        fromUserId: user.id,
+   232→        toUserId: 'system',
+   233→        amount: amount,
+   234→        currency: 'YER' as const,
+   235→        type: 'order' as const,
+   236→        status: 'completed' as const,
+   237→        description: `${packageName} - ${selectedCompany.name}`,
+   238→        createdAt: new Date().toISOString(),
+   239→      };
+   240→
+   241→      try {
+   242→        const txRef = ref(database, `transactions/${txId}`);
+   243→        await set(txRef, newTx);
+   244→      } catch {
+   245→        // Continue locally
+   246→      }
+   247→
+   248→      try {
+   249→        // Admin notification is sent via notifyOrderCreated() below
+   250→        // No need to write to a separate path — it goes to adminNotifications/
+   251→      } catch {
+   252→        // Non-critical
+   253→      }
+   254→
+   255→      setUser(updatedUser);
+   256→      addOrder(newOrder);
+   257→      addTransaction(newTx);
+   258→      addNotification({
+   259→        id: generateReference(),
+   260→        title: 'تم إنشاء الطلب',
+   261→        body: `طلب ${packageName} من ${selectedCompany.name} قيد المعالجة`,
+   262→        type: 'transaction',
+   263→        isRead: false,
+   264→        createdAt: new Date().toISOString(),
+   265→      });
+   266→
+   267→      // Send FCM push notification for recharge order
+   268→      try {
+   269→        const { notifyOrderCreated } = await import('@/lib/notifications');
+   270→        await notifyOrderCreated(user.id, packageName, amount, CURRENCY);
+   271→      } catch (notifErr) {
+   272→        console.warn('Recharge notification failed:', notifErr);
+   273→      }
+   274→
+   275→      setCompletedOrderId(orderId);
+   276→      setOrderResult('success');
+   277→      setShowReceipt(true);
+   278→    } catch {
+   279→      setOrderResult('error');
+   280→      setErrorMessage('حدث خطأ أثناء المعالجة');
+   281→    } finally {
+   282→      setIsProcessing(false);
+   283→    }
+   284→  };
+   285→
+   286→  const handleResetOrder = () => {
+   287→    setOrderResult(null);
+   288→    setShowReceipt(false);
+   289→    setSelectedPackageId(null);
+   290→    setCustomAmount('');
+   291→    setCustomerInput('');
+   292→    setPromoApplied(false);
+   293→    setPromoDiscount(0);
+   294→    setPromoCode('');
+   295→    setErrorMessage('');
+   296→  };
+   297→
+   298→  const handleShare = async () => {
+   299→    const text = `إيصال دفع - محفظة الجنوب\nرقم المرجع: ${completedOrderId}\nالشركة: ${selectedCompany?.name}\nالخدمة: ${rechargeMode === 'packages' ? selectedPackage?.name : 'شحن فوري'}\nالمبلغ: ${effectivePrice.toLocaleString()} ${currencySymbols[CURRENCY]}\nرقم الهاتف: ${selectedCompany?.inputPrefix}${customerInput}\nالتاريخ: ${new Date().toLocaleDateString('ar-SA')}`;
+   300→    try {
+   301→      if (navigator.share) {
+   302→        await navigator.share({ title: 'إيصال دفع', text });
+   303→      } else {
+   304→        await navigator.clipboard.writeText(text);
+   305→        showToast('success', 'تم النسخ', 'تم نسخ تفاصيل الإيصال');
+   306→      }
+   307→    } catch {
+   308→      try {
+   309→        await navigator.clipboard.writeText(text);
+   310→        showToast('success', 'تم النسخ', 'تم نسخ تفاصيل الإيصال');
+   311→      } catch {}
+   312→    }
+   313→  };
+   314→
+   315→  const handleSave = () => {
+   316→    showToast('success', 'تم الحفظ', 'تم حفظ الإيصال بنجاح');
+   317→  };
+   318→
+   319→  const cardBg = isDark ? '#1A1A1A' : '#FFFFFF';
+   320→  const inputBg = isDark ? '#222' : '#F8F8F8';
+   321→  const borderColor = isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)';
+   322→  const dividerColor = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
+   323→  const subTextColor = isDark ? '#888' : '#AAA';
+   324→
+   325→  // Receipt detail rows data
+   326→  const receiptRows = selectedCompany ? [
+   327→    { label: 'رقم المرجع', value: completedOrderId, isRef: true },
+   328→    { label: 'الشركة', value: selectedCompany.name },
+   329→    { label: 'الخدمة', value: rechargeMode === 'packages' ? selectedPackage?.name || '' : `شحن فوري ${parseInt(customAmount).toLocaleString()} ر.ي` },
+   330→    { label: 'المبلغ', value: `${effectivePrice.toLocaleString()} ${currencySymbols[CURRENCY]}`, isAmount: true },
+   331→    { label: 'رقم الهاتف', value: `${selectedCompany.inputPrefix}${customerInput}`, dir: 'ltr' as const },
+   332→    { label: 'التاريخ', value: new Date().toLocaleDateString('ar-SA', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' }) },
+   333→    { label: 'الحالة', value: 'قيد الانتظار', isStatus: true },
+   334→  ] : [];
+   335→
+   336→  return (
+   337→    <div className="min-h-screen pb-4" style={{ background: isDark ? '#0A0A0A' : '#F5F5F5' }}>
+   338→      {/* Header */}
+   339→      <motion.div
+   340→        initial={{ opacity: 0, y: -10 }}
+   341→        animate={{ opacity: 1, y: 0 }}
+   342→        className="px-4 pt-4 pb-3"
+   343→      >
+   344→        <div className="flex items-center gap-3">
+   345→          <button
+   346→            onClick={() => {
+   347→              const prev = useAppStore.getState().previousScreen;
+   348→              useAppStore.getState().setActiveScreen(prev || '');
+   349→            }}
+   350→            className="w-10 h-10 rounded-xl flex items-center justify-center active:scale-95 transition-transform"
+   351→            style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}
+   352→          >
+   353→            <ChevronLeft size={20} strokeWidth={1.5} color={isDark ? '#FFF' : '#666'} />
+   354→          </button>
+   355→          <h1 className="text-xl font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
+   356→            شحن الرصيد
+   357→          </h1>
+   358→        </div>
+   359→      </motion.div>
+   360→
+   361→      <div ref={contentRef} className="px-4 space-y-4">
+   362→        {/* ==========================================
+   363→            SECTION 1: Company Selection
+   364→            ========================================== */}
+   365→        <motion.div
+   366→          initial={{ opacity: 0, y: 12 }}
+   367→          animate={{ opacity: 1, y: 0 }}
+   368→          transition={{ delay: 0.05 }}
+   369→        >
+   370→          <h3 className="text-sm font-bold mb-3" style={{ color: isDark ? '#AAA' : '#888' }}>
+   371→            اختر شركة الاتصالات
+   372→          </h3>
+   373→          <div className="grid grid-cols-3 gap-2.5">
+   374→            {telecomCompanies.map((company, index) => (
+   375→              <motion.button
+   376→                key={company.id}
+   377→                initial={{ opacity: 0, scale: 0.9 }}
+   378→                animate={{ opacity: 1, scale: 1 }}
+   379→                transition={{ delay: 0.03 * index }}
+   380→                onClick={() => handleCompanySelect(company.id)}
+   381→                whileTap={{ scale: 0.96 }}
+   382→                className="flex flex-col items-center gap-2 p-3 rounded-2xl transition-all"
+   383→                style={{
+   384→                  background: selectedCompanyId === company.id
+   385→                    ? isDark ? '#1A1A1A' : '#FFFFFF'
+   386→                    : isDark ? '#141414' : '#FAFAFA',
+   387→                  border: selectedCompanyId === company.id
+   388→                    ? `2px solid ${company.color}`
+   389→                    : `1px solid ${borderColor}`,
+   390→                  boxShadow: selectedCompanyId === company.id
+   391→                    ? `0 4px 16px ${company.color}25`
+   392→                    : 'none',
+   393→                }}
+   394→              >
+   395→                <div
+   396→                  className="w-11 h-11 rounded-xl overflow-hidden flex items-center justify-center shrink-0"
+   397→                  style={{ background: 'transparent' }}
+   398→                >
+   399→                  <img src={serviceIcons[company.id]} alt={company.name} className="w-full h-full object-contain" />
+   400→                </div>
+   401→                <div className="text-center">
+   402→                  <p className="text-xs font-bold leading-tight" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
+   403→                    {company.name}
+   404→                  </p>
+   405→                  <p className="text-[9px] mt-0.5" style={{ color: subTextColor }}>
+   406→                    {company.nameEn}
+   407→                  </p>
+   408→                </div>
+   409→              </motion.button>
+   410→            ))}
+   411→          </div>
+   412→        </motion.div>
+   413→
+   414→        {/* ==========================================
+   415→            SECTION 2+: After company selection
+   416→            ========================================== */}
+   417→        <AnimatePresence mode="wait">
+   418→          {selectedCompany && orderResult !== 'success' && orderResult !== 'insufficient' && (
+   419→            <motion.div
+   420→              key={selectedCompany.id}
+   421→              initial={{ opacity: 0, y: 20 }}
+   422→              animate={{ opacity: 1, y: 0 }}
+   423→              exit={{ opacity: 0, y: -10 }}
+   424→              transition={{ duration: 0.3 }}
+   425→              className="space-y-4"
+   426→            >
+   427→              {/* Section 2: Recharge Type Toggle */}
+   428→              <div ref={rechargeTypeRef}>
+   429→                <h3 className="text-sm font-bold mb-3" style={{ color: isDark ? '#AAA' : '#888' }}>
+   430→                  نوع الشحن
+   431→                </h3>
+   432→                <div
+   433→                  className="flex rounded-2xl p-1"
+   434→                  style={{ background: isDark ? '#141414' : '#F0F0F0' }}
+   435→                >
+   436→                  <button
+   437→                    onClick={() => { setRechargeMode('packages'); setSelectedPackageId(null); setPromoApplied(false); setPromoDiscount(0); setPromoCode(''); }}
+   438→                    className="flex-1 flex items-center justify-center gap-1.5 py-3 rounded-xl text-xs font-bold transition-all"
+   439→                    style={{
+   440→                      background: rechargeMode === 'packages' ? selectedCompany.color : 'transparent',
+   441→                      color: rechargeMode === 'packages' ? '#FFF' : subTextColor,
+   442→                      boxShadow: rechargeMode === 'packages' ? `0 2px 8px ${selectedCompany.color}30` : 'none',
+   443→                    }}
+   444→                  >
+   445→                    <Package size={14} strokeWidth={2} />
+   446→                    باقات محددة
+   447→                  </button>
+   448→                  <button
+   449→                    onClick={() => { setRechargeMode('instant'); setSelectedPackageId(null); setPromoApplied(false); setPromoDiscount(0); setPromoCode(''); }}
+   450→                    className="flex-1 flex items-center justify-center gap-1.5 py-3 rounded-xl text-xs font-bold transition-all"
+   451→                    style={{
+   452→                      background: rechargeMode === 'instant' ? selectedCompany.color : 'transparent',
+   453→                      color: rechargeMode === 'instant' ? '#FFF' : subTextColor,
+   454→                      boxShadow: rechargeMode === 'instant' ? `0 2px 8px ${selectedCompany.color}30` : 'none',
+   455→                    }}
+   456→                  >
+   457→                    <Zap size={14} strokeWidth={2} />
+   458→                    شحن فوري
+   459→                  </button>
+   460→                </div>
+   461→              </div>
+   462→
+   463→              {/* Section 3a: Packages Mode */}
+   464→              <AnimatePresence mode="wait">
+   465→                {rechargeMode === 'packages' && (
+   466→                  <motion.div
+   467→                    key="packages"
+   468→                    initial={{ opacity: 0, x: -10 }}
+   469→                    animate={{ opacity: 1, x: 0 }}
+   470→                    exit={{ opacity: 0, x: 10 }}
+   471→                    transition={{ duration: 0.2 }}
+   472→                  >
+   473→                    {providerPackages.length === 0 ? (
+   474→                      <div
+   475→                        className="rounded-2xl p-6 flex flex-col items-center"
+   476→                        style={{ background: cardBg, border: `1px solid ${borderColor}` }}
+   477→                      >
+   478→                        <Package size={28} strokeWidth={1.5} color={subTextColor} />
+   479→                        <p className="text-sm mt-2 font-medium" style={{ color: subTextColor }}>
+   480→                          لا توجد باقات متاحة حالياً
+   481→                        </p>
+   482→                        <p className="text-[11px] mt-1" style={{ color: isDark ? '#444' : '#CCC' }}>
+   483→                          يمكنك استخدام الشحن الفوري
+   484→                        </p>
+   485→                      </div>
+   486→                    ) : (
+   487→                      <div>
+   488→                        <h3 className="text-sm font-bold mb-3" style={{ color: isDark ? '#AAA' : '#888' }}>
+   489→                          اختر الباقة
+   490→                        </h3>
+   491→                        <div className="space-y-2 max-h-64 overflow-y-auto scrollbar-thin">
+   492→                          {providerPackages.map((pkg) => (
+   493→                            <motion.button
+   494→                              key={pkg.id}
+   495→                              onClick={() => {
+   496→                                setSelectedPackageId(pkg.id);
+   497→                                setOrderResult(null);
+   498→                                setErrorMessage('');
+   499→                                setPromoApplied(false);
+   500→                                setPromoDiscount(0);
+   501→                              }}
+   502→                              whileTap={{ scale: 0.98 }}
+   503→                              className="w-full flex items-center justify-between px-4 py-3.5 rounded-2xl transition-all"
+   504→                              style={{
+   505→                                background: selectedPackageId === pkg.id
+   506→                                  ? isDark ? '#1E1E1E' : '#FFFFFF'
+   507→                                  : inputBg,
+   508→                                border: selectedPackageId === pkg.id
+   509→                                  ? `2px solid ${selectedCompany.color}`
+   510→                                  : `1px solid ${borderColor}`,
+   511→                                boxShadow: selectedPackageId === pkg.id
+   512→                                  ? `0 2px 12px ${selectedCompany.color}20`
+   513→                                  : 'none',
+   514→                              }}
+   515→                            >
+   516→                              <div className="flex items-center gap-3">
+   517→                                <div
+   518→                                  className="w-5 h-5 rounded-full flex items-center justify-center shrink-0"
+   519→                                  style={{
+   520→                                    border: selectedPackageId === pkg.id
+   521→                                      ? `2px solid ${selectedCompany.color}`
+   522→                                      : `2px solid ${isDark ? '#333' : '#DDD'}`,
+   523→                                    background: selectedPackageId === pkg.id
+   524→                                      ? selectedCompany.color
+   525→                                      : 'transparent',
+   526→                                  }}
+   527→                                >
+   528→                                  {selectedPackageId === pkg.id && (
+   529→                                    <Check size={12} strokeWidth={3} color="#FFF" />
+   530→                                  )}
+   531→                                </div>
+   532→                                <span
+   533→                                  className="text-sm font-medium text-right"
+   534→                                  style={{ color: isDark ? '#FFF' : '#1a1a1a' }}
+   535→                                >
+   536→                                  {pkg.name}
+   537→                                </span>
+   538→                              </div>
+   539→                              <div className="flex items-center gap-1.5">
+   540→                                <span className="text-sm font-bold" style={{ color: selectedCompany.color }}>
+   541→                                  {pkg.price.toLocaleString()}
+   542→                                </span>
+   543→                                <span
+   544→                                  className="text-[10px] px-1.5 py-0.5 rounded font-bold text-white"
+   545→                                  style={{ background: currencyBadgeColors[CURRENCY] }}
+   546→                                >
+   547→                                  {currencySymbols[CURRENCY]}
+   548→                                </span>
+   549→                              </div>
+   550→                            </motion.button>
+   551→                          ))}
+   552→                        </div>
+   553→                      </div>
+   554→                    )}
+   555→                  </motion.div>
+   556→                )}
+   557→
+   558→                {/* Section 3b: Instant Recharge Mode */}
+   559→                {rechargeMode === 'instant' && (
+   560→                  <motion.div
+   561→                    key="instant"
+   562→                    initial={{ opacity: 0, x: 10 }}
+   563→                    animate={{ opacity: 1, x: 0 }}
+   564→                    exit={{ opacity: 0, x: -10 }}
+   565→                    transition={{ duration: 0.2 }}
+   566→                    className="space-y-3"
+   567→                  >
+   568→                    <h3 className="text-sm font-bold mb-1" style={{ color: isDark ? '#AAA' : '#888' }}>
+   569→                      أدخل مبلغ الشحن
+   570→                    </h3>
+   571→                    {/* Amount Input */}
+   572→                    <div
+   573→                      className="flex items-center gap-2 px-4 py-3.5 rounded-2xl"
+   574→                      style={{
+   575→                        background: inputBg,
+   576→                        border: `1px solid ${borderColor}`,
+   577→                      }}
+   578→                    >
+   579→                      <Edit3 size={18} strokeWidth={1.5} color={selectedCompany.color} />
+   580→                      <input
+   581→                        type="number"
+   582→                        placeholder="أدخل المبلغ بالريال اليمني"
+   583→                        value={customAmount}
+   584→                        onChange={(e) => {
+   585→                          const val = e.target.value;
+   586→                          if (val === '' || parseInt(val) >= 0) {
+   587→                            setCustomAmount(val);
+   588→                          }
+   589→                        }}
+   590→                        className="flex-1 bg-transparent outline-none text-sm font-medium"
+   591→                        style={{ color: isDark ? '#FFF' : '#1a1a1a' }}
+   592→                        dir="ltr"
+   593→                        min="50"
+   594→                      />
+   595→                      <span
+   596→                        className="text-[10px] px-2 py-1 rounded-lg font-bold text-white shrink-0"
+   597→                        style={{ background: currencyBadgeColors[CURRENCY] }}
+   598→                      >
+   599→                        {currencySymbols[CURRENCY]}
+   600→                      </span>
+   601→                    </div>
+   602→                    {/* Quick Amount Buttons */}
+   603→                    <div className="flex gap-2">
+   604→                      {[100, 200, 500, 1000, 2000, 5000].map(amount => (
+   605→                        <motion.button
+   606→                          key={amount}
+   607→                          onClick={() => setCustomAmount(String(amount))}
+   608→                          whileTap={{ scale: 0.96 }}
+   609→                          className="flex-1 py-2 rounded-xl text-[11px] font-bold transition-all"
+   610→                          style={{
+   611→                            background: customAmount === String(amount) ? selectedCompany.color : (isDark ? '#1A1A1A' : '#F0F0F0'),
+   612→                            color: customAmount === String(amount) ? '#FFF' : (isDark ? '#CCC' : '#666'),
+   613→                            border: `1px solid ${customAmount === String(amount) ? selectedCompany.color : borderColor}`,
+   614→                          }}
+   615→                        >
+   616→                          {amount.toLocaleString()}
+   617→                        </motion.button>
+   618→                      ))}
+   619→                    </div>
+   620→                    <p className="text-[11px]" style={{ color: subTextColor }}>
+   621→                      الحد الأدنى للشحن: 50 ر.ي
+   622→                    </p>
+   623→                  </motion.div>
+   624→                )}
+   625→              </AnimatePresence>
+   626→
+   627→              {/* Section 4: Customer Input */}
+   628→              <div>
+   629→                <h3 className="text-sm font-bold mb-3" style={{ color: isDark ? '#AAA' : '#888' }}>
+   630→                  {selectedCompany.inputLabel}
+   631→                </h3>
+   632→                {/* Quick Recharge */}
+   633→                {lastOrder && (
+   634→                  <button
+   635→                    onClick={handleQuickRecharge}
+   636→                    className="w-full py-2.5 rounded-2xl flex items-center justify-center gap-2 text-xs font-medium mb-3 active:scale-[0.98] transition-transform"
+   637→                    style={{
+   638→                      background: 'rgba(92,26,27,0.06)',
+   639→                      border: '1px solid rgba(92,26,27,0.15)',
+   640→                      color: '#5C1A1B',
+   641→                    }}
+   642→                  >
+   643→                    <RotateCcw size={14} strokeWidth={1.5} />
+   644→                    <span>إعادة آخر طلب ({lastOrder.packageName})</span>
+   645→                  </button>
+   646→                )}
+   647→                <div
+   648→                  className="flex items-center gap-2 px-4 py-3.5 rounded-2xl"
+   649→                  style={{ background: inputBg, border: `1px solid ${borderColor}` }}
+   650→                >
+   651→                  <Phone size={18} strokeWidth={1.5} color={selectedCompany.color} />
+   652→                  {selectedCompany.inputPrefix && (
+   653→                    <>
+   654→                      <span
+   655→                        className="text-sm font-medium shrink-0"
+   656→                        style={{ color: subTextColor }}
+   657→                        dir="ltr"
+   658→                      >
+   659→                        {selectedCompany.inputPrefix}
+   660→                      </span>
+   661→                      <div className="w-px h-5 shrink-0" style={{ background: isDark ? '#333' : '#DDD' }} />
+   662→                    </>
+   663→                  )}
+   664→                  <input
+   665→                    type={selectedCompany.inputType === 'phone' ? 'tel' : 'text'}
+   666→                    placeholder={selectedCompany.inputLabel}
+   667→                    value={customerInput}
+   668→                    onChange={(e) => {
+   669→                      if (selectedCompany.inputType === 'phone') {
+   670→                        const cleaned = e.target.value.replace(/\D/g, '').slice(0, 9);
+   671→                        setCustomerInput(cleaned);
+   672→                      } else {
+   673→                        setCustomerInput(e.target.value);
+   674→                      }
+   675→                    }}
+   676→                    className="flex-1 bg-transparent outline-none text-sm"
+   677→                    style={{ color: isDark ? '#FFF' : '#1a1a1a' }}
+   678→                    dir={selectedCompany.inputType === 'phone' ? 'ltr' : 'auto'}
+   679→                  />
+   680→                </div>
+   681→              </div>
+   682→
+   683→              {/* Promo Code (packages mode only) */}
+   684→              {rechargeMode === 'packages' && selectedPackage && (
+   685→                <div>
+   686→                  <h3 className="text-sm font-bold mb-3" style={{ color: isDark ? '#AAA' : '#888' }}>
+   687→                    كود ترويجي
+   688→                  </h3>
+   689→                  <div className="flex gap-2">
+   690→                    <div
+   691→                      className="flex items-center gap-2 px-4 py-2.5 rounded-2xl flex-1"
+   692→                      style={{
+   693→                        background: inputBg,
+   694→                        border: promoApplied ? '1px solid #10B981' : `1px solid ${borderColor}`,
+   695→                      }}
+   696→                    >
+   697→                      <Tag size={16} strokeWidth={1.5} color={promoApplied ? '#10B981' : '#5C1A1B'} />
+   698→                      <input
+   699→                        type="text"
+   700→                        placeholder="أدخل الكود"
+   701→                        value={promoCode}
+   702→                        onChange={(e) => setPromoCode(e.target.value.toUpperCase())}
+   703→                        disabled={promoApplied}
+   704→                        className="flex-1 bg-transparent outline-none text-xs"
+   705→                        style={{ color: promoApplied ? '#10B981' : isDark ? '#FFF' : '#1a1a1a' }}
+   706→                        dir="ltr"
+   707→                      />
+   708→                      {promoApplied && <CheckCircle2 size={14} color="#10B981" strokeWidth={1.5} />}
+   709→                    </div>
+   710→                    <button
+   711→                      onClick={handleApplyPromo}
+   712→                      disabled={promoApplied || !promoCode.trim()}
+   713→                      className="px-4 rounded-2xl text-[10px] font-medium text-white disabled:opacity-40"
+   714→                      style={{ background: promoApplied ? '#10B981' : '#5C1A1B' }}
+   715→                    >
+   716→                      {promoApplied ? 'مطبق' : 'تطبيق'}
+   717→                    </button>
+   718→                  </div>
+   719→                </div>
+   720→              )}
+   721→
+   722→              {/* Section 5: Confirm / Balance Check */}
+   723→              {((rechargeMode === 'packages' && selectedPackage) || (rechargeMode === 'instant' && parseInt(customAmount) >= 50)) && (
+   724→                <motion.div
+   725→                  initial={{ opacity: 0, y: 10 }}
+   726→                  animate={{ opacity: 1, y: 0 }}
+   727→                  transition={{ duration: 0.2 }}
+   728→                >
+   729→                  {/* Balance Summary */}
+   730→                  <div
+   731→                    className="rounded-2xl p-4 mb-3"
+   732→                    style={{ background: cardBg, border: `1px solid ${borderColor}` }}
+   733→                  >
+   734→                    <div className="flex items-center gap-2 mb-3">
+   735→                      <Receipt size={16} strokeWidth={1.5} color="#5C1A1B" />
+   736→                      <span className="text-xs font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
+   737→                        ملخص العملية
+   738→                      </span>
+   739→                    </div>
+   740→                    <div className="space-y-2">
+   741→                      <div className="flex justify-between">
+   742→                        <span className="text-xs" style={{ color: subTextColor }}>الشركة</span>
+   743→                        <span className="text-xs font-medium" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
+   744→                          {selectedCompany.name}
+   745→                        </span>
+   746→                      </div>
+   747→                      {customerInput && (
+   748→                        <div className="flex justify-between">
+   749→                          <span className="text-xs" style={{ color: subTextColor }}>
+   750→                            {selectedCompany.inputLabel}
+   751→                          </span>
+   752→                          <span className="text-xs font-medium" style={{ color: isDark ? '#FFF' : '#1a1a1a' }} dir="ltr">
+   753→                            {selectedCompany.inputPrefix}{customerInput}
+   754→                          </span>
+   755→                        </div>
+   756→                      )}
+   757→                      <div className="flex justify-between">
+   758→                        <span className="text-xs" style={{ color: subTextColor }}>الخدمة</span>
+   759→                        <span className="text-xs font-medium" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
+   760→                          {rechargeMode === 'packages' ? selectedPackage?.name : `شحن فوري ${parseInt(customAmount).toLocaleString()} ر.ي`}
+   761→                        </span>
+   762→                      </div>
+   763→                      <div className="flex justify-between">
+   764→                        <span className="text-xs" style={{ color: subTextColor }}>المبلغ</span>
+   765→                        <span className="text-xs font-bold" style={{ color: '#5C1A1B' }}>
+   766→                          {effectivePrice.toLocaleString()} {currencySymbols[CURRENCY]}
+   767→                        </span>
+   768→                      </div>
+   769→                      {promoApplied && promoDiscount > 0 && (
+   770→                        <div className="flex justify-between">
+   771→                          <span className="text-xs" style={{ color: '#10B981' }}>الخصم</span>
+   772→                          <span className="text-xs font-bold" style={{ color: '#10B981' }}>
+   773→                            -{promoDiscount.toLocaleString()} {currencySymbols[CURRENCY]}
+   774→                          </span>
+   775→                        </div>
+   776→                      )}
+   777→                      <div className="h-px" style={{ background: dividerColor }} />
+   778→                      <div className="flex justify-between">
+   779→                        <span className="text-xs" style={{ color: subTextColor }}>رصيدك الحالي</span>
+   780→                        <span className="text-xs font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
+   781→                          {getBalance().toLocaleString()} {currencySymbols[CURRENCY]}
+   782→                        </span>
+   783→                      </div>
+   784→                      <div className="flex justify-between">
+   785→                        <span className="text-xs font-medium" style={{ color: isDark ? '#AAA' : '#888' }}>الرصيد بعد العملية</span>
+   786→                        <span
+   787→                          className="text-sm font-bold"
+   788→                          style={{
+   789→                            color: getBalance() - effectivePrice >= 0 ? '#10B981' : '#5C1A1B',
+   790→                          }}
+   791→                        >
+   792→                          {(getBalance() - effectivePrice).toLocaleString()} {currencySymbols[CURRENCY]}
+   793→                        </span>
+   794→                      </div>
+   795→                    </div>
+   796→                  </div>
+   797→
+   798→                  {/* Error Message */}
+   799→                  {errorMessage && (
+   800→                    <motion.p
+   801→                      initial={{ opacity: 0, y: -5 }}
+   802→                      animate={{ opacity: 1, y: 0 }}
+   803→                      className="text-xs text-center mb-3"
+   804→                      style={{ color: '#5C1A1B' }}
+   805→                    >
+   806→                      {errorMessage}
+   807→                    </motion.p>
+   808→                  )}
+   809→
+   810→                  {/* Confirm Button */}
+   811→                  <motion.button
+   812→                    onClick={handleConfirm}
+   813→                    disabled={
+   814→                      isProcessing ||
+   815→                      !customerInput.trim() ||
+   816→                      (rechargeMode === 'packages' ? !selectedPackageId : parseInt(customAmount) < 50)
+   817→                    }
+   818→                    whileTap={{ scale: 0.98 }}
+   819→                    className="w-full py-4 rounded-2xl flex items-center justify-center gap-2 font-bold text-white text-sm transition-all disabled:opacity-40"
+   820→                    style={{
+   821→                      background: `linear-gradient(135deg, ${selectedCompany.color} 0%, ${selectedCompany.color}CC 100%)`,
+   822→                      boxShadow: `0 4px 16px ${selectedCompany.color}40`,
+   823→                    }}
+   824→                  >
+   825→                    {isProcessing ? (
+   826→                      <Loader2 size={20} className="animate-spin" />
+   827→                    ) : (
+   828→                      <>
+   829→                        <span>تأكيد الشراء</span>
+   830→                        <span className="opacity-70">
+   831→                          ({effectivePrice.toLocaleString()} {currencySymbols[CURRENCY]})
+   832→                        </span>
+   833→                      </>
+   834→                    )}
+   835→                  </motion.button>
+   836→                </motion.div>
+   837→              )}
+   838→            </motion.div>
+   839→          )}
+   840→
+   841→          {/* Success Result - No inline receipt, will be shown in full modal */}
+   842→          {selectedCompany && orderResult === 'success' && !showReceipt && (
+   843→            <motion.div
+   844→              key="success-buttons"
+   845→              initial={{ opacity: 0, scale: 0.9 }}
+   846→              animate={{ opacity: 1, scale: 1 }}
+   847→              className="flex flex-col items-center py-6"
+   848→            >
+   849→              <div
+   850→                className="w-16 h-16 rounded-full flex items-center justify-center mb-4"
+   851→                style={{ background: 'rgba(16,185,129,0.15)' }}
+   852→              >
+   853→                <CheckCircle2 size={32} strokeWidth={2} color="#10B981" />
+   854→              </div>
+   855→              <h3 className="text-lg font-bold mb-2" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
+   856→                تم إنشاء الطلب بنجاح
+   857→              </h3>
+   858→              <p className="text-sm text-center mb-4" style={{ color: subTextColor }}>
+   859→                سيتم تنفيذ طلبك في أقرب وقت ممكن
+   860→              </p>
+   861→
+   862→              <div className="flex gap-2 w-full">
+   863→                <button
+   864→                  onClick={() => {
+   865→                    const prev = useAppStore.getState().previousScreen;
+   866→                    useAppStore.getState().setActiveScreen(prev || '');
+   867→                  }}
+   868→                  className="flex-1 py-3.5 rounded-2xl font-bold text-white text-sm"
+   869→                  style={{ background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)' }}
+   870→                >
+   871→                  حسناً
+   872→                </button>
+   873→                <button
+   874→                  onClick={handleResetOrder}
+   875→                  className="flex-1 py-3.5 rounded-2xl font-bold text-sm flex items-center justify-center gap-1.5"
+   876→                  style={{
+   877→                    background: isDark ? '#2D2D2D' : '#F0F0F0',
+   878→                    color: isDark ? '#FFF' : '#1a1a1a',
+   879→                  }}
+   880→                >
+   881→                  <RotateCcw size={14} strokeWidth={1.5} />
+   882→                  <span>إعادة الطلب</span>
+   883→                </button>
+   884→              </div>
+   885→            </motion.div>
+   886→          )}
+   887→        </AnimatePresence>
+   888→      </div>
+   889→
+   890→      {/* ==========================================
+   891→          JAIB-STYLE RECEIPT MODAL
+   892→          Full-screen overlay with blur background
+   893→          ========================================== */}
+   894→      <AnimatePresence>
+   895→        {showReceipt && orderResult === 'success' && selectedCompany && (
+   896→          <motion.div
+   897→            initial={{ opacity: 0 }}
+   898→            animate={{ opacity: 1 }}
+   899→            exit={{ opacity: 0 }}
+   900→            transition={{ duration: 0.25 }}
+   901→            className="fixed inset-0 z-50 flex items-center justify-center p-4"
+   902→            style={{
+   903→              background: 'rgba(0,0,0,0.5)',
+   904→              backdropFilter: 'blur(8px)',
+   905→              WebkitBackdropFilter: 'blur(8px)',
+   906→            }}
+   907→            onClick={() => setShowReceipt(false)}
+   908→          >
+   909→            <motion.div
+   910→              initial={{ opacity: 0, y: 60, scale: 0.95 }}
+   911→              animate={{ opacity: 1, y: 0, scale: 1 }}
+   912→              exit={{ opacity: 0, y: 60, scale: 0.95 }}
+   913→              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+   914→              onClick={(e) => e.stopPropagation()}
+   915→              className="w-full max-w-[360px] rounded-3xl overflow-hidden relative"
+   916→              style={{
+   917→                background: isDark ? '#1E1E1E' : '#FFFFFF',
+   918→                boxShadow: '0 25px 60px rgba(0,0,0,0.3)',
+   919→              }}
+   920→            >
+   921→              {/* Close button */}
+   922→              <button
+   923→                onClick={() => setShowReceipt(false)}
+   924→                className="absolute top-3 left-3 w-8 h-8 rounded-full flex items-center justify-center z-10"
+   925→                style={{ background: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }}
+   926→              >
+   927→                <X size={16} strokeWidth={2} color={isDark ? '#999' : '#666'} />
+   928→              </button>
+   929→
+   930→              <div className="p-6 pt-8">
+   931→                {/* Logo centered at top */}
+   932→                <div className="flex flex-col items-center mb-5">
+   933→                  <div className="w-12 h-12 rounded-xl overflow-hidden mb-2">
+   934→                    <img src={LOGO_BASE64} alt="الجنوب" className="w-full h-full object-cover" style={{ filter: RED_LOGO_FILTER }} />
+   935→                  </div>
+   936→                  <span className="text-sm font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>الجنوب</span>
+   937→                </div>
+   938→
+   939→                {/* Title */}
+   940→                <h2 className="text-center text-base font-bold mb-5" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
+   941→                  تفاصيل الدفع
+   942→                </h2>
+   943→
+   944→                {/* Amount Section - Gray rounded rectangle */}
+   945→                <div
+   946→                  className="rounded-2xl p-4 mb-5 text-center"
+   947→                  style={{ background: isDark ? 'rgba(255,255,255,0.06)' : '#F5F5F5' }}
+   948→                >
+   949→                  <p className="text-[11px] mb-1" style={{ color: subTextColor }}>المبلغ المدفوع</p>
+   950→                  <p className="text-2xl font-bold" style={{ color: '#5C1A1B' }}>
+   951→                    {effectivePrice.toLocaleString()}
+   952→                    <span className="text-sm font-medium mr-1" style={{ color: subTextColor }}>{currencySymbols[CURRENCY]}</span>
+   953→                  </p>
+   954→                </div>
+   955→
+   956→                {/* Detail Rows with iPhone-style thin gray separator lines */}
+   957→                <div
+   958→                  className="rounded-2xl overflow-hidden mb-5"
+   959→                  style={{
+   960→                    background: isDark ? 'rgba(255,255,255,0.03)' : '#FAFAFA',
+   961→                    border: `1px solid ${isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)'}`,
+   962→                  }}
+   963→                >
+   964→                  {receiptRows.map((row, index) => (
+   965→                    <div key={row.label}>
+   966→                      <div
+   967→                        className="flex items-center justify-between px-4 py-3"
+   968→                      >
+   969→                        <span className="text-[12px]" style={{ color: isDark ? '#888' : '#999' }}>
+   970→                          {row.label}
+   971→                        </span>
+   972→                        {row.isRef ? (
+   973→                          <div className="flex items-center gap-1.5">
+   974→                            <span className="text-[12px] font-mono font-bold" style={{ color: '#5C1A1B' }} dir="ltr">{row.value}</span>
+   975→                            <button
+   976→                              onClick={async () => {
+   977→                                try { await navigator.clipboard.writeText(row.value); showToast('success', 'تم النسخ', 'تم نسخ رقم المرجع'); } catch {}
+   978→                              }}
+   979→                              className="active:scale-90 transition-transform"
+   980→                            >
+   981→                              <Copy size={12} color="#5C1A1B" />
+   982→                            </button>
+   983→                          </div>
+   984→                        ) : row.isAmount ? (
+   985→                          <span className="text-[12px] font-bold" style={{ color: '#5C1A1B' }}>{row.value}</span>
+   986→                        ) : row.isStatus ? (
+   987→                          <span className="text-[11px] px-2.5 py-0.5 rounded-full font-medium" style={{ background: 'rgba(245,158,11,0.12)', color: '#F59E0B' }}>
+   988→                            {row.value}
+   989→                          </span>
+   990→                        ) : (
+   991→                          <span
+   992→                            className="text-[12px] font-medium"
+   993→                            style={{ color: isDark ? '#FFF' : '#1a1a1a' }}
+   994→                            dir={row.dir || 'rtl'}
+   995→                          >
+   996→                            {row.value}
+   997→                          </span>
+   998→                        )}
+   999→                      </div>
+  1000→                      {index < receiptRows.length - 1 && (
+  1001→                        <div className="h-px mx-4" style={{ background: dividerColor }} />
+  1002→                      )}
+  1003→                    </div>
+  1004→                  ))}
+  1005→                </div>
+  1006→
+  1007→                {/* Action Buttons */}
+  1008→                <div className="flex gap-3">
+  1009→                  <motion.button
+  1010→                    onClick={handleShare}
+  1011→                    whileTap={{ scale: 0.96 }}
+  1012→                    className="flex-1 py-3 rounded-2xl flex items-center justify-center gap-2 text-sm font-bold transition-all"
+  1013→                    style={{
+  1014→                      background: 'rgba(37,99,235,0.08)',
+  1015→                      color: '#2563EB',
+  1016→                      border: '1px solid rgba(37,99,235,0.15)',
+  1017→                    }}
+  1018→                  >
+  1019→                    <Share2 size={16} strokeWidth={1.5} />
+  1020→                    مشاركة
+  1021→                  </motion.button>
+  1022→                  <motion.button
+  1023→                    onClick={handleSave}
+  1024→                    whileTap={{ scale: 0.96 }}
+  1025→                    className="flex-1 py-3 rounded-2xl flex items-center justify-center gap-2 text-sm font-bold text-white transition-all"
+  1026→                    style={{
+  1027→                      background: '#5C1A1B',
+  1028→                      boxShadow: '0 2px 8px rgba(92,26,27,0.2)',
+  1029→                    }}
+  1030→                  >
+  1031→                    <Download size={16} strokeWidth={1.5} />
+  1032→                    حفظ
+  1033→                  </motion.button>
+  1034→                </div>
+  1035→              </div>
+  1036→            </motion.div>
+  1037→          </motion.div>
+  1038→        )}
+  1039→      </AnimatePresence>
+  1040→
+  1041→      {/* Insufficient Balance - also show as modal */}
+  1042→      <AnimatePresence>
+  1043→        {orderResult === 'insufficient' && (
+  1044→          <motion.div
+  1045→            initial={{ opacity: 0 }}
+  1046→            animate={{ opacity: 1 }}
+  1047→            exit={{ opacity: 0 }}
+  1048→            transition={{ duration: 0.25 }}
+  1049→            className="fixed inset-0 z-50 flex items-center justify-center p-4"
+  1050→            style={{
+  1051→              background: 'rgba(0,0,0,0.5)',
+  1052→              backdropFilter: 'blur(8px)',
+  1053→              WebkitBackdropFilter: 'blur(8px)',
+  1054→            }}
+  1055→            onClick={() => setOrderResult(null)}
+  1056→          >
+  1057→            <motion.div
+  1058→              initial={{ opacity: 0, y: 60, scale: 0.95 }}
+  1059→              animate={{ opacity: 1, y: 0, scale: 1 }}
+  1060→              exit={{ opacity: 0, y: 60, scale: 0.95 }}
+  1061→              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+  1062→              onClick={(e) => e.stopPropagation()}
+  1063→              className="w-full max-w-[360px] rounded-3xl overflow-hidden p-6 text-center"
+  1064→              style={{
+  1065→                background: isDark ? '#1E1E1E' : '#FFFFFF',
+  1066→                boxShadow: '0 25px 60px rgba(0,0,0,0.3)',
+  1067→              }}
+  1068→            >
+  1069→              <div
+  1070→                className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4"
+  1071→                style={{ background: 'rgba(92,26,27,0.15)' }}
+  1072→              >
+  1073→                <AlertTriangle size={32} strokeWidth={2} color="#5C1A1B" />
+  1074→              </div>
+  1075→              <h3 className="text-lg font-bold mb-2" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
+  1076→                رصيد غير كافٍ
+  1077→              </h3>
+  1078→              <p className="text-sm text-center mb-2" style={{ color: subTextColor }}>
+  1079→                رصيدك الحالي لا يكفي لإتمام هذه العملية
+  1080→              </p>
+  1081→              <div className="flex items-center justify-center gap-2 mb-5">
+  1082→                <span className="text-xs" style={{ color: subTextColor }}>رصيدك:</span>
+  1083→                <span className="text-sm font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
+  1084→                  {getBalance().toLocaleString()} {currencySymbols[CURRENCY]}
+  1085→                </span>
+  1086→              </div>
+  1087→              <div className="flex gap-2">
+  1088→                <button
+  1089→                  onClick={() => {
+  1090→                    const prev = useAppStore.getState().previousScreen;
+  1091→                    useAppStore.getState().setActiveScreen(prev || '');
+  1092→                  }}
+  1093→                  className="flex-1 py-3.5 rounded-2xl font-bold text-white text-sm"
+  1094→                  style={{ background: 'linear-gradient(135deg, #5C1A1B 0%, #B30000 100%)' }}
+  1095→                >
+  1096→                  حسناً
+  1097→                </button>
+  1098→                <button
+  1099→                  onClick={() => setOrderResult(null)}
+  1100→                  className="flex-1 py-3.5 rounded-2xl font-bold text-sm flex items-center justify-center gap-1.5"
+  1101→                  style={{
+  1102→                    background: isDark ? '#2D2D2D' : '#F0F0F0',
+  1103→                    color: isDark ? '#FFF' : '#1a1a1a',
+  1104→                  }}
+  1105→                >
+  1106→                  <RotateCcw size={14} strokeWidth={1.5} />
+  1107→                  <span>رجوع</span>
+  1108→                </button>
+  1109→              </div>
+  1110→            </motion.div>
+  1111→          </motion.div>
+  1112→        )}
+  1113→      </AnimatePresence>
+  1114→    </div>
+  1115→  );
+  1116→}
+  1117→

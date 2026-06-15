@@ -1,0 +1,471 @@
+     1→/**
+     2→ * Service Icons for محفظة الجنوب (South Wallet)
+     3→ * 
+     4→ * Flat minimalist design:
+     5→ * - Black outlines (#1a1a1a) with stroke-width 1.5-2
+     6→ * - Red accents (#5C1A1B) for key elements
+     7→ * - White rounded square background
+     8→ * - 48x48 viewBox
+     9→ */
+    10→
+    11→function svgToDataUrl(svg: string): string {
+    12→  return `data:image/svg+xml,${encodeURIComponent(svg)}`;
+    13→}
+    14→
+    15→// ─── Home Services (9 icons) ────────────────────────────────────────
+    16→
+    17→const instantPaySvg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+    18→  <rect x="2" y="2" width="44" height="44" rx="12" fill="white"/>
+    19→  <circle cx="24" cy="24" r="14" stroke="#1a1a1a" stroke-width="1.8" fill="none"/>
+    20→  <path d="M26 12L18 26H23L22 36L30 22H25L26 12Z" fill="#5C1A1B" stroke="#1a1a1a" stroke-width="1.2" stroke-linejoin="round"/>
+    21→</svg>`;
+    22→
+    23→const transferSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+    24→  <rect x="2" y="2" width="44" height="44" rx="12" fill="white"/>
+    25→  <path d="M14 18C14 18 18 12 28 12C34 12 36 15 36 15" stroke="#1a1a1a" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+    26→  <path d="M33 11L37 15.5L32.5 18" stroke="#1a1a1a" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    27→  <path d="M34 30C34 30 30 36 20 36C14 36 12 33 12 33" stroke="#5C1A1B" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+    28→  <path d="M15 37L11 32.5L15.5 30" stroke="#5C1A1B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    29→  <circle cx="24" cy="24" r="3" stroke="#1a1a1a" stroke-width="1.5" fill="none"/>
+    30→</svg>`;
+    31→
+    32→const walletTransferSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+    33→  <rect x="2" y="2" width="44" height="44" rx="12" fill="white"/>
+    34→  <rect x="8" y="16" width="28" height="20" rx="3" stroke="#1a1a1a" stroke-width="1.8" fill="none"/>
+    35→  <path d="M8 22H36" stroke="#1a1a1a" stroke-width="1.5"/>
+    36→  <rect x="28" y="24" width="8" height="6" rx="2" stroke="#1a1a1a" stroke-width="1.5" fill="none"/>
+    37→  <circle cx="32" cy="27" r="1.2" fill="#1a1a1a"/>
+    38→  <path d="M33 10L39 16" stroke="#5C1A1B" stroke-width="1.8" stroke-linecap="round"/>
+    39→  <path d="M39 10L33 16" stroke="#5C1A1B" stroke-width="1.8" stroke-linecap="round"/>
+    40→  <path d="M36 8V18" stroke="#5C1A1B" stroke-width="1.5" stroke-linecap="round"/>
+    41→</svg>`;
+    42→
+    43→const rechargeSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+    44→  <rect x="2" y="2" width="44" height="44" rx="12" fill="white"/>
+    45→  <rect x="16" y="10" width="16" height="28" rx="3" stroke="#1a1a1a" stroke-width="1.8" fill="none"/>
+    46→  <line x1="21" y1="12" x2="27" y2="12" stroke="#1a1a1a" stroke-width="1.5" stroke-linecap="round"/>
+    47→  <circle cx="24" cy="34" r="1.5" fill="#1a1a1a"/>
+    48→  <path d="M12 16C10 18 9 20 9 22" stroke="#5C1A1B" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+    49→  <path d="M9 12C6 15 5 19 5 22" stroke="#5C1A1B" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+    50→</svg>`;
+    51→
+    52→const appStoreSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+    53→  <rect x="2" y="2" width="44" height="44" rx="12" fill="white"/>
+    54→  <path d="M12 20L16 10H32L36 20" stroke="#1a1a1a" stroke-width="1.8" stroke-linejoin="round" fill="none"/>
+    55→  <rect x="10" y="20" width="28" height="20" rx="2" stroke="#1a1a1a" stroke-width="1.8" fill="none"/>
+    56→  <rect x="15" y="24" width="5" height="5" rx="1" stroke="#1a1a1a" stroke-width="1.2" fill="none"/>
+    57→  <rect x="21.5" y="24" width="5" height="5" rx="1" stroke="#1a1a1a" stroke-width="1.2" fill="none"/>
+    58→  <rect x="28" y="24" width="5" height="5" rx="1" stroke="#1a1a1a" stroke-width="1.2" fill="none"/>
+    59→  <rect x="15" y="31" width="5" height="5" rx="1" stroke="#1a1a1a" stroke-width="1.2" fill="none"/>
+    60→  <rect x="21.5" y="31" width="5" height="5" rx="1" fill="#5C1A1B" stroke="#5C1A1B" stroke-width="1.2"/>
+    61→  <rect x="28" y="31" width="5" height="5" rx="1" stroke="#1a1a1a" stroke-width="1.2" fill="none"/>
+    62→</svg>`;
+    63→
+    64→const instantChargeSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+    65→  <rect x="2" y="2" width="44" height="44" rx="12" fill="white"/>
+    66→  <rect x="15" y="8" width="18" height="32" rx="3" stroke="#1a1a1a" stroke-width="1.8" fill="none"/>
+    67→  <line x1="21" y1="10" x2="27" y2="10" stroke="#1a1a1a" stroke-width="1.5" stroke-linecap="round"/>
+    68→  <path d="M27 18L22 26H26L21 34" stroke="#5C1A1B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    69→</svg>`;
+    70→
+    71→const healthSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+    72→  <rect x="2" y="2" width="44" height="44" rx="12" fill="white"/>
+    73→  <path d="M24 8C18 8 10 13 10 22C10 32 24 40 24 40C24 40 38 32 38 22C38 13 30 8 24 8Z" stroke="#1a1a1a" stroke-width="1.8" fill="none"/>
+    74→  <rect x="20" y="18" width="8" height="3" rx="0.5" fill="#5C1A1B"/>
+    75→  <rect x="22.5" y="15.5" width="3" height="8" rx="0.5" fill="#5C1A1B"/>
+    76→</svg>`;
+    77→
+    78→const gamesSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+    79→  <rect x="2" y="2" width="44" height="44" rx="12" fill="white"/>
+    80→  <path d="M8 22C8 16 12 14 16 14H32C36 14 40 16 40 22C40 28 38 36 32 36C28 36 26 32 24 32C22 32 20 36 16 36C10 36 8 28 8 22Z" stroke="#1a1a1a" stroke-width="1.8" fill="none"/>
+    81→  <line x1="13" y1="22" x2="13" y2="28" stroke="#1a1a1a" stroke-width="1.8" stroke-linecap="round"/>
+    82→  <line x1="10" y1="25" x2="16" y2="25" stroke="#1a1a1a" stroke-width="1.8" stroke-linecap="round"/>
+    83→  <circle cx="33" cy="22" r="2" fill="#5C1A1B"/>
+    84→  <circle cx="30" cy="26" r="1.5" stroke="#1a1a1a" stroke-width="1.2" fill="none"/>
+    85→  <circle cx="36" cy="26" r="1.5" stroke="#1a1a1a" stroke-width="1.2" fill="none"/>
+    86→</svg>`;
+    87→
+    88→const digitalWalletSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+    89→  <rect x="2" y="2" width="44" height="44" rx="12" fill="white"/>
+    90→  <rect x="8" y="18" width="28" height="18" rx="3" stroke="#1a1a1a" stroke-width="1.8" fill="none"/>
+    91→  <rect x="28" y="24" width="8" height="6" rx="2" stroke="#1a1a1a" stroke-width="1.5" fill="none"/>
+    92→  <circle cx="32" cy="27" r="1.2" fill="#1a1a1a"/>
+    93→  <path d="M18 18V14C18 12 20 10 22 10" stroke="#1a1a1a" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+    94→  <path d="M24 9C26 9 28 10.5 28 12" stroke="#1a1a1a" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+    95→  <path d="M36 10C37.5 8.5 38 7 37 6" stroke="#5C1A1B" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+    96→  <path d="M39 8C40.5 6.5 41 5 40 4" stroke="#5C1A1B" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+    97→  <path d="M33 12C34.5 10.5 35 9 34 8" stroke="#5C1A1B" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+    98→</svg>`;
+    99→
+   100→// ─── Telecom Companies (5 icons) ────────────────────────────────────
+   101→
+   102→const yemenMobileSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+   103→  <rect x="2" y="2" width="44" height="44" rx="12" fill="white"/>
+   104→  <rect x="15" y="10" width="18" height="28" rx="3" stroke="#1a1a1a" stroke-width="1.8" fill="none"/>
+   105→  <line x1="20" y1="12" x2="28" y2="12" stroke="#1a1a1a" stroke-width="1.5" stroke-linecap="round"/>
+   106→  <circle cx="24" cy="34" r="1.5" fill="#1a1a1a"/>
+   107→  <text x="24" y="27" text-anchor="middle" font-family="Arial,sans-serif" font-weight="bold" font-size="8" fill="#1a1a1a">YM</text>
+   108→  <path d="M10 14C8.5 16 8 18 8 20" stroke="#5C1A1B" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+   109→  <path d="M7 11C5 14 4.5 17 4 20" stroke="#5C1A1B" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+   110→  <path d="M38 14C39.5 16 40 18 40 20" stroke="#5C1A1B" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+   111→  <path d="M41 11C43 14 43.5 17 44 20" stroke="#5C1A1B" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+   112→</svg>`;
+   113→
+   114→const yoSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+   115→  <rect x="2" y="2" width="44" height="44" rx="12" fill="white"/>
+   116→  <rect x="15" y="10" width="18" height="28" rx="3" stroke="#1a1a1a" stroke-width="1.8" fill="none"/>
+   117→  <line x1="20" y1="12" x2="28" y2="12" stroke="#1a1a1a" stroke-width="1.5" stroke-linecap="round"/>
+   118→  <circle cx="24" cy="34" r="1.5" fill="#1a1a1a"/>
+   119→  <circle cx="24" cy="23" r="6" stroke="#FF6B00" stroke-width="2" fill="none"/>
+   120→  <text x="24" y="26" text-anchor="middle" font-family="Arial,sans-serif" font-weight="bold" font-size="7" fill="#FF6B00">Yo</text>
+   121→</svg>`;
+   122→
+   123→const sabafonSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+   124→  <rect x="2" y="2" width="44" height="44" rx="12" fill="white"/>
+   125→  <rect x="15" y="10" width="18" height="28" rx="3" stroke="#1a1a1a" stroke-width="1.8" fill="none"/>
+   126→  <line x1="20" y1="12" x2="28" y2="12" stroke="#1a1a1a" stroke-width="1.5" stroke-linecap="round"/>
+   127→  <circle cx="24" cy="34" r="1.5" fill="#1a1a1a"/>
+   128→  <path d="M24 16L30 23L24 30L18 23Z" stroke="#2563EB" stroke-width="1.8" fill="none" stroke-linejoin="round"/>
+   129→  <path d="M24 19L27.5 23L24 27L20.5 23Z" fill="#2563EB" fill-opacity="0.2"/>
+   130→</svg>`;
+   131→
+   132→const ySvg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+   133→  <rect x="2" y="2" width="44" height="44" rx="12" fill="white"/>
+   134→  <rect x="15" y="10" width="18" height="28" rx="3" stroke="#1a1a1a" stroke-width="1.8" fill="none"/>
+   135→  <line x1="20" y1="12" x2="28" y2="12" stroke="#1a1a1a" stroke-width="1.5" stroke-linecap="round"/>
+   136→  <circle cx="24" cy="34" r="1.5" fill="#1a1a1a"/>
+   137→  <path d="M19 16L24 24L29 16" stroke="#059669" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+   138→  <line x1="24" y1="24" x2="24" y2="32" stroke="#059669" stroke-width="2.2" stroke-linecap="round"/>
+   139→</svg>`;
+   140→
+   141→const yemenNetSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+   142→  <rect x="2" y="2" width="44" height="44" rx="12" fill="white"/>
+   143→  <rect x="8" y="14" width="26" height="18" rx="2" stroke="#1a1a1a" stroke-width="1.8" fill="none"/>
+   144→  <line x1="21" y1="32" x2="21" y2="36" stroke="#1a1a1a" stroke-width="1.5"/>
+   145→  <line x1="14" y1="36" x2="28" y2="36" stroke="#1a1a1a" stroke-width="1.8" stroke-linecap="round"/>
+   146→  <path d="M33 10C34.5 8.5 35 7 34 6" stroke="#8B5CF6" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+   147→  <path d="M36 8C37.5 6.5 38 5 37 4" stroke="#8B5CF6" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+   148→  <path d="M30 12C31.5 10.5 32 9 31 8" stroke="#8B5CF6" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+   149→  <circle cx="21" cy="23" r="2" fill="#8B5CF6"/>
+   150→</svg>`;
+   151→
+   152→// ─── Services Screen (5 icons) ──────────────────────────────────────
+   153→
+   154→const payBillSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+   155→  <rect x="2" y="2" width="44" height="44" rx="12" fill="white"/>
+   156→  <path d="M14 6H34V40C34 41 33 42 32 42H16C15 42 14 41 14 40V6Z" stroke="#1a1a1a" stroke-width="1.8" fill="none"/>
+   157→  <path d="M14 6C14 6 16 4 24 4C32 4 34 6 34 6" stroke="#1a1a1a" stroke-width="1.8" fill="none"/>
+   158→  <line x1="18" y1="16" x2="30" y2="16" stroke="#1a1a1a" stroke-width="1.2" stroke-linecap="round"/>
+   159→  <line x1="18" y1="21" x2="30" y2="21" stroke="#1a1a1a" stroke-width="1.2" stroke-linecap="round"/>
+   160→  <line x1="18" y1="26" x2="26" y2="26" stroke="#1a1a1a" stroke-width="1.2" stroke-linecap="round"/>
+   161→  <path d="M26 30L29 33L35 27" stroke="#5C1A1B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+   162→</svg>`;
+   163→
+   164→const transferIntlSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+   165→  <rect x="2" y="2" width="44" height="44" rx="12" fill="white"/>
+   166→  <circle cx="24" cy="24" r="13" stroke="#1a1a1a" stroke-width="1.8" fill="none"/>
+   167→  <ellipse cx="24" cy="24" rx="6" ry="13" stroke="#1a1a1a" stroke-width="1.2" fill="none"/>
+   168→  <line x1="11" y1="20" x2="37" y2="20" stroke="#1a1a1a" stroke-width="1.2"/>
+   169→  <line x1="11" y1="28" x2="37" y2="28" stroke="#1a1a1a" stroke-width="1.2"/>
+   170→  <path d="M37 10L41 14L37 18" stroke="#5C1A1B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+   171→  <path d="M11 30L7 34L11 38" stroke="#5C1A1B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+   172→</svg>`;
+   173→
+   174→const printReceiptSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+   175→  <rect x="2" y="2" width="44" height="44" rx="12" fill="white"/>
+   176→  <rect x="14" y="6" width="20" height="14" rx="1" stroke="#1a1a1a" stroke-width="1.5" fill="none"/>
+   177→  <rect x="8" y="20" width="32" height="14" rx="2" stroke="#1a1a1a" stroke-width="1.8" fill="none"/>
+   178→  <rect x="16" y="30" width="16" height="12" rx="1" stroke="#5C1A1B" stroke-width="1.5" fill="none"/>
+   179→  <line x1="20" y1="34" x2="28" y2="34" stroke="#1a1a1a" stroke-width="1.2" stroke-linecap="round"/>
+   180→  <line x1="20" y1="38" x2="26" y2="38" stroke="#1a1a1a" stroke-width="1.2" stroke-linecap="round"/>
+   181→  <rect x="18" y="23" width="4" height="3" rx="0.5" fill="#1a1a1a"/>
+   182→  <rect x="26" y="23" width="4" height="3" rx="0.5" fill="#1a1a1a"/>
+   183→</svg>`;
+   184→
+   185→const payBillsSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+   186→  <rect x="2" y="2" width="44" height="44" rx="12" fill="white"/>
+   187→  <rect x="12" y="8" width="20" height="28" rx="2" stroke="#1a1a1a" stroke-width="1.5" fill="none"/>
+   188→  <rect x="16" y="12" width="20" height="28" rx="2" stroke="#1a1a1a" stroke-width="1.5" fill="none"/>
+   189→  <rect x="20" y="8" width="18" height="32" rx="2" stroke="#1a1a1a" stroke-width="1.8" fill="white"/>
+   190→  <line x1="24" y1="15" x2="34" y2="15" stroke="#1a1a1a" stroke-width="1.2" stroke-linecap="round"/>
+   191→  <line x1="24" y1="20" x2="34" y2="20" stroke="#1a1a1a" stroke-width="1.2" stroke-linecap="round"/>
+   192→  <line x1="24" y1="25" x2="31" y2="25" stroke="#1a1a1a" stroke-width="1.2" stroke-linecap="round"/>
+   193→  <rect x="24" y="29" width="10" height="6" rx="1" fill="#5C1A1B" fill-opacity="0.15" stroke="#5C1A1B" stroke-width="1.2"/>
+   194→</svg>`;
+   195→
+   196→const transferAccountSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+   197→  <rect x="2" y="2" width="44" height="44" rx="12" fill="white"/>
+   198→  <circle cx="20" cy="17" r="6" stroke="#1a1a1a" stroke-width="1.8" fill="none"/>
+   199→  <path d="M10 34C10 28 14 24 20 24C26 24 30 28 30 34" stroke="#1a1a1a" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+   200→  <path d="M32 18L38 24L32 30" stroke="#5C1A1B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+   201→  <line x1="28" y1="24" x2="38" y2="24" stroke="#5C1A1B" stroke-width="2" stroke-linecap="round"/>
+   202→</svg>`;
+   203→
+   204→// ─── Games & Entertainment (3 icons) ────────────────────────────────
+   205→
+   206→const pubgSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+   207→  <rect x="2" y="2" width="44" height="44" rx="12" fill="white"/>
+   208→  <path d="M24 8C18 8 13 13 13 19V24L16 28H32L35 24V19C35 13 30 8 24 8Z" stroke="#1a1a1a" stroke-width="1.8" fill="none"/>
+   209→  <line x1="13" y1="22" x2="35" y2="22" stroke="#1a1a1a" stroke-width="1.5"/>
+   210→  <rect x="20" y="28" width="8" height="4" rx="1" stroke="#1a1a1a" stroke-width="1.2" fill="none"/>
+   211→  <path d="M18 32L16 38" stroke="#1a1a1a" stroke-width="1.5" stroke-linecap="round"/>
+   212→  <path d="M30 32L32 38" stroke="#1a1a1a" stroke-width="1.5" stroke-linecap="round"/>
+   213→  <circle cx="20" cy="16" r="2" fill="#F59E0B"/>
+   214→  <circle cx="28" cy="16" r="2" stroke="#1a1a1a" stroke-width="1.2" fill="none"/>
+   215→  <circle cx="24" cy="13" r="1" fill="#1a1a1a"/>
+   216→</svg>`;
+   217→
+   218→const freefireSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+   219→  <rect x="2" y="2" width="44" height="44" rx="12" fill="white"/>
+   220→  <path d="M24 8C20 14 14 16 14 26C14 32 18 38 24 38C30 38 34 32 34 26C34 16 28 14 24 8Z" stroke="#1a1a1a" stroke-width="1.8" fill="none"/>
+   221→  <path d="M24 16C22 20 19 21 19 27C19 30 21 34 24 34C27 34 29 30 29 27C29 21 26 20 24 16Z" fill="#EC4899" fill-opacity="0.25" stroke="#EC4899" stroke-width="1.5"/>
+   222→  <path d="M24 22C23 24 22 25 22 28C22 29.5 23 31 24 31C25 31 26 29.5 26 28C26 25 25 24 24 22Z" fill="#EC4899" fill-opacity="0.5"/>
+   223→</svg>`;
+   224→
+   225→const giftCardsSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+   226→  <rect x="2" y="2" width="44" height="44" rx="12" fill="white"/>
+   227→  <rect x="8" y="18" width="32" height="22" rx="2" stroke="#1a1a1a" stroke-width="1.8" fill="none"/>
+   228→  <line x1="8" y1="26" x2="40" y2="26" stroke="#1a1a1a" stroke-width="1.5"/>
+   229→  <path d="M20 18C20 14 24 10 24 14C24 10 28 14 28 18" stroke="#14B8A6" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+   230→  <line x1="24" y1="14" x2="24" y2="18" stroke="#14B8A6" stroke-width="1.5"/>
+   231→  <circle cx="34" cy="22" r="2" fill="#14B8A6"/>
+   232→</svg>`;
+   233→
+   234→// ─── Other (3 icons) ────────────────────────────────────────────────
+   235→
+   236→const supportSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+   237→  <rect x="2" y="2" width="44" height="44" rx="12" fill="white"/>
+   238→  <path d="M12 24V20C12 13.4 17.4 8 24 8C30.6 8 36 13.4 36 20V24" stroke="#1a1a1a" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+   239→  <rect x="8" y="24" width="6" height="10" rx="2" stroke="#1a1a1a" stroke-width="1.8" fill="none"/>
+   240→  <rect x="34" y="24" width="6" height="10" rx="2" stroke="#1a1a1a" stroke-width="1.8" fill="none"/>
+   241→  <path d="M36 34V36C36 38 34 40 32 40H28" stroke="#1a1a1a" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+   242→  <circle cx="24" cy="40" r="3" stroke="#5C1A1B" stroke-width="1.8" fill="none"/>
+   243→  <path d="M22.5 39.5L24 41.5L26 38.5" stroke="#5C1A1B" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+   244→</svg>`;
+   245→
+   246→const offersSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+   247→  <rect x="2" y="2" width="44" height="44" rx="12" fill="white"/>
+   248→  <path d="M12 8L36 8L40 24L36 40L12 40L8 24L12 8Z" stroke="#1a1a1a" stroke-width="1.8" fill="none" stroke-linejoin="round"/>
+   249→  <line x1="14" y1="18" x2="34" y2="18" stroke="#1a1a1a" stroke-width="1.2" stroke-linecap="round"/>
+   250→  <line x1="14" y1="24" x2="30" y2="24" stroke="#1a1a1a" stroke-width="1.2" stroke-linecap="round"/>
+   251→  <line x1="14" y1="30" x2="26" y2="30" stroke="#1a1a1a" stroke-width="1.2" stroke-linecap="round"/>
+   252→  <circle cx="32" cy="30" r="4" fill="#5C1A1B" fill-opacity="0.2" stroke="#5C1A1B" stroke-width="1.5"/>
+   253→  <text x="32" y="32.5" text-anchor="middle" font-family="Arial,sans-serif" font-weight="bold" font-size="6" fill="#5C1A1B">%</text>
+   254→</svg>`;
+   255→
+   256→const ordersSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+   257→  <rect x="2" y="2" width="44" height="44" rx="12" fill="white"/>
+   258→  <rect x="12" y="6" width="24" height="36" rx="2" stroke="#1a1a1a" stroke-width="1.8" fill="none"/>
+   259→  <rect x="18" y="4" width="12" height="6" rx="2" stroke="#1a1a1a" stroke-width="1.5" fill="white"/>
+   260→  <line x1="18" y1="18" x2="30" y2="18" stroke="#1a1a1a" stroke-width="1.2" stroke-linecap="round"/>
+   261→  <line x1="18" y1="24" x2="30" y2="24" stroke="#1a1a1a" stroke-width="1.2" stroke-linecap="round"/>
+   262→  <line x1="18" y1="30" x2="30" y2="30" stroke="#1a1a1a" stroke-width="1.2" stroke-linecap="round"/>
+   263→  <path d="M20 17L22 19L26 15" stroke="#5C1A1B" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+   264→  <path d="M20 23L22 25L26 21" stroke="#5C1A1B" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+   265→</svg>`;
+   266→
+   267→// ─── Additional Service Icons ────────────────────────────────────────
+   268→
+   269→const depositSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+   270→  <rect x="2" y="2" width="44" height="44" rx="12" fill="white"/>
+   271→  <rect x="8" y="18" width="28" height="18" rx="3" stroke="#1a1a1a" stroke-width="1.8" fill="none"/>
+   272→  <rect x="28" y="24" width="8" height="6" rx="2" stroke="#1a1a1a" stroke-width="1.5" fill="none"/>
+   273→  <circle cx="32" cy="27" r="1.2" fill="#1a1a1a"/>
+   274→  <path d="M24 8V16" stroke="#5C1A1B" stroke-width="2" stroke-linecap="round"/>
+   275→  <path d="M20 12L24 8L28 12" stroke="#5C1A1B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+   276→  <path d="M18 16H30" stroke="#1a1a1a" stroke-width="1.5" stroke-linecap="round"/>
+   277→</svg>`;
+   278→
+   279→const exchangeSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+   280→  <rect x="2" y="2" width="44" height="44" rx="12" fill="white"/>
+   281→  <circle cx="24" cy="24" r="12" stroke="#1a1a1a" stroke-width="1.8" fill="none"/>
+   282→  <text x="24" y="28" text-anchor="middle" font-family="Arial,sans-serif" font-weight="bold" font-size="10" fill="#1a1a1a">$</text>
+   283→  <path d="M16 14L12 18L16 22" stroke="#5C1A1B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+   284→  <path d="M12 18H20" stroke="#5C1A1B" stroke-width="1.8" stroke-linecap="round"/>
+   285→  <path d="M32 26L36 30L32 34" stroke="#5C1A1B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+   286→  <path d="M36 30H28" stroke="#5C1A1B" stroke-width="1.8" stroke-linecap="round"/>
+   287→</svg>`;
+   288→
+   289→const savingsSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+   290→  <rect x="2" y="2" width="44" height="44" rx="12" fill="white"/>
+   291→  <path d="M24 10C17 10 12 15 12 20C12 25 16 28 16 28V36C16 37.5 17 38 18 38H30C31 38 32 37.5 32 36V28C32 28 36 25 36 20C36 15 31 10 24 10Z" stroke="#1a1a1a" stroke-width="1.8" fill="none"/>
+   292→  <line x1="16" y1="28" x2="32" y2="28" stroke="#1a1a1a" stroke-width="1.5"/>
+   293→  <circle cx="24" cy="20" r="4" stroke="#5C1A1B" stroke-width="1.8" fill="none"/>
+   294→  <text x="24" y="23" text-anchor="middle" font-family="Arial,sans-serif" font-weight="bold" font-size="7" fill="#5C1A1B">$</text>
+   295→  <path d="M21 34H27" stroke="#1a1a1a" stroke-width="1.5" stroke-linecap="round"/>
+   296→</svg>`;
+   297→
+   298→// ─── Service Providers & Wallet Services Category Icons ─────────────
+   299→
+   300→const providersSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+   301→  <rect x="2" y="2" width="44" height="44" rx="12" fill="white"/>
+   302→  <rect x="8" y="12" width="32" height="24" rx="3" stroke="#1a1a1a" stroke-width="1.8" fill="none"/>
+   303→  <circle cx="18" cy="22" r="4" stroke="#1a1a1a" stroke-width="1.5" fill="none"/>
+   304→  <path d="M12 32C12 28 14.5 26 18 26C21.5 26 24 28 24 32" stroke="#1a1a1a" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+   305→  <circle cx="30" cy="22" r="4" stroke="#5C1A1B" stroke-width="1.5" fill="none"/>
+   306→  <path d="M24 32C24 28 26.5 26 30 26C33.5 26 36 28 36 32" stroke="#5C1A1B" stroke-width="1.5" stroke-linecap="round" fill="none"/>
+   307→  <path d="M18 10V14" stroke="#1a1a1a" stroke-width="1.5" stroke-linecap="round"/>
+   308→  <path d="M30 10V14" stroke="#5C1A1B" stroke-width="1.5" stroke-linecap="round"/>
+   309→</svg>`;
+   310→
+   311→const walletServicesSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+   312→  <rect x="2" y="2" width="44" height="44" rx="12" fill="white"/>
+   313→  <rect x="8" y="16" width="28" height="20" rx="3" stroke="#1a1a1a" stroke-width="1.8" fill="none"/>
+   314→  <path d="M8 22H36" stroke="#1a1a1a" stroke-width="1.5"/>
+   315→  <rect x="28" y="24" width="8" height="6" rx="2" stroke="#1a1a1a" stroke-width="1.5" fill="none"/>
+   316→  <circle cx="32" cy="27" r="1.2" fill="#1a1a1a"/>
+   317→  <path d="M12 10H20" stroke="#5C1A1B" stroke-width="1.8" stroke-linecap="round"/>
+   318→  <path d="M16 7V13" stroke="#5C1A1B" stroke-width="1.8" stroke-linecap="round"/>
+   319→  <circle cx="36" cy="12" r="3" stroke="#5C1A1B" stroke-width="1.5" fill="none"/>
+   320→  <path d="M35 12H37" stroke="#5C1A1B" stroke-width="1.2" stroke-linecap="round"/>
+   321→</svg>`;
+   322→
+   323→// ─── Category Icons (for sections without custom icons) ──────────────
+   324→
+   325→const telecomCategorySvg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+   326→  <rect x="2" y="2" width="44" height="44" rx="12" fill="white"/>
+   327→  <rect x="15" y="10" width="18" height="28" rx="3" stroke="#1a1a1a" stroke-width="1.8" fill="none"/>
+   328→  <line x1="20" y1="12" x2="28" y2="12" stroke="#1a1a1a" stroke-width="1.5" stroke-linecap="round"/>
+   329→  <circle cx="24" cy="34" r="1.5" fill="#1a1a1a"/>
+   330→  <path d="M10 14C8.5 16 8 18 8 20" stroke="#5C1A1B" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+   331→  <path d="M7 11C5 14 4.5 17 4 20" stroke="#5C1A1B" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+   332→  <path d="M38 14C39.5 16 40 18 40 20" stroke="#5C1A1B" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+   333→  <path d="M41 11C43 14 43.5 17 44 20" stroke="#5C1A1B" stroke-width="1.8" stroke-linecap="round" fill="none"/>
+   334→  <circle cx="24" cy="24" r="4" stroke="#5C1A1B" stroke-width="1.5" fill="none"/>
+   335→</svg>`;
+   336→
+   337→const internetCategorySvg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+   338→  <rect x="2" y="2" width="44" height="44" rx="12" fill="white"/>
+   339→  <circle cx="24" cy="24" r="14" stroke="#1a1a1a" stroke-width="1.8" fill="none"/>
+   340→  <ellipse cx="24" cy="24" rx="6" ry="14" stroke="#1a1a1a" stroke-width="1.2" fill="none"/>
+   341→  <line x1="10" y1="20" x2="38" y2="20" stroke="#1a1a1a" stroke-width="1.2"/>
+   342→  <line x1="10" y1="28" x2="38" y2="28" stroke="#1a1a1a" stroke-width="1.2"/>
+   343→  <path d="M14 14L18 18" stroke="#5C1A1B" stroke-width="1.8" stroke-linecap="round"/>
+   344→  <path d="M34 14L30 18" stroke="#5C1A1B" stroke-width="1.8" stroke-linecap="round"/>
+   345→  <circle cx="24" cy="24" r="2" fill="#5C1A1B"/>
+   346→</svg>`;
+   347→
+   348→const electricityCategorySvg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+   349→  <rect x="2" y="2" width="44" height="44" rx="12" fill="white"/>
+   350→  <path d="M26 8L18 22H23L22 36L30 22H25L26 8Z" fill="#5C1A1B" stroke="#1a1a1a" stroke-width="1.2" stroke-linejoin="round"/>
+   351→  <circle cx="18" cy="32" r="3" stroke="#1a1a1a" stroke-width="1.5" fill="none"/>
+   352→  <circle cx="30" cy="32" r="3" stroke="#1a1a1a" stroke-width="1.5" fill="none"/>
+   353→  <line x1="18" y1="35" x2="18" y2="38" stroke="#1a1a1a" stroke-width="1.5" stroke-linecap="round"/>
+   354→  <line x1="30" y1="35" x2="30" y2="38" stroke="#1a1a1a" stroke-width="1.5" stroke-linecap="round"/>
+   355→</svg>`;
+   356→
+   357→const governmentCategorySvg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+   358→  <rect x="2" y="2" width="44" height="44" rx="12" fill="white"/>
+   359→  <path d="M24 8L8 18H40L24 8Z" stroke="#1a1a1a" stroke-width="1.8" stroke-linejoin="round" fill="none"/>
+   360→  <rect x="10" y="18" width="28" height="4" stroke="#1a1a1a" stroke-width="1.5" fill="none"/>
+   361→  <rect x="12" y="22" width="4" height="14" stroke="#1a1a1a" stroke-width="1.5" fill="none"/>
+   362→  <rect x="22" y="22" width="4" height="14" stroke="#1a1a1a" stroke-width="1.5" fill="none"/>
+   363→  <rect x="32" y="22" width="4" height="14" stroke="#1a1a1a" stroke-width="1.5" fill="none"/>
+   364→  <rect x="8" y="36" width="32" height="4" stroke="#1a1a1a" stroke-width="1.5" fill="none"/>
+   365→  <circle cx="24" cy="13" r="2" fill="#5C1A1B"/>
+   366→</svg>`;
+   367→
+   368→const cryptoCategorySvg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+   369→  <rect x="2" y="2" width="44" height="44" rx="12" fill="white"/>
+   370→  <circle cx="24" cy="24" r="12" stroke="#1a1a1a" stroke-width="1.8" fill="none"/>
+   371→  <path d="M20 18V30" stroke="#5C1A1B" stroke-width="2" stroke-linecap="round"/>
+   372→  <path d="M28 18V30" stroke="#5C1A1B" stroke-width="2" stroke-linecap="round"/>
+   373→  <path d="M20 22H28" stroke="#5C1A1B" stroke-width="2" stroke-linecap="round"/>
+   374→  <path d="M20 26H28" stroke="#5C1A1B" stroke-width="2" stroke-linecap="round"/>
+   375→  <path d="M16 12L12 16" stroke="#1a1a1a" stroke-width="1.2" stroke-linecap="round"/>
+   376→  <path d="M32 12L36 16" stroke="#1a1a1a" stroke-width="1.2" stroke-linecap="round"/>
+   377→  <circle cx="12" cy="16" r="2" stroke="#1a1a1a" stroke-width="1" fill="none"/>
+   378→  <circle cx="36" cy="16" r="2" stroke="#1a1a1a" stroke-width="1" fill="none"/>
+   379→</svg>`;
+   380→
+   381→const cryptoInvestCategorySvg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+   382→  <rect x="2" y="2" width="44" height="44" rx="12" fill="white"/>
+   383→  <circle cx="20" cy="20" r="8" stroke="#1a1a1a" stroke-width="1.8" fill="none"/>
+   384→  <path d="M18 16V24" stroke="#5C1A1B" stroke-width="1.8" stroke-linecap="round"/>
+   385→  <path d="M22 16V24" stroke="#5C1A1B" stroke-width="1.8" stroke-linecap="round"/>
+   386→  <path d="M18 19H22" stroke="#5C1A1B" stroke-width="1.8" stroke-linecap="round"/>
+   387→  <path d="M28 14L36 10" stroke="#1a1a1a" stroke-width="1.5" stroke-linecap="round"/>
+   388→  <path d="M28 20L36 16" stroke="#1a1a1a" stroke-width="1.5" stroke-linecap="round"/>
+   389→  <path d="M36 10L38 12L36 14L38 16L36 18" stroke="#5C1A1B" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+   390→  <path d="M14 28L10 36" stroke="#1a1a1a" stroke-width="1.5" stroke-linecap="round"/>
+   391→  <path d="M20 28L16 36" stroke="#1a1a1a" stroke-width="1.5" stroke-linecap="round"/>
+   392→  <path d="M26 28L22 36" stroke="#1a1a1a" stroke-width="1.5" stroke-linecap="round"/>
+   393→  <path d="M32 28L28 36" stroke="#1a1a1a" stroke-width="1.5" stroke-linecap="round"/>
+   394→  <path d="M10 36H28" stroke="#1a1a1a" stroke-width="1.5" stroke-linecap="round"/>
+   395→</svg>`;
+   396→
+   397→// ─── Export all icons ────────────────────────────────────────────────
+   398→
+   399→export const serviceIcons: Record<string, string> = {
+   400→  // Home Services
+   401→  'instant-pay': svgToDataUrl(instantPaySvg),
+   402→  'transfer': svgToDataUrl(transferSvg),
+   403→  'wallet-transfer': svgToDataUrl(walletTransferSvg),
+   404→  'recharge': svgToDataUrl(rechargeSvg),
+   405→  'app-store': svgToDataUrl(appStoreSvg),
+   406→  'instant-charge': svgToDataUrl(instantChargeSvg),
+   407→  'health': svgToDataUrl(healthSvg),
+   408→  'games': svgToDataUrl(gamesSvg),
+   409→  'digital-wallet': svgToDataUrl(digitalWalletSvg),
+   410→
+   411→  // Telecom Companies
+   412→  'yemen-mobile': svgToDataUrl(yemenMobileSvg),
+   413→  'yo': svgToDataUrl(yoSvg),
+   414→  'sabafon': svgToDataUrl(sabafonSvg),
+   415→  'y': svgToDataUrl(ySvg),
+   416→  'yemen-net': svgToDataUrl(yemenNetSvg),
+   417→
+   418→  // Services Screen
+   419→  'pay-bill': svgToDataUrl(payBillSvg),
+   420→  'transfer-intl': svgToDataUrl(transferIntlSvg),
+   421→  'print-receipt': svgToDataUrl(printReceiptSvg),
+   422→  'pay-bills': svgToDataUrl(payBillsSvg),
+   423→  'transfer-account': svgToDataUrl(transferAccountSvg),
+   424→
+   425→  // Games & Entertainment
+   426→  'pubg': svgToDataUrl(pubgSvg),
+   427→  'freefire': svgToDataUrl(freefireSvg),
+   428→  'gift-cards': svgToDataUrl(giftCardsSvg),
+   429→
+   430→  // Other
+   431→  'support': svgToDataUrl(supportSvg),
+   432→  'offers': svgToDataUrl(offersSvg),
+   433→  'orders': svgToDataUrl(ordersSvg),
+   434→
+   435→  // Additional Services
+   436→  'deposit': svgToDataUrl(depositSvg),
+   437→  'exchange': svgToDataUrl(exchangeSvg),
+   438→  'currency-exchange': svgToDataUrl(exchangeSvg),
+   439→  'savings': svgToDataUrl(savingsSvg),
+   440→
+   441→  // Category Icons
+   442→  'providers': svgToDataUrl(providersSvg),
+   443→  'providers-category': svgToDataUrl(providersSvg),
+   444→  'wallet-services': svgToDataUrl(walletServicesSvg),
+   445→  'wallet-services-category': svgToDataUrl(walletServicesSvg),
+   446→  'telecom': svgToDataUrl(telecomCategorySvg),
+   447→  'telecom-category': svgToDataUrl(telecomCategorySvg),
+   448→  'internet': svgToDataUrl(internetCategorySvg),
+   449→  'internet-category': svgToDataUrl(internetCategorySvg),
+   450→  'electricity': svgToDataUrl(electricityCategorySvg),
+   451→  'electricity-category': svgToDataUrl(electricityCategorySvg),
+   452→  'government': svgToDataUrl(governmentCategorySvg),
+   453→  'government-category': svgToDataUrl(governmentCategorySvg),
+   454→  'crypto': svgToDataUrl(cryptoCategorySvg),
+   455→  'crypto-category': svgToDataUrl(cryptoCategorySvg),
+   456→  'crypto-invest': svgToDataUrl(cryptoInvestCategorySvg),
+   457→  'crypto-invest-category': svgToDataUrl(cryptoInvestCategorySvg),
+   458→};
+   459→
+   460→/**
+   461→ * Helper to get an icon by key with optional fallback
+   462→ */
+   463→export function getServiceIcon(key: string, fallback: string = 'instant-pay'): string {
+   464→  return serviceIcons[key] || serviceIcons[fallback] || '';
+   465→}
+   466→
+   467→/**
+   468→ * All available icon keys
+   469→ */
+   470→export const serviceIconKeys = Object.keys(serviceIcons);
+   471→

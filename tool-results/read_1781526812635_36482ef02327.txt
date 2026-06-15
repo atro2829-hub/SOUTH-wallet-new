@@ -1,0 +1,651 @@
+     1→'use client';
+     2→
+     3→import { useState, useEffect } from 'react';
+     4→import { ref, onValue, update, remove, set, push } from 'firebase/database';
+     5→import { database } from '@/lib/firebase';
+     6→import { useAdminStore } from '@/lib/store';
+     7→import { formatNumber, generateId } from '@/lib/utils';
+     8→import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+     9→import { Input } from '@/components/ui/input';
+    10→import { Button } from '@/components/ui/button';
+    11→import { Badge } from '@/components/ui/badge';
+    12→import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+    13→import { Label } from '@/components/ui/label';
+    14→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+    15→import { Switch } from '@/components/ui/switch';
+    16→import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+    17→import { Textarea } from '@/components/ui/textarea';
+    18→import { Search, Plus, Edit, Trash2, Server, Upload, FileJson, CheckCircle, XCircle, Package, AlertCircle } from 'lucide-react';
+    19→import { motion } from 'framer-motion';
+    20→
+    21→const categoryOptions = [
+    22→  { value: 'telecom', label: 'الاتصالات والشحن' },
+    23→  { value: 'entertainment', label: 'الخدمات الترفيهية' },
+    24→  { value: 'games', label: 'الألعاب' },
+    25→  { value: 'gift-cards', label: 'بطاقات الهدايا' },
+    26→  { value: 'digital-wallets', label: 'المحافظ الرقمية' },
+    27→];
+    28→
+    29→// Sub-category options per category
+    30→const subCategoryOptions: Record<string, { value: string; label: string }[]> = {
+    31→  telecom: [
+    32→    { value: 'telecom-recharge', label: 'شحن الرصيد' },
+    33→    { value: 'telecom-internet', label: 'باقات الإنترنت' },
+    34→    { value: 'telecom-offers', label: 'عروض الاتصالات' },
+    35→  ],
+    36→  entertainment: [
+    37→    { value: 'video-streaming', label: 'بث الفيديو' },
+    38→    { value: 'music-streaming', label: 'بث الموسيقى' },
+    39→    { value: 'social-media', label: 'وسائل التواصل' },
+    40→    { value: 'other-entertainment', label: 'أخرى ترفيهية' },
+    41→  ],
+    42→  games: [
+    43→    { value: 'shooting-games', label: 'ألعاب إطلاق النار' },
+    44→    { value: 'strategy-games', label: 'ألعاب الاستراتيجية' },
+    45→    { value: 'adventure-games', label: 'ألعاب المغامرات' },
+    46→    { value: 'sports-games', label: 'ألعاب الرياضة' },
+    47→    { value: 'racing-games', label: 'ألعاب السباق' },
+    48→    { value: 'social-games', label: 'ألعاب اجتماعية' },
+    49→    { value: 'casual-games', label: 'ألعاب خفيفة' },
+    50→    { value: 'gaming-platforms', label: 'منصات الألعاب' },
+    51→    { value: 'gaming-cards', label: 'بطاقات الألعاب' },
+    52→  ],
+    53→  'gift-cards': [
+    54→    { value: 'store-cards', label: 'بطاقات المتاجر' },
+    55→    { value: 'payment-cards', label: 'بطاقات الدفع' },
+    56→    { value: 'gaming-cards', label: 'بطاقات الألعاب' },
+    57→    { value: 'communication-cards', label: 'بطاقات التواصل' },
+    58→  ],
+    59→  'digital-wallets': [
+    60→    { value: 'mobile-wallets', label: 'محافظ الجوال' },
+    61→    { value: 'crypto-wallets', label: 'محافظ العملات الرقمية' },
+    62→    { value: 'bank-transfer', label: 'تحويل بنكي' },
+    63→  ],
+    64→};
+    65→
+    66→// Provider type options
+    67→const providerTypeOptions = [
+    68→  { value: 'telecom', label: 'اتصالات' },
+    69→  { value: 'entertainment', label: 'ترفيهية' },
+    70→  { value: 'games', label: 'ألعاب' },
+    71→  { value: 'gift-cards', label: 'بطاقات هدايا' },
+    72→  { value: 'digital-wallets', label: 'محافظ رقمية' },
+    73→];
+    74→
+    75→export default function ProvidersPanel() {
+    76→  const { showToast } = useAdminStore();
+    77→  const [providers, setProviders] = useState<any[]>([]);
+    78→  const [search, setSearch] = useState('');
+    79→  const [loading, setLoading] = useState(true);
+    80→  const [dialog, setDialog] = useState(false);
+    81→  const [editing, setEditing] = useState<any>(null);
+    82→  const [filterCategory, setFilterCategory] = useState('all');
+    83→
+    84→  // Form
+    85→  const [name, setName] = useState('');
+    86→  const [nameEn, setNameEn] = useState('');
+    87→  const [categoryId, setCategoryId] = useState('telecom');
+    88→  const [subCategoryId, setSubCategoryId] = useState('');
+    89→  const [color, setColor] = useState('#6C3CE1');
+    90→  const [icon, setIcon] = useState('');
+    91→  const [inputLabel, setInputLabel] = useState('رقم الهاتف');
+    92→  const [inputType, setInputType] = useState('phone');
+    93→  const [inputPrefix, setInputPrefix] = useState('');
+    94→  const [inputPlaceholder, setInputPlaceholder] = useState('');
+    95→  const [providerType, setProviderType] = useState('telecom');
+    96→  const [executionType, setExecutionType] = useState('manual');
+    97→  const [isActive, setIsActive] = useState(true);
+    98→
+    99→  // JSON Import state
+   100→  const [jsonInput, setJsonInput] = useState('');
+   101→  const [jsonImportCategory, setJsonImportCategory] = useState('telecom');
+   102→  const [jsonPreview, setJsonPreview] = useState<{ provider: any; packages: any[] } | null>(null);
+   103→  const [jsonError, setJsonError] = useState('');
+   104→  const [jsonImporting, setJsonImporting] = useState(false);
+   105→
+   106→  useEffect(() => {
+   107→    const provRef = ref(database, 'providers');
+   108→    const unsub = onValue(provRef, (snapshot) => {
+   109→      const data = snapshot.val() || {};
+   110→      const list = Object.entries(data).map(([id, val]: [string, any]) => ({ id, ...val }));
+   111→      setProviders(list);
+   112→      setLoading(false);
+   113→    });
+   114→    return () => unsub();
+   115→  }, []);
+   116→
+   117→  const resetForm = () => {
+   118→    setName(''); setNameEn(''); setCategoryId('telecom'); setSubCategoryId('');
+   119→    setColor('#6C3CE1'); setIcon(''); setInputLabel('رقم الهاتف');
+   120→    setInputType('phone'); setInputPrefix(''); setInputPlaceholder('');
+   121→    setProviderType('telecom'); setExecutionType('manual');
+   122→    setIsActive(true); setEditing(null);
+   123→  };
+   124→
+   125→  const handleIconUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+   126→    const file = e.target.files?.[0];
+   127→    if (!file) return;
+   128→    if (file.size > 500000) {
+   129→      showToast('حجم الصورة يجب أن يكون أقل من 500KB', 'error');
+   130→      return;
+   131→    }
+   132→    const reader = new FileReader();
+   133→    reader.onload = (ev) => {
+   134→      const result = ev.target?.result as string;
+   135→      setIcon(result);
+   136→    };
+   137→    reader.readAsDataURL(file);
+   138→  };
+   139→
+   140→  const handleSave = async () => {
+   141→    if (!name) { showToast('يرجى إدخال الاسم', 'error'); return; }
+   142→    try {
+   143→      const data = {
+   144→        name, nameEn, categoryId, subCategoryId, color, icon,
+   145→        inputLabel, inputType, inputPrefix, inputPlaceholder,
+   146→        providerType, executionType, isActive,
+   147→        order: editing?.order ?? 0,
+   148→        createdAt: editing?.createdAt || new Date().toISOString(),
+   149→      };
+   150→      if (editing) {
+   151→        const updates: Record<string, any> = {
+   152→          [`providers/${editing.id}`]: { ...data, id: editing.id },
+   153→        };
+   154→        updates[`adminSettings/visibility/providers/${editing.id}`] = isActive;
+   155→        await update(ref(database), updates);
+   156→        showToast('تم تحديث المزود', 'success');
+   157→      } else {
+   158→        const cleanId = name.trim()
+   159→          .replace(/[\s]+/g, '-')
+   160→          .replace(/[^\u0600-\u06FFa-zA-Z0-9\-]/g, '')
+   161→          .toLowerCase();
+   162→        const providerId = cleanId || `provider-${Date.now()}`;
+   163→        const updates: Record<string, any> = {
+   164→          [`providers/${providerId}`]: { ...data, id: providerId, order: providers.length, createdAt: new Date().toISOString() },
+   165→        };
+   166→        updates[`adminSettings/visibility/providers/${providerId}`] = isActive;
+   167→        await update(ref(database), updates);
+   168→        showToast('تم إضافة المزود', 'success');
+   169→      }
+   170→      setDialog(false);
+   171→      resetForm();
+   172→    } catch (e) { showToast('حدث خطأ', 'error'); }
+   173→  };
+   174→
+   175→  const handleDelete = async (id: string) => {
+   176→    try {
+   177→      const updates: Record<string, any> = {
+   178→        [`providers/${id}`]: null,
+   179→        [`adminSettings/visibility/providers/${id}`]: null,
+   180→      };
+   181→      await update(ref(database), updates);
+   182→      showToast('تم حذف المزود', 'success');
+   183→    } catch (e) { showToast('حدث خطأ', 'error'); }
+   184→  };
+   185→
+   186→  const handleBulkToggle = async (enable: boolean) => {
+   187→    try {
+   188→      const updates: Record<string, any> = {};
+   189→      filteredProviders.forEach(p => {
+   190→        updates[`providers/${p.id}/isActive`] = enable;
+   191→        updates[`adminSettings/visibility/providers/${p.id}`] = enable;
+   192→      });
+   193→      await update(ref(database), updates);
+   194→      showToast(enable ? 'تم تفعيل جميع المزودين' : 'تم تعطيل جميع المزودين', 'success');
+   195→    } catch (e) { showToast('حدث خطأ', 'error'); }
+   196→  };
+   197→
+   198→  // ─── JSON Import Logic ───
+   199→  const parseJsonImport = () => {
+   200→    setJsonError('');
+   201→    setJsonPreview(null);
+   202→    if (!jsonInput.trim()) {
+   203→      setJsonError('يرجى لصق JSON أولاً');
+   204→      return;
+   205→    }
+   206→    try {
+   207→      const parsed = JSON.parse(jsonInput);
+   208→      
+   209→      // Support multiple formats:
+   210→      // Format 1: { provider: {...}, products: [...] }
+   211→      // Format 2: { name: "...", products: [...] }
+   212→      // Format 3: Array of products with provider info embedded
+   213→      // Format 4: Codashop/SEAGM API response format
+   214→      
+   215→      let providerData: any = {};
+   216→      let packagesList: any[] = [];
+   217→
+   218→      if (Array.isArray(parsed)) {
+   219→        // Array of products - try to extract provider info from first item
+   220→        if (parsed.length === 0) {
+   221→          setJsonError('المصفوفة فارغة');
+   222→          return;
+   223→        }
+   224→        const first = parsed[0];
+   225→        providerData = {
+   226→          name: first.provider_name || first.providerName || first.brand || first.game || first.category || 'مزود جديد',
+   227→          icon: first.icon || first.image || first.logo || '',
+   228→        };
+   229→        packagesList = parsed.map((item: any, idx: number) => ({
+   230→          name: item.name || item.product_name || item.productName || item.title || item.package_name || `باقة ${idx + 1}`,
+   231→          price: parseFloat(item.price || item.amount || item.cost || item.value || 0),
+   232→          currency: item.currency || 'YER',
+   233→          icon: item.icon || item.image || item.product_image || '',
+   234→          productId: item.id || item.product_id || item.sku || item.code || '',
+   235→          description: item.description || item.desc || '',
+   236→          originalData: item,
+   237→        }));
+   238→      } else if (parsed.provider || parsed.products || parsed.packages || parsed.items) {
+   239→        // Object with provider info and products array
+   240→        const prov = parsed.provider || parsed;
+   241→        providerData = {
+   242→          name: prov.name || prov.provider_name || prov.providerName || prov.brand || prov.game || 'مزود جديد',
+   243→          icon: prov.icon || prov.image || prov.logo || '',
+   244→          color: prov.color || '#6C3CE1',
+   245→          inputLabel: prov.inputLabel || 'رقم الحساب',
+   246→          inputType: prov.inputType || 'text',
+   247→        };
+   248→        const items = parsed.products || parsed.packages || parsed.items || [];
+   249→        packagesList = items.map((item: any, idx: number) => ({
+   250→          name: item.name || item.product_name || item.productName || item.title || item.package_name || `باقة ${idx + 1}`,
+   251→          price: parseFloat(item.price || item.amount || item.cost || item.value || 0),
+   252→          currency: item.currency || 'YER',
+   253→          icon: item.icon || item.image || item.product_image || '',
+   254→          productId: item.id || item.product_id || item.sku || item.code || '',
+   255→          description: item.description || item.desc || '',
+   256→          originalData: item,
+   257→        }));
+   258→      } else {
+   259→        // Try to treat the whole object as a provider with nested arrays
+   260→        const keys = Object.keys(parsed);
+   261→        const arrayKey = keys.find(k => Array.isArray(parsed[k]));
+   262→        if (arrayKey) {
+   263→          providerData = {
+   264→            name: parsed.name || parsed.provider_name || parsed.brand || 'مزود جديد',
+   265→            icon: parsed.icon || parsed.image || '',
+   266→          };
+   267→          packagesList = parsed[arrayKey].map((item: any, idx: number) => ({
+   268→            name: item.name || item.product_name || item.title || `باقة ${idx + 1}`,
+   269→            price: parseFloat(item.price || item.amount || 0),
+   270→            currency: item.currency || 'YER',
+   271→            icon: item.icon || item.image || '',
+   272→            productId: item.id || item.product_id || '',
+   273→            originalData: item,
+   274→          }));
+   275→        } else {
+   276→          setJsonError('لم يتم التعرف على بنية JSON. يرجى استخدام صيغة {provider, products} أو مصفوفة منتجات');
+   277→          return;
+   278→        }
+   279→      }
+   280→
+   281→      setJsonPreview({
+   282→        provider: providerData,
+   283→        packages: packagesList,
+   284→      });
+   285→    } catch (e: any) {
+   286→      setJsonError(`خطأ في تحليل JSON: ${e.message}`);
+   287→    }
+   288→  };
+   289→
+   290→  const handleJsonImport = async () => {
+   291→    if (!jsonPreview) return;
+   292→    setJsonImporting(true);
+   293→    try {
+   294→      const prov = jsonPreview.provider;
+   295→      const cleanId = (prov.name || 'provider')
+   296→        .trim()
+   297→        .replace(/[\s]+/g, '-')
+   298→        .replace(/[^\u0600-\u06FFa-zA-Z0-9\-]/g, '')
+   299→        .toLowerCase();
+   300→      const providerId = cleanId || `provider-${Date.now()}`;
+   301→      
+   302→      const updates: Record<string, any> = {};
+   303→      
+   304→      // Create provider
+   305→      updates[`providers/${providerId}`] = {
+   306→        id: providerId,
+   307→        name: prov.name || 'مزود جديد',
+   308→        categoryId: jsonImportCategory,
+   309→        color: prov.color || '#6C3CE1',
+   310→        icon: prov.icon || '',
+   311→        inputLabel: prov.inputLabel || 'رقم الحساب',
+   312→        inputType: prov.inputType || 'text',
+   313→        inputPrefix: prov.inputPrefix || '',
+   314→        isActive: true,
+   315→      };
+   316→      updates[`adminSettings/visibility/providers/${providerId}`] = true;
+   317→      
+   318→      // Create packages
+   319→      jsonPreview.packages.forEach((pkg) => {
+   320→        const pkgId = generateId();
+   321→        updates[`packages/${pkgId}`] = {
+   322→          id: pkgId,
+   323→          providerId,
+   324→          providerName: prov.name || 'مزود جديد',
+   325→          name: pkg.name,
+   326→          price: pkg.price,
+   327→          currency: pkg.currency || 'YER',
+   328→          executionType: 'manual',
+   329→          isActive: true,
+   330→          available: -1,
+   331→          sold: 0,
+   332→          autoDisableAtZero: false,
+   333→          icon: pkg.icon || '',
+   334→          productId: pkg.productId || '',
+   335→          description: pkg.description || '',
+   336→        };
+   337→      });
+   338→      
+   339→      await update(ref(database), updates);
+   340→      showToast(`تم استيراد المزود مع ${jsonPreview.packages.length} باقة`, 'success');
+   341→      setJsonInput('');
+   342→      setJsonPreview(null);
+   343→      setJsonError('');
+   344→    } catch (e) {
+   345→      showToast('حدث خطأ أثناء الاستيراد', 'error');
+   346→    } finally {
+   347→      setJsonImporting(false);
+   348→    }
+   349→  };
+   350→
+   351→  const filteredProviders = providers.filter(p => {
+   352→    const matchesSearch = !search || p.name?.includes(search) || p.categoryId?.includes(search);
+   353→    const matchesCategory = filterCategory === 'all' || p.categoryId === filterCategory;
+   354→    return matchesSearch && matchesCategory;
+   355→  });
+   356→
+   357→  if (loading) return <div className="flex items-center justify-center min-h-[400px]"><div className="w-8 h-8 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" /></div>;
+   358→
+   359→  return (
+   360→    <div className="space-y-6">
+   361→      <div className="flex items-center justify-between">
+   362→        <div>
+   363→          <h1 className="text-2xl font-bold">المزودون والخدمات</h1>
+   364→          <p className="text-muted-foreground text-sm mt-1">{formatNumber(providers.length)} مزود</p>
+   365→        </div>
+   366→        <div className="flex gap-2">
+   367→          <Button variant="outline" size="sm" onClick={() => handleBulkToggle(true)}>تفعيل الكل</Button>
+   368→          <Button variant="outline" size="sm" onClick={() => handleBulkToggle(false)}>تعطيل الكل</Button>
+   369→          <Button size="sm" onClick={() => { resetForm(); setDialog(true); }}>
+   370→            <Plus className="w-4 h-4 ml-1" /> مزود جديد
+   371→          </Button>
+   372→        </div>
+   373→      </div>
+   374→
+   375→      <Tabs defaultValue="providers">
+   376→        <TabsList className="w-full">
+   377→          <TabsTrigger value="providers" className="flex-1">المزودون</TabsTrigger>
+   378→          <TabsTrigger value="json-import" className="flex-1">استيراد JSON</TabsTrigger>
+   379→        </TabsList>
+   380→
+   381→        <TabsContent value="providers" className="space-y-4">
+   382→          <div className="flex gap-3">
+   383→            <div className="relative flex-1">
+   384→              <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+   385→              <Input placeholder="بحث..." value={search} onChange={(e) => setSearch(e.target.value)} className="pr-10" />
+   386→            </div>
+   387→            <Select value={filterCategory} onValueChange={setFilterCategory}>
+   388→              <SelectTrigger className="w-40"><SelectValue placeholder="التصنيف" /></SelectTrigger>
+   389→              <SelectContent>
+   390→                <SelectItem value="all">جميع التصنيفات</SelectItem>
+   391→                {categoryOptions.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
+   392→              </SelectContent>
+   393→            </Select>
+   394→          </div>
+   395→
+   396→          <div className="space-y-3 max-h-[calc(100vh-320px)] overflow-y-auto scrollbar-thin">
+   397→            {filteredProviders.map((prov, i) => (
+   398→              <motion.div key={prov.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.02 }}>
+   399→                <Card className="admin-card border-0 shadow-none">
+   400→                  <CardContent className="p-4">
+   401→                    <div className="flex items-center justify-between">
+   402→                      <div className="flex items-center gap-3">
+   403→                        {prov.icon ? (
+   404→                          <img src={prov.icon} className="w-10 h-10 rounded-lg object-cover" alt="" />
+   405→                        ) : (
+   406→                          <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: prov.color + '20' }}>
+   407→                            <Server className="w-5 h-5" style={{ color: prov.color }} />
+   408→                          </div>
+   409→                        )}
+   410→                        <div>
+   411→                          <p className="font-medium text-sm">{prov.name}</p>
+   412→                          <p className="text-xs text-muted-foreground">
+   413→                            {categoryOptions.find(c => c.value === prov.categoryId)?.label || prov.categoryId}
+   414→                          </p>
+   415→                          {prov.inputLabel && <p className="text-xs text-muted-foreground">حقل: {prov.inputLabel} ({prov.inputType})</p>}
+   416→                        </div>
+   417→                      </div>
+   418→                      <div className="flex items-center gap-2">
+   419→                        <Switch
+   420→                          checked={prov.isActive !== false}
+   421→                          onCheckedChange={(v) => update(ref(database), { [`providers/${prov.id}/isActive`]: v, [`adminSettings/visibility/providers/${prov.id}`]: v })}
+   422→                        />
+   423→                        <Badge className={prov.isActive !== false ? 'bg-green-500/20 text-green-600 dark:text-green-400' : 'bg-red-500/20 text-red-600 dark:text-red-400'}>
+   424→                          {prov.isActive !== false ? 'نشط' : 'معطل'}
+   425→                        </Badge>
+   426→                        <Button variant="ghost" size="sm" onClick={() => {
+   427→                          setEditing(prov);
+   428→                          setName(prov.name); setNameEn(prov.nameEn || '');
+   429→                          setCategoryId(prov.categoryId || 'telecom'); setSubCategoryId(prov.subCategoryId || '');
+   430→                          setColor(prov.color || '#6C3CE1'); setIcon(prov.icon || '');
+   431→                          setInputLabel(prov.inputLabel || 'رقم الهاتف'); setInputType(prov.inputType || 'phone');
+   432→                          setInputPrefix(prov.inputPrefix || ''); setInputPlaceholder(prov.inputPlaceholder || '');
+   433→                          setProviderType(prov.providerType || 'telecom'); setExecutionType(prov.executionType || 'manual');
+   434→                          setIsActive(prov.isActive !== false);
+   435→                          setDialog(true);
+   436→                        }}><Edit className="w-4 h-4" /></Button>
+   437→                        <Button variant="ghost" size="sm" onClick={() => handleDelete(prov.id)}><Trash2 className="w-4 h-4 text-red-500" /></Button>
+   438→                      </div>
+   439→                    </div>
+   440→                  </CardContent>
+   441→                </Card>
+   442→              </motion.div>
+   443→            ))}
+   444→            {filteredProviders.length === 0 && <p className="text-center text-muted-foreground py-8">لا توجد مزودين</p>}
+   445→          </div>
+   446→        </TabsContent>
+   447→
+   448→        {/* JSON Import Tab */}
+   449→        <TabsContent value="json-import" className="space-y-4">
+   450→          <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
+   451→            <Card className="admin-card border-0 shadow-none">
+   452→              <CardHeader className="pb-3">
+   453→                <CardTitle className="text-base flex items-center gap-2">
+   454→                  <FileJson className="w-5 h-5 text-purple-500" />
+   455→                  استيراد مزود وباقاته من JSON
+   456→                </CardTitle>
+   457→                <p className="text-xs text-muted-foreground">
+   458→                  الصق JSON الخاص بالمزود وسيتم استخراج المتغيرات والباقات تلقائياً
+   459→                </p>
+   460→              </CardHeader>
+   461→              <CardContent className="p-6 pt-0 space-y-4">
+   462→                {/* Category selection */}
+   463→                <div>
+   464→                  <Label>تصنيف المزود</Label>
+   465→                  <Select value={jsonImportCategory} onValueChange={setJsonImportCategory}>
+   466→                    <SelectTrigger><SelectValue /></SelectTrigger>
+   467→                    <SelectContent>
+   468→                      {categoryOptions.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
+   469→                    </SelectContent>
+   470→                  </Select>
+   471→                </div>
+   472→
+   473→                {/* JSON Input */}
+   474→                <div>
+   475→                  <Label>JSON المزود</Label>
+   476→                  <Textarea
+   477→                    value={jsonInput}
+   478→                    onChange={(e) => { setJsonInput(e.target.value); setJsonError(''); setJsonPreview(null); }}
+   479→                    className="min-h-[200px] font-mono text-xs"
+   480→                    dir="ltr"
+   481→                    placeholder={`{
+   482→  "provider": {
+   483→    "name": "يمن موبايل",
+   484→    "icon": "https://...",
+   485→    "color": "#C41E3A"
+   486→  },
+   487→  "products": [
+   488→    { "name": "شحنة 100", "price": 100, "currency": "YER" },
+   489→    { "name": "شحنة 200", "price": 200, "currency": "YER" }
+   490→  ]
+   491→}`}
+   492→                  />
+   493→                </div>
+   494→
+   495→                {/* Supported formats info */}
+   496→                <div className="p-3 rounded-xl bg-blue-500/10 border border-blue-500/20">
+   497→                  <p className="text-xs font-medium text-blue-600 dark:text-blue-400 mb-2">الصيغ المدعومة:</p>
+   498→                  <div className="text-xs text-muted-foreground space-y-1" dir="ltr">
+   499→                    <p>1. {'{ "provider": {...}, "products": [...] }'}</p>
+   500→                    <p>2. {'{ "name": "...", "products": [...] }'}</p>
+   501→                    <p>3. {'[{ "name": "باقة", "price": 100 }, ...]'}</p>
+   502→                    <p>4. API response with nested arrays</p>
+   503→                  </div>
+   504→                </div>
+   505→
+   506→                {/* Parse button */}
+   507→                <div className="flex gap-2">
+   508→                  <Button variant="outline" onClick={parseJsonImport} disabled={!jsonInput.trim()}>
+   509→                    <FileJson className="w-4 h-4 ml-1" /> تحليل JSON
+   510→                  </Button>
+   511→                  {jsonPreview && (
+   512→                    <Button onClick={handleJsonImport} disabled={jsonImporting} className="bg-green-600 hover:bg-green-700">
+   513→                      {jsonImporting ? <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin ml-1" /> : <CheckCircle className="w-4 h-4 ml-1" />}
+   514→                      استيراد ({jsonPreview.packages.length} باقة)
+   515→                    </Button>
+   516→                  )}
+   517→                </div>
+   518→
+   519→                {/* Error */}
+   520→                {jsonError && (
+   521→                  <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20 flex items-center gap-2">
+   522→                    <XCircle className="w-5 h-5 text-red-500 shrink-0" />
+   523→                    <p className="text-xs text-red-600 dark:text-red-400">{jsonError}</p>
+   524→                  </div>
+   525→                )}
+   526→
+   527→                {/* Preview */}
+   528→                {jsonPreview && (
+   529→                  <div className="space-y-3 border border-green-500/20 rounded-xl p-4 bg-green-500/5">
+   530→                    <div className="flex items-center gap-2 mb-2">
+   531→                      <CheckCircle className="w-5 h-5 text-green-500" />
+   532→                      <span className="font-medium text-sm text-green-600 dark:text-green-400">تم التعرف على البيانات بنجاح</span>
+   533→                    </div>
+   534→                    
+   535→                    {/* Provider preview */}
+   536→                    <div className="p-3 rounded-xl bg-muted/30">
+   537→                      <p className="text-xs text-muted-foreground mb-1">المزود:</p>
+   538→                      <div className="flex items-center gap-2">
+   539→                        {jsonPreview.provider.icon && (
+   540→                          <img src={jsonPreview.provider.icon} className="w-8 h-8 rounded-lg object-cover" alt="" />
+   541→                        )}
+   542→                        <div>
+   543→                          <p className="font-medium text-sm">{jsonPreview.provider.name}</p>
+   544→                          <p className="text-xs text-muted-foreground">{categoryOptions.find(c => c.value === jsonImportCategory)?.label}</p>
+   545→                        </div>
+   546→                      </div>
+   547→                    </div>
+   548→
+   549→                    {/* Packages preview */}
+   550→                    <div className="p-3 rounded-xl bg-muted/30">
+   551→                      <p className="text-xs text-muted-foreground mb-2">الباقات ({jsonPreview.packages.length}):</p>
+   552→                      <div className="space-y-1 max-h-[200px] overflow-y-auto">
+   553→                        {jsonPreview.packages.map((pkg, i) => (
+   554→                          <div key={i} className="flex items-center justify-between p-2 rounded-lg bg-background/50">
+   555→                            <div className="flex items-center gap-2">
+   556→                              <Package className="w-4 h-4 text-purple-500" />
+   557→                              <span className="text-xs">{pkg.name}</span>
+   558→                            </div>
+   559→                            <div className="flex items-center gap-2">
+   560→                              <span className="text-xs font-bold">{pkg.price}</span>
+   561→                              <span className="text-xs text-muted-foreground">{pkg.currency}</span>
+   562→                            </div>
+   563→                          </div>
+   564→                        ))}
+   565→                      </div>
+   566→                    </div>
+   567→                  </div>
+   568→                )}
+   569→              </CardContent>
+   570→            </Card>
+   571→          </motion.div>
+   572→        </TabsContent>
+   573→      </Tabs>
+   574→
+   575→      {/* Provider Dialog */}
+   576→      <Dialog open={dialog} onOpenChange={(open) => { setDialog(open); if (!open) resetForm(); }}>
+   577→        <DialogContent>
+   578→          <DialogHeader><DialogTitle>{editing ? 'تعديل مزود' : 'إضافة مزود'}</DialogTitle></DialogHeader>
+   579→          <div className="space-y-4">
+   580→            <div><Label>الاسم (عربي)</Label><Input value={name} onChange={(e) => setName(e.target.value)} /></div>
+   581→            <div><Label>الاسم (إنجليزي)</Label><Input value={nameEn} onChange={(e) => setNameEn(e.target.value)} dir="ltr" placeholder="مثال: PUBG Mobile" /></div>
+   582→            <div><Label>التصنيف الرئيسي</Label>
+   583→              <Select value={categoryId} onValueChange={(v) => { setCategoryId(v); setSubCategoryId(''); }}>
+   584→                <SelectTrigger><SelectValue /></SelectTrigger>
+   585→                <SelectContent>
+   586→                  {categoryOptions.map(c => <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>)}
+   587→                </SelectContent>
+   588→              </Select>
+   589→            </div>
+   590→            {subCategoryOptions[categoryId] && subCategoryOptions[categoryId].length > 0 && (
+   591→              <div><Label>التصنيف الفرعي</Label>
+   592→                <Select value={subCategoryId} onValueChange={setSubCategoryId}>
+   593→                  <SelectTrigger><SelectValue placeholder="اختر التصنيف الفرعي" /></SelectTrigger>
+   594→                  <SelectContent>
+   595→                    {subCategoryOptions[categoryId].map(sc => <SelectItem key={sc.value} value={sc.value}>{sc.label}</SelectItem>)}
+   596→                  </SelectContent>
+   597→                </Select>
+   598→              </div>
+   599→            )}
+   600→            <div><Label>نوع المزود</Label>
+   601→              <Select value={providerType} onValueChange={setProviderType}>
+   602→                <SelectTrigger><SelectValue /></SelectTrigger>
+   603→                <SelectContent>
+   604→                  {providerTypeOptions.map(pt => <SelectItem key={pt.value} value={pt.value}>{pt.label}</SelectItem>)}
+   605→                </SelectContent>
+   606→              </Select>
+   607→            </div>
+   608→            <div><Label>نوع التنفيذ</Label>
+   609→              <Select value={executionType} onValueChange={setExecutionType}>
+   610→                <SelectTrigger><SelectValue /></SelectTrigger>
+   611→                <SelectContent>
+   612→                  <SelectItem value="manual">يدوي</SelectItem>
+   613→                  <SelectItem value="auto">تلقائي (API)</SelectItem>
+   614→                </SelectContent>
+   615→              </Select>
+   616→            </div>
+   617→            <div><Label>اللون</Label><Input type="color" value={color} onChange={(e) => setColor(e.target.value)} /></div>
+   618→            <div>
+   619→              <Label>الأيقونة</Label>
+   620→              <div className="flex items-center gap-3 mt-1">
+   621→                {icon && <img src={icon} className="w-10 h-10 rounded-lg object-cover" alt="" />}
+   622→                <Button variant="outline" size="sm" asChild>
+   623→                  <label><Upload className="w-4 h-4 ml-1" /> رفع أيقونة<input type="file" accept="image/*" className="hidden" onChange={handleIconUpload} /></label>
+   624→                </Button>
+   625→                {icon && <Button variant="ghost" size="sm" onClick={() => setIcon('')}><Trash2 className="w-4 h-4" /></Button>}
+   626→              </div>
+   627→            </div>
+   628→            <div><Label>تسمية الحقل</Label><Input value={inputLabel} onChange={(e) => setInputLabel(e.target.value)} placeholder="مثال: رقم الهاتف أو Player ID" /></div>
+   629→            <div><Label>نوع الحقل</Label>
+   630→              <Select value={inputType} onValueChange={setInputType}>
+   631→                <SelectTrigger><SelectValue /></SelectTrigger>
+   632→                <SelectContent>
+   633→                  <SelectItem value="phone">هاتف</SelectItem>
+   634→                  <SelectItem value="text">نص</SelectItem>
+   635→                </SelectContent>
+   636→              </Select>
+   637→            </div>
+   638→            <div><Label>بادئة الحقل</Label><Input value={inputPrefix} onChange={(e) => setInputPrefix(e.target.value)} dir="ltr" placeholder="مثال: +967" /></div>
+   639→            <div><Label>نص توضيحي للحقل</Label><Input value={inputPlaceholder} onChange={(e) => setInputPlaceholder(e.target.value)} placeholder="مثال: أدخل معرف اللاعب" /></div>
+   640→            <div className="flex items-center gap-2"><Switch checked={isActive} onCheckedChange={setIsActive} /><Label>نشط</Label></div>
+   641→          </div>
+   642→          <DialogFooter>
+   643→            <Button variant="outline" onClick={() => { setDialog(false); resetForm(); }}>إلغاء</Button>
+   644→            <Button onClick={handleSave}>{editing ? 'تحديث' : 'إضافة'}</Button>
+   645→          </DialogFooter>
+   646→        </DialogContent>
+   647→      </Dialog>
+   648→    </div>
+   649→  );
+   650→}
+   651→

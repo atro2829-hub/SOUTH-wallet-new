@@ -1,0 +1,787 @@
+     1→     1→'use client';
+     2→     2→
+     3→     3→import { useState, useEffect, useCallback } from 'react';
+     4→     4→import { useTheme } from 'next-themes';
+     5→     5→import { motion, AnimatePresence } from 'framer-motion';
+     6→     6→import {
+     7→     7→  ArrowLeft, TrendingUp, Clock, CheckCircle2, AlertCircle,
+     8→     8→  Coins, BarChart3, History, Wallet, Info, ChevronDown, ChevronUp,
+     9→     9→  Timer, X, Share2
+    10→    10→} from 'lucide-react';
+    11→    11→import { useAppStore } from '@/lib/store';
+    12→    12→import { currencySymbols, formatNumber, formatBalance } from '@/lib/utils';
+    13→    13→import { LOGO_BASE64 } from '@/lib/logo';
+    14→    14→import { ref, get, update, set as firebaseSet, onValue, off, runTransaction } from 'firebase/database';
+    15→    15→import { database } from '@/lib/firebase';
+    16→    16→
+    17→    17→interface FirebaseInvestmentPlan {
+    18→    18→  id: string;
+    19→    19→  name: string;
+    20→    20→  type: 'daily' | 'weekly' | 'monthly' | 'quarterly';
+    21→    21→  durationDays: number;
+    22→    22→  minAmount: number;
+    23→    23→  maxAmount: number;
+    24→    24→  currency: string;
+    25→    25→  profitRate: number;
+    26→    26→  isActive: boolean;
+    27→    27→}
+    28→    28→
+    29→    29→interface ActiveInvestment {
+    30→    30→  id: string;
+    31→    31→  planId: string;
+    32→    32→  planName: string;
+    33→    33→  amount: number;
+    34→    34→  currency: 'YER' | 'SAR' | 'USD';
+    35→    35→  profitRate: number;
+    36→    36→  expectedProfit: number;
+    37→    37→  startDate: string;
+    38→    38→  endDate: string;
+    39→    39→  status: 'active' | 'completed' | 'cancelled';
+    40→    40→  completedAt?: string;
+    41→    41→  earnedSoFar?: number;
+    42→    42→}
+    43→    43→
+    44→    44→// Plan type display helpers
+    45→    45→const typeLabels: Record<string, string> = { daily: 'يومي', weekly: 'أسبوعي', monthly: 'شهري', quarterly: 'ربع سنوي' };
+    46→    46→const planColors = ['#10B981', '#3B82F6', '#8B5CF6', '#F59E0B', '#EF4444', '#06B6D4', '#EC4899'];
+    47→    47→
+    48→    48→function formatAmount(amount: number, currency: string): string {
+    49→    49→  if (currency === 'USD') {
+    50→    50→    if (amount < 0.01) return '0.00';
+    51→    51→    return amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    52→    52→  }
+    53→    53→  return amount.toLocaleString('en-US');
+    54→    54→}
+    55→    55→
+    56→    56→// Countdown timer component
+    57→    57→function CountdownTimer({ endDate, onComplete }: { endDate: string; onComplete: () => void }) {
+    58→    58→  const [timeLeft, setTimeLeft] = useState({ days: 0, hours: 0, minutes: 0, seconds: 0 });
+    59→    59→
+    60→    60→  useEffect(() => {
+    61→    61→    const calculateTimeLeft = () => {
+    62→    62→      const now = new Date().getTime();
+    63→    63→      const end = new Date(endDate).getTime();
+    64→    64→      const diff = end - now;
+    65→    65→
+    66→    66→      if (diff <= 0) {
+    67→    67→        setTimeLeft({ days: 0, hours: 0, minutes: 0, seconds: 0 });
+    68→    68→        onComplete();
+    69→    69→        return;
+    70→    70→      }
+    71→    71→
+    72→    72→      setTimeLeft({
+    73→    73→        days: Math.floor(diff / (1000 * 60 * 60 * 24)),
+    74→    74→        hours: Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)),
+    75→    75→        minutes: Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60)),
+    76→    76→        seconds: Math.floor((diff % (1000 * 60)) / 1000),
+    77→    77→      });
+    78→    78→    };
+    79→    79→
+    80→    80→    calculateTimeLeft();
+    81→    81→    const interval = setInterval(calculateTimeLeft, 1000);
+    82→    82→    return () => clearInterval(interval);
+    83→    83→  }, [endDate, onComplete]);
+    84→    84→
+    85→    85→  const isExpired = timeLeft.days === 0 && timeLeft.hours === 0 && timeLeft.minutes === 0 && timeLeft.seconds === 0;
+    86→    86→
+    87→    87→  return (
+    88→    88→    <div className="flex items-center gap-1.5" dir="ltr">
+    89→    89→      {[
+    90→    90→        { value: timeLeft.days, label: 'ي' },
+    91→    91→        { value: timeLeft.hours, label: 'س' },
+    92→    92→        { value: timeLeft.minutes, label: 'د' },
+    93→    93→        { value: timeLeft.seconds, label: 'ث' },
+    94→    94→      ].map((item, i) => (
+    95→    95→        <div key={i} className="flex items-center gap-1">
+    96→    96→          <div className="flex flex-col items-center px-1.5 py-1 rounded-lg" style={{ background: isExpired ? 'rgba(16,185,129,0.15)' : 'rgba(255,255,255,0.06)' }}>
+    97→    97→            <span className="text-xs font-bold font-mono" style={{ color: isExpired ? '#10B981' : '#FFF' }}>
+    98→    98→              {String(item.value).padStart(2, '0')}
+    99→    99→            </span>
+   100→   100→            <span className="text-[7px]" style={{ color: 'rgba(255,255,255,0.4)' }}>{item.label}</span>
+   101→   101→          </div>
+   102→   102→          {i < 3 && <span className="text-white/30 text-xs">:</span>}
+   103→   103→        </div>
+   104→   104→      ))}
+   105→   105→    </div>
+   106→   106→  );
+   107→   107→}
+   108→   108→
+   109→   109→export default function InvestmentScreen() {
+   110→   110→  const { theme } = useTheme();
+   111→   111→  const isDark = theme === 'dark';
+   112→   112→  const { user, setUser, setActiveScreen, addNotification, addInvestment, updateInvestment } = useAppStore();
+   113→   113→
+   114→   114→  const [plans, setPlans] = useState<FirebaseInvestmentPlan[]>([]);
+   115→   115→  const [activeInvestments, setActiveInvestments] = useState<ActiveInvestment[]>([]);
+   116→   116→  const [investmentHistory, setInvestmentHistory] = useState<ActiveInvestment[]>([]);
+   117→   117→  const [activeTab, setActiveTab] = useState<'plans' | 'active' | 'history'>('plans');
+   118→   118→  const [selectedPlan, setSelectedPlan] = useState<FirebaseInvestmentPlan | null>(null);
+   119→   119→  const [investAmount, setInvestAmount] = useState('');
+   120→   120→  const [showInvestModal, setShowInvestModal] = useState(false);
+   121→   121→  const [isProcessing, setIsProcessing] = useState(false);
+   122→   122→  const [showSuccess, setShowSuccess] = useState(false);
+   123→   123→  const [isLoading, setIsLoading] = useState(true);
+   124→   124→  const [completedIds, setCompletedIds] = useState<Set<string>>(new Set());
+   125→   125→
+   126→   126→  // Fetch investment plans from Firebase adminSettings/investmentPlans
+   127→   127→  useEffect(() => {
+   128→   128→    const plansRef = ref(database, 'adminSettings/investmentPlans');
+   129→   129→    const unsubscribe = onValue(plansRef, (snapshot) => {
+   130→   130→      if (snapshot.exists()) {
+   131→   131→        const data = snapshot.val();
+   132→   132→        // Firebase may store arrays as objects with numeric keys
+   133→   133→        const plansList: FirebaseInvestmentPlan[] = Array.isArray(data)
+   134→   134→          ? data.filter(Boolean).map((p, i) => ({ ...p, id: p.id || String(i) }))
+   135→   135→          : Object.entries(data).map(([id, val]: [string, any]) => ({ ...val, id }));
+   136→   136→        setPlans(plansList.filter(p => p.isActive));
+   137→   137→      } else {
+   138→   138→        setPlans([]);
+   139→   139→      }
+   140→   140→    });
+   141→   141→    return () => unsubscribe();
+   142→   142→  }, []);
+   143→   143→
+   144→   144→  // Fetch user investments from Firebase
+   145→   145→  useEffect(() => {
+   146→   146→    if (!user?.id) return;
+   147→   147→    const investRef = ref(database, `users/${user.id}/investments`);
+   148→   148→    const listener = onValue(investRef, (snapshot) => {
+   149→   149→      setIsLoading(false);
+   150→   150→      if (snapshot.exists()) {
+   151→   151→        const data = snapshot.val();
+   152→   152→        const allInvestments = Object.entries(data).map(([id, val]: [string, any]) => ({ id, ...val })) as ActiveInvestment[];
+   153→   153→        const active = allInvestments.filter(inv => inv.status === 'active');
+   154→   154→        const history = allInvestments.filter(inv => inv.status !== 'active');
+   155→   155→        setActiveInvestments(active);
+   156→   156→        setInvestmentHistory(history);
+   157→   157→      } else {
+   158→   158→        setActiveInvestments([]);
+   159→   159→        setInvestmentHistory([]);
+   160→   160→        setIsLoading(false);
+   161→   161→      }
+   162→   162→    });
+   163→   163→    return () => off(investRef);
+   164→   164→  }, [user?.id]);
+   165→   165→
+   166→   166→  // Check for completed investments
+   167→   167→  const handleInvestmentComplete = useCallback(async (investmentId: string) => {
+   168→   168→    if (completedIds.has(investmentId) || !user) return;
+   169→   169→    setCompletedIds(prev => new Set(prev).add(investmentId));
+   170→   170→
+   171→   171→    const investment = activeInvestments.find(inv => inv.id === investmentId);
+   172→   172→    if (!investment || investment.status !== 'active') return;
+   173→   173→
+   174→   174→    const totalReturn = investment.amount + investment.expectedProfit;
+   175→   175→    const updates: Record<string, unknown> = {};
+   176→   176→
+   177→   177→    // Mark investment as completed
+   178→   178→    updates[`users/${user.id}/investments/${investmentId}/status`] = 'completed';
+   179→   179→    updates[`users/${user.id}/investments/${investmentId}/completedAt`] = new Date().toISOString();
+   180→   180→
+   181→   181→    // Add profit + principal to user balance via runTransaction
+   182→   182→    const balanceField = investment.currency === 'YER' ? 'balanceYER' : investment.currency === 'SAR' ? 'balanceSAR' : 'balanceUSD';
+   183→   183→
+   184→   184→    // Add transaction
+   185→   185→    const txId = `tx-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+   186→   186→    updates[`transactions/${txId}`] = {
+   187→   187→      id: txId,
+   188→   188→      fromUserId: 'INVESTMENT',
+   189→   189→      toUserId: user.id,
+   190→   190→      amount: totalReturn,
+   191→   191→      currency: investment.currency,
+   192→   192→      type: 'deposit',
+   193→   193→      status: 'completed',
+   194→   194→      description: `استرداد استثمار ${investment.planName} - ربح ${formatAmount(investment.expectedProfit, investment.currency)} ${currencySymbols[investment.currency]}`,
+   195→   195→      createdAt: new Date().toISOString(),
+   196→   196→    };
+   197→   197→
+   198→   198→    try {
+   199→   199→      // Use runTransaction for balance to avoid race conditions
+   200→   200→      const txResult = await runTransaction(ref(database, `users/${user.id}/${balanceField}`), (currentVal) => {
+   201→   201→        return (currentVal || 0) + totalReturn;
+   202→   202→      });
+   203→   203→
+   204→   204→      // Remove balance from multi-path update since we used runTransaction
+   205→   205→      delete updates[`users/${user.id}/${balanceField}`];
+   206→   206→
+   207→   207→      await update(ref(database), updates);
+   208→   208→
+   209→   209→      // Send FCM push notification for investment completion
+   210→   210→      try {
+   211→   211→        const { sendNotificationToUser } = await import('@/lib/notifications');
+   212→   212→        await sendNotificationToUser(user.id, {
+   213→   213→          title: 'اكتمل الاستثمار!',
+   214→   214→          body: `تم استرداد ${formatAmount(totalReturn, investment.currency)} ${currencySymbols[investment.currency]} من خطة ${investment.planName}`,
+   215→   215→          type: 'transaction',
+   216→   216→          data: { action: 'investment_completed', amount: String(totalReturn), currency: investment.currency },
+   217→   217→        });
+   218→   218→      } catch (notifErr) {
+   219→   219→        console.warn('Investment completion notification failed:', notifErr);
+   220→   220→      }
+   221→   221→
+   222→   222→      // Update local state
+   223→   223→      updateInvestment(investmentId, { status: 'completed', completedAt: new Date().toISOString() });
+   224→   224→      setUser({
+   225→   225→        ...user,
+   226→   226→        [balanceField]: txResult.snapshot.val(),
+   227→   227→      });
+   228→   228→
+   229→   229→      // Show notification
+   230→   230→      addNotification({
+   231→   231→        id: `inv-complete-${Date.now()}`,
+   232→   232→        title: 'اكتمل الاستثمار!',
+   233→   233→        body: `تم استرداد ${formatAmount(totalReturn, investment.currency)} ${currencySymbols[investment.currency]} من خطة ${investment.planName}`,
+   234→   234→        type: 'transaction',
+   235→   235→        isRead: false,
+   236→   236→        createdAt: new Date().toISOString(),
+   237→   237→      });
+   238→   238→    } catch (error) {
+   239→   239→      console.error('Error completing investment:', error);
+   240→   240→    }
+   241→   241→  }, [user, activeInvestments, completedIds, updateInvestment, setUser, addNotification]);
+   242→   242→
+   243→   243→  const handleInvestClick = (plan: FirebaseInvestmentPlan) => {
+   244→   244→    setSelectedPlan(plan);
+   245→   245→    setInvestAmount(plan.minAmount.toString());
+   246→   246→    setShowInvestModal(true);
+   247→   247→  };
+   248→   248→
+   249→   249→  const handleConfirmInvest = async () => {
+   250→   250→    if (!selectedPlan || !user) return;
+   251→   251→    const amount = parseFloat(investAmount) || 0;
+   252→   252→    if (amount < selectedPlan.minAmount || amount > selectedPlan.maxAmount) return;
+   253→   253→
+   254→   254→    const currency = selectedPlan.currency || 'USD';
+   255→   255→    const balanceField = currency === 'YER' ? 'balanceYER' : currency === 'SAR' ? 'balanceSAR' : 'balanceUSD';
+   256→   256→    const currentBalance = (user[balanceField] as number) || 0;
+   257→   257→    if (amount > currentBalance) return;
+   258→   258→
+   259→   259→    setIsProcessing(true);
+   260→   260→    try {
+   261→   261→      const investId = `inv-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+   262→   262→      const startDate = new Date();
+   263→   263→      const endDate = new Date(startDate.getTime() + selectedPlan.durationDays * 24 * 60 * 60 * 1000);
+   264→   264→      const expectedProfit = amount * (selectedPlan.profitRate / 100) * selectedPlan.durationDays;
+   265→   265→
+   266→   266→      const newInvestment: ActiveInvestment = {
+   267→   267→        id: investId,
+   268→   268→        planId: selectedPlan.id,
+   269→   269→        planName: selectedPlan.name,
+   270→   270→        amount,
+   271→   271→        currency: currency as 'YER' | 'SAR' | 'USD',
+   272→   272→        profitRate: selectedPlan.profitRate,
+   273→   273→        expectedProfit,
+   274→   274→        startDate: startDate.toISOString(),
+   275→   275→        endDate: endDate.toISOString(),
+   276→   276→        status: 'active',
+   277→   277→      };
+   278→   278→
+   279→   279→      const updates: Record<string, unknown> = {};
+   280→   280→      updates[`users/${user.id}/investments/${investId}`] = newInvestment;
+   281→   281→
+   282→   282→      // Use runTransaction for balance deduction to avoid race conditions
+   283→   283→      const txResult = await runTransaction(ref(database, `users/${user.id}/${balanceField}`), (currentVal) => {
+   284→   284→        const val = currentVal || 0;
+   285→   285→        if (val < amount) return; // Abort if insufficient
+   286→   286→        return val - amount;
+   287→   287→      });
+   288→   288→
+   289→   289→      const txId = `tx-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+   290→   290→      updates[`transactions/${txId}`] = {
+   291→   291→        id: txId,
+   292→   292→        fromUserId: user.id,
+   293→   293→        toUserId: user.id,
+   294→   294→        amount,
+   295→   295→        currency,
+   296→   296→        type: 'investment',
+   297→   297→        status: 'completed',
+   298→   298→        description: `استثمار ${formatAmount(amount, currency)} ${currencySymbols[currency]} في خطة ${selectedPlan.name}`,
+   299→   299→        createdAt: new Date().toISOString(),
+   300→   300→      };
+   301→   301→
+   302→   302→      const notifId = `notif-${Date.now()}`;
+   303→   303→      updates[`notifications/${user.id}/${notifId}`] = {
+   304→   304→        id: notifId,
+   305→   305→        title: 'تم الاستثمار بنجاح',
+   306→   306→        body: `تم استثمار ${formatAmount(amount, currency)} ${currencySymbols[currency]} في خطة ${selectedPlan.name} بعائد ${selectedPlan.profitRate}%`,
+   307→   307→        type: 'transaction',
+   308→   308→        isRead: false,
+   309→   309→        createdAt: new Date().toISOString(),
+   310→   310→      };
+   311→   311→
+   312→   312→      await update(ref(database), updates);
+   313→   313→
+   314→   314→      // Send FCM push notification for investment
+   315→   315→      try {
+   316→   316→        const { sendNotificationToUser, sendNotificationToAdmin } = await import('@/lib/notifications');
+   317→   317→        await sendNotificationToUser(user.id, {
+   318→   318→          title: 'تم الاستثمار بنجاح',
+   319→   319→          body: `تم استثمار ${formatAmount(amount, currency)} ${currencySymbols[currency]} في خطة ${selectedPlan.name} بعائد ${selectedPlan.profitRate}%`,
+   320→   320→          type: 'transaction',
+   321→   321→          data: { action: 'investment', amount: String(amount), currency },
+   322→   322→        });
+   323→   323→        await sendNotificationToAdmin({
+   324→   324→          title: 'استثمار جديد',
+   325→   325→          body: `${user.name} استثمر ${formatAmount(amount, currency)} ${currencySymbols[currency]} في ${selectedPlan.name}`,
+   326→   326→          type: 'transaction',
+   327→   327→          category: 'investments',
+   328→   328→          data: { action: 'new_investment', userId: user.id },
+   329→   329→        });
+   330→   330→      } catch (notifErr) {
+   331→   331→        console.warn('Investment notification failed:', notifErr);
+   332→   332→      }
+   333→   333→
+   334→   334→      addInvestment(newInvestment);
+   335→   335→      setUser({ ...user, [balanceField]: txResult.committed ? txResult.snapshot.val() : (user[balanceField] as number) - amount });
+   336→   336→      setShowInvestModal(false);
+   337→   337→      setShowSuccess(true);
+   338→   338→      setTimeout(() => setShowSuccess(false), 3000);
+   339→   339→    } catch {
+   340→   340→      // Error
+   341→   341→    } finally {
+   342→   342→      setIsProcessing(false);
+   343→   343→    }
+   344→   344→  };
+   345→   345→
+   346→   346→  const selectedBalance = selectedPlan
+   347→   347→    ? (selectedPlan.currency === 'YER' ? (user?.balanceYER || 0) : selectedPlan.currency === 'SAR' ? (user?.balanceSAR || 0) : (user?.balanceUSD || 0))
+   348→   348→    : 0;
+   349→   349→
+   350→   350→  const estimatedReturn = selectedPlan
+   351→   351→    ? (parseFloat(investAmount) || 0) * (1 + (selectedPlan.profitRate / 100) * selectedPlan.durationDays)
+   352→   352→    : 0;
+   353→   353→  const estimatedProfit = estimatedReturn - (parseFloat(investAmount) || 0);
+   354→   354→
+   355→   355→  const totalEarnings = activeInvestments.reduce((sum, inv) => {
+   356→   356→    const daysElapsed = Math.floor((Date.now() - new Date(inv.startDate).getTime()) / (1000 * 60 * 60 * 24));
+   357→   357→    return sum + (inv.amount * (inv.profitRate / 100) * Math.min(daysElapsed, 30));
+   358→   358→  }, 0);
+   359→   359→
+   360→   360→  const cardBg = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.85)';
+   361→   361→  const borderColor = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)';
+   362→   362→  const innerBg = isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)';
+   363→   363→
+   364→   364→  // Progress calculation for active investment
+   365→   365→  const getProgress = (inv: ActiveInvestment) => {
+   366→   366→    const start = new Date(inv.startDate).getTime();
+   367→   367→    const end = new Date(inv.endDate).getTime();
+   368→   368→    const now = Date.now();
+   369→   369→    const total = end - start;
+   370→   370→    const elapsed = now - start;
+   371→   371→    return Math.min(Math.max((elapsed / total) * 100, 0), 100);
+   372→   372→  };
+   373→   373→
+   374→   374→  return (
+   375→   375→    <div className="min-h-screen" style={{ background: isDark ? '#0F0F0F' : '#F5F5F5' }}>
+   376→   376→      {/* Header */}
+   377→   377→      <div className="relative overflow-hidden" style={{ background: 'linear-gradient(145deg, #0A2A1A 0%, #0F1A0F 50%, #0F0F0F 100%)' }}>
+   378→   378→        <div className="absolute inset-0 opacity-30" style={{ background: 'radial-gradient(circle at 20% 50%, rgba(16,185,129,0.2), transparent 60%)' }} />
+   379→   379→        <div className="relative px-5 pt-4 pb-6">
+   380→   380→          <div className="flex items-center gap-3 mb-4">
+   381→   381→            <motion.button whileTap={{ scale: 0.9 }} onClick={() => setActiveScreen('main')} className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'rgba(255,255,255,0.1)' }}>
+   382→   382→              <ArrowLeft size={18} strokeWidth={1.5} color="#FFF" />
+   383→   383→            </motion.button>
+   384→   384→            <div className="flex-1">
+   385→   385→              <h1 className="text-white text-xl font-bold">الاستثمار</h1>
+   386→   386→              <p className="text-white/40 text-xs">عوائد مضمونة • سحب مرن</p>
+   387→   387→            </div>
+   388→   388→            <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'rgba(16,185,129,0.2)' }}>
+   389→   389→              <TrendingUp size={20} strokeWidth={1.5} color="#10B981" />
+   390→   390→            </div>
+   391→   391→          </div>
+   392→   392→
+   393→   393→          {/* Balance Cards */}
+   394→   394→          <div className="grid grid-cols-3 gap-2">
+   395→   395→            {[
+   396→   396→              { currency: 'YER', balance: user?.balanceYER || 0 },
+   397→   397→              { currency: 'SAR', balance: user?.balanceSAR || 0 },
+   398→   398→              { currency: 'USD', balance: user?.balanceUSD || 0 },
+   399→   399→            ].map(({ currency, balance }) => (
+   400→   400→              <div key={currency} className="rounded-xl p-2.5 text-center" style={{ background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.15)' }}>
+   401→   401→                <p className="text-[9px]" style={{ color: 'rgba(255,255,255,0.5)' }}>{currency}</p>
+   402→   402→                <p className="text-sm font-bold" dir="ltr" style={{ color: '#10B981' }}>{formatAmount(balance, currency)}</p>
+   403→   403→              </div>
+   404→   404→            ))}
+   405→   405→          </div>
+   406→   406→
+   407→   407→          <div className="flex items-center gap-4 mt-3">
+   408→   408→            <div>
+   409→   409→              <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.4)' }}>استثمارات نشطة</span>
+   410→   410→              <p className="text-sm font-bold" style={{ color: '#FFF' }}>{activeInvestments.length}</p>
+   411→   411→            </div>
+   412→   412→            <div>
+   413→   413→              <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.4)' }}>أرباح مكتسبة</span>
+   414→   414→              <p className="text-sm font-bold" style={{ color: '#10B981' }}>${formatAmount(totalEarnings, 'USD')}</p>
+   415→   415→            </div>
+   416→   416→          </div>
+   417→   417→        </div>
+   418→   418→      </div>
+   419→   419→
+   420→   420→      {/* Tab Navigation */}
+   421→   421→      <div className="px-4 mt-4 mb-4">
+   422→   422→        <div className="flex gap-2">
+   423→   423→          {[
+   424→   424→            { id: 'plans' as const, label: 'خطط الاستثمار', icon: BarChart3 },
+   425→   425→            { id: 'active' as const, label: 'الاستثمارات النشطة', icon: TrendingUp },
+   426→   426→            { id: 'history' as const, label: 'السجل', icon: History },
+   427→   427→          ].map(tab => {
+   428→   428→            const TabIcon = tab.icon;
+   429→   429→            const isActive = activeTab === tab.id;
+   430→   430→            return (
+   431→   431→              <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+   432→   432→                className="flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-xl transition-all"
+   433→   433→                style={{
+   434→   434→                  background: isActive ? '#10B981' : (isDark ? '#1A1A1A' : '#FFFFFF'),
+   435→   435→                  border: `1px solid ${isActive ? '#10B981' : (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)')}`,
+   436→   436→                }}>
+   437→   437→                <TabIcon size={14} color={isActive ? '#FFF' : (isDark ? '#666' : '#AAA')} />
+   438→   438→                <span className="text-[10px] font-bold" style={{ color: isActive ? '#FFF' : (isDark ? '#666' : '#AAA') }}>
+   439→   439→                  {tab.label}
+   440→   440→                </span>
+   441→   441→              </button>
+   442→   442→            );
+   443→   443→          })}
+   444→   444→        </div>
+   445→   445→      </div>
+   446→   446→
+   447→   447→      {/* Tab Content */}
+   448→   448→      <div className="px-4 pb-8">
+   449→   449→        <AnimatePresence mode="wait">
+   450→   450→          {activeTab === 'plans' && (
+   451→   451→            <motion.div key="plans" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="space-y-3">
+   452→   452→              {plans.length === 0 && (
+   453→   453→                <div className="rounded-2xl p-8 flex flex-col items-center" style={{ background: cardBg, border: `1px solid ${borderColor}` }}>
+   454→   454→                  <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-3" style={{ background: innerBg }}>
+   455→   455→                    <TrendingUp size={24} strokeWidth={1.5} color={isDark ? '#333' : '#DDD'} />
+   456→   456→                  </div>
+   457→   457→                  <p className="text-sm font-medium" style={{ color: isDark ? '#555' : '#AAA' }}>لا توجد خطط استثمار متاحة</p>
+   458→   458→                  <p className="text-[11px] mt-1" style={{ color: isDark ? '#444' : '#CCC' }}>سيتم إضافة خطط جديدة قريباً</p>
+   459→   459→                </div>
+   460→   460→              )}
+   461→   461→              {plans.map((plan, index) => {
+   462→   462→                const color = planColors[index % planColors.length];
+   463→   463→                const currency = plan.currency || 'USD';
+   464→   464→                return (
+   465→   465→                  <motion.div key={plan.id} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 * index }}
+   466→   466→                    className="rounded-2xl overflow-hidden" style={{ background: cardBg, border: `1px solid ${borderColor}` }}>
+   467→   467→                    <div className="p-4">
+   468→   468→                      <div className="flex items-center justify-between mb-3">
+   469→   469→                        <div className="flex items-center gap-3">
+   470→   470→                          <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: `${color}15` }}>
+   471→   471→                            <TrendingUp size={18} color={color} />
+   472→   472→                          </div>
+   473→   473→                          <div>
+   474→   474→                            <h3 className="text-sm font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>{plan.name}</h3>
+   475→   475→                            <p className="text-[10px]" style={{ color: isDark ? '#888' : '#AAA' }}>{typeLabels[plan.type] || plan.type} - {plan.durationDays} يوم</p>
+   476→   476→                          </div>
+   477→   477→                        </div>
+   478→   478→                        <div className="text-left">
+   479→   479→                          <p className="text-lg font-bold" style={{ color }}>{plan.profitRate}%</p>
+   480→   480→                          <p className="text-[9px]" style={{ color: isDark ? '#666' : '#BBB' }}>عائد يومي</p>
+   481→   481→                        </div>
+   482→   482→                      </div>
+   483→   483→
+   484→   484→                      <div className="grid grid-cols-2 gap-2 mb-3">
+   485→   485→                        <div className="p-2 rounded-lg text-center" style={{ background: innerBg }}>
+   486→   486→                          <p className="text-[9px]" style={{ color: isDark ? '#666' : '#AAA' }}>الحد الأدنى</p>
+   487→   487→                          <p className="text-xs font-bold" style={{ color: isDark ? '#CCC' : '#444' }}>{formatAmount(plan.minAmount, currency)} {currencySymbols[currency]}</p>
+   488→   488→                        </div>
+   489→   489→                        <div className="p-2 rounded-lg text-center" style={{ background: innerBg }}>
+   490→   490→                          <p className="text-[9px]" style={{ color: isDark ? '#666' : '#AAA' }}>الحد الأقصى</p>
+   491→   491→                          <p className="text-xs font-bold" style={{ color: isDark ? '#CCC' : '#444' }}>{formatAmount(plan.maxAmount, currency)} {currencySymbols[currency]}</p>
+   492→   492→                        </div>
+   493→   493→                      </div>
+   494→   494→
+   495→   495→                      <div className="flex items-center gap-2 p-2 rounded-lg mb-3" style={{ background: innerBg }}>
+   496→   496→                        <Info size={12} color={isDark ? '#888' : '#AAA'} />
+   497→   497→                        <span className="text-[10px]" style={{ color: isDark ? '#888' : '#888' }}>
+   498→   498→                          عائد إجمالي {((plan.profitRate / 100) * plan.durationDays * 100).toFixed(0)}% خلال {plan.durationDays} يوم
+   499→   499→                        </span>
+   500→   500→                      </div>
+   501→   501→
+   502→   502→                      <motion.button whileTap={{ scale: 0.95 }} onClick={() => handleInvestClick(plan)}
+   503→   503→                        className="w-full py-2.5 rounded-xl text-xs font-bold text-white" style={{ background: color }}>
+   504→   504→                        استثمر الآن
+   505→   505→                      </motion.button>
+   506→   506→                    </div>
+   507→   507→                  </motion.div>
+   508→   508→                );
+   509→   509→              })}
+   510→   510→
+   511→   511→              <div className="rounded-2xl p-4" style={{ background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.15)' }}>
+   512→   512→                <div className="flex items-start gap-2">
+   513→   513→                  <AlertCircle size={16} color="#10B981" className="mt-0.5 shrink-0" />
+   514→   514→                  <div>
+   515→   515→                    <p className="text-xs font-bold mb-1" style={{ color: '#10B981' }}>ملاحظة مهمة</p>
+   516→   516→                    <p className="text-[10px] leading-relaxed" style={{ color: isDark ? '#AAA' : '#666' }}>
+   517→   517→                      الاستثمار ينطوي على مخاطر. العوائد المذكورة تقديرية وليست مضمونة. يرجى الاستثمار بما يتوافق مع قدرتك المالية.
+   518→   518→                    </p>
+   519→   519→                  </div>
+   520→   520→                </div>
+   521→   521→              </div>
+   522→   522→            </motion.div>
+   523→   523→          )}
+   524→   524→
+   525→   525→          {activeTab === 'active' && (
+   526→   526→            <motion.div key="active" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}>
+   527→   527→              {isLoading ? (
+   528→   528→                <div className="space-y-3">
+   529→   529→                  {[1, 2, 3].map(i => (
+   530→   530→                    <div key={i} className="rounded-2xl p-4 animate-pulse" style={{ background: cardBg, border: `1px solid ${borderColor}` }}>
+   531→   531→                      <div className="h-4 rounded w-1/2 mb-3" style={{ background: isDark ? '#222' : '#EEE' }} />
+   532→   532→                      <div className="h-3 rounded w-3/4 mb-2" style={{ background: isDark ? '#222' : '#EEE' }} />
+   533→   533→                      <div className="h-8 rounded w-full" style={{ background: isDark ? '#222' : '#EEE' }} />
+   534→   534→                    </div>
+   535→   535→                  ))}
+   536→   536→                </div>
+   537→   537→              ) : activeInvestments.length > 0 ? (
+   538→   538→                <div className="space-y-3">
+   539→   539→                  {activeInvestments.map((inv, invIdx) => {
+   540→   540→                    const plan = plans.find(p => p.id === inv.planId);
+   541→   541→                    const progress = getProgress(inv);
+   542→   542→                    const daysElapsed = Math.floor((Date.now() - new Date(inv.startDate).getTime()) / (1000 * 60 * 60 * 24));
+   543→   543→                    const dailyEarning = inv.amount * (inv.profitRate / 100);
+   544→   544→                    const totalEarning = dailyEarning * daysElapsed;
+   545→   545→                    const color = planColors[invIdx % planColors.length];
+   546→   546→
+   547→   547→                    return (
+   548→   548→                      <motion.div key={inv.id}
+   549→   549→                        initial={{ opacity: 0, y: 10 }}
+   550→   550→                        animate={{ opacity: 1, y: 0 }}
+   551→   551→                        className="rounded-2xl overflow-hidden"
+   552→   552→                        style={{ background: `linear-gradient(145deg, ${color}15, ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.85)'})`, border: `1px solid ${color}30` }}>
+   553→   553→                        <div className="p-4">
+   554→   554→                          {/* Header with countdown */}
+   555→   555→                          <div className="flex items-center justify-between mb-3">
+   556→   556→                            <div className="flex items-center gap-2">
+   557→   557→                              <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: `${color}20` }}>
+   558→   558→                                <TrendingUp size={14} color={color} />
+   559→   559→                              </div>
+   560→   560→                              <div>
+   561→   561→                                <p className="text-xs font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>{inv.planName}</p>
+   562→   562→                                <div className="flex items-center gap-1.5">
+   563→   563→                                  <span className="text-[9px]" style={{ color: isDark ? '#666' : '#AAA' }}>منذ {daysElapsed} يوم</span>
+   564→   564→                                  <span className="w-1 h-1 rounded-full" style={{ background: color }} />
+   565→   565→                                  <span className="text-[9px] font-bold" style={{ color }}>{progress.toFixed(0)}%</span>
+   566→   566→                                </div>
+   567→   567→                              </div>
+   568→   568→                            </div>
+   569→   569→                            <div className="px-2 py-1 rounded-md" style={{ background: `${color}15` }}>
+   570→   570→                              <span className="text-[9px] font-bold" style={{ color }}>نشط</span>
+   571→   571→                            </div>
+   572→   572→                          </div>
+   573→   573→
+   574→   574→                          {/* Progress Bar */}
+   575→   575→                          <div className="w-full h-2 rounded-full overflow-hidden mb-3" style={{ background: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.06)' }}>
+   576→   576→                            <motion.div
+   577→   577→                              initial={{ width: 0 }}
+   578→   578→                              animate={{ width: `${progress}%` }}
+   579→   579→                              transition={{ duration: 1, ease: 'easeOut' }}
+   580→   580→                              className="h-full rounded-full"
+   581→   581→                              style={{ background: `linear-gradient(90deg, ${color}, ${color}CC)` }}
+   582→   582→                            />
+   583→   583→                          </div>
+   584→   584→
+   585→   585→                          {/* Stats Grid */}
+   586→   586→                          <div className="grid grid-cols-3 gap-2 mb-3">
+   587→   587→                            <div className="p-2 rounded-lg text-center" style={{ background: innerBg }}>
+   588→   588→                              <p className="text-[9px]" style={{ color: isDark ? '#666' : '#AAA' }}>المبلغ</p>
+   589→   589→                              <p className="text-[11px] font-bold" style={{ color: isDark ? '#CCC' : '#444' }}>{formatAmount(inv.amount, inv.currency)}</p>
+   590→   590→                            </div>
+   591→   591→                            <div className="p-2 rounded-lg text-center" style={{ background: innerBg }}>
+   592→   592→                              <p className="text-[9px]" style={{ color: isDark ? '#666' : '#AAA' }}>عائد يومي</p>
+   593→   593→                              <p className="text-[11px] font-bold" style={{ color }}>{formatAmount(dailyEarning, inv.currency)}</p>
+   594→   594→                            </div>
+   595→   595→                            <div className="p-2 rounded-lg text-center" style={{ background: innerBg }}>
+   596→   596→                              <p className="text-[9px]" style={{ color: isDark ? '#666' : '#AAA' }}>مكتسب</p>
+   597→   597→                              <p className="text-[11px] font-bold" style={{ color }}>{formatAmount(totalEarning, inv.currency)}</p>
+   598→   598→                            </div>
+   599→   599→                          </div>
+   600→   600→
+   601→   601→                          {/* Countdown Timer */}
+   602→   602→                          <div className="p-2 rounded-lg" style={{ background: `${color}10` }}>
+   603→   603→                            <div className="flex items-center justify-between">
+   604→   604→                              <div className="flex items-center gap-1.5">
+   605→   605→                                <Timer size={12} color={color} />
+   606→   606→                                <span className="text-[9px] font-medium" style={{ color }}>الوقت المتبقي</span>
+   607→   607→                              </div>
+   608→   608→                              <CountdownTimer
+   609→   609→                                endDate={inv.endDate}
+   610→   610→                                onComplete={() => handleInvestmentComplete(inv.id)}
+   611→   611→                              />
+   612→   612→                            </div>
+   613→   613→                          </div>
+   614→   614→                        </div>
+   615→   615→                      </motion.div>
+   616→   616→                    );
+   617→   617→                  })}
+   618→   618→                </div>
+   619→   619→              ) : (
+   620→   620→                <div className="rounded-2xl p-8 flex flex-col items-center" style={{ background: cardBg, border: `1px solid ${borderColor}` }}>
+   621→   621→                  <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-3" style={{ background: innerBg }}>
+   622→   622→                    <TrendingUp size={24} strokeWidth={1.5} color={isDark ? '#333' : '#DDD'} />
+   623→   623→                  </div>
+   624→   624→                  <p className="text-sm font-medium" style={{ color: isDark ? '#555' : '#AAA' }}>لا توجد استثمارات نشطة</p>
+   625→   625→                  <p className="text-[11px] mt-1" style={{ color: isDark ? '#444' : '#CCC' }}>ابدأ بالاستثمار في إحدى الخطط</p>
+   626→   626→                  <button onClick={() => setActiveTab('plans')}
+   627→   627→                    className="mt-3 px-4 py-2 rounded-lg text-xs font-bold text-white" style={{ background: '#10B981' }}>
+   628→   628→                    عرض الخطط
+   629→   629→                  </button>
+   630→   630→                </div>
+   631→   631→              )}
+   632→   632→            </motion.div>
+   633→   633→          )}
+   634→   634→
+   635→   635→          {activeTab === 'history' && (
+   636→   636→            <motion.div key="history" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}>
+   637→   637→              {investmentHistory.length > 0 ? (
+   638→   638→                <div className="space-y-2">
+   639→   639→                  {investmentHistory.map((inv) => (
+   640→   640→                    <div key={inv.id} className="flex items-center justify-between p-3 rounded-xl" style={{ background: cardBg, border: `1px solid ${borderColor}` }}>
+   641→   641→                      <div className="flex items-center gap-3">
+   642→   642→                        <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: inv.status === 'completed' ? 'rgba(16,185,129,0.1)' : 'rgba(245,158,11,0.1)' }}>
+   643→   643→                          {inv.status === 'completed' ? <CheckCircle2 size={14} color="#10B981" /> : <Clock size={14} color="#F59E0B" />}
+   644→   644→                        </div>
+   645→   645→                        <div>
+   646→   646→                          <p className="text-xs font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>{inv.planName}</p>
+   647→   647→                          <p className="text-[9px]" style={{ color: isDark ? '#666' : '#AAA' }}>{formatAmount(inv.amount, inv.currency)} {currencySymbols[inv.currency]}</p>
+   648→   648→                        </div>
+   649→   649→                      </div>
+   650→   650→                      <div className="text-left">
+   651→   651→                        <span className="text-[9px] font-bold px-2 py-0.5 rounded-md"
+   652→   652→                          style={{ background: inv.status === 'completed' ? 'rgba(16,185,129,0.1)' : 'rgba(245,158,11,0.1)', color: inv.status === 'completed' ? '#10B981' : '#F59E0B' }}>
+   653→   653→                          {inv.status === 'completed' ? 'مكتمل' : inv.status === 'cancelled' ? 'ملغي' : 'منتهي'}
+   654→   654→                        </span>
+   655→   655→                      </div>
+   656→   656→                    </div>
+   657→   657→                  ))}
+   658→   658→                </div>
+   659→   659→              ) : (
+   660→   660→                <div className="rounded-2xl p-8 flex flex-col items-center" style={{ background: cardBg, border: `1px solid ${borderColor}` }}>
+   661→   661→                  <div className="w-14 h-14 rounded-2xl flex items-center justify-center mb-3" style={{ background: innerBg }}>
+   662→   662→                    <History size={24} strokeWidth={1.5} color={isDark ? '#333' : '#DDD'} />
+   663→   663→                  </div>
+   664→   664→                  <p className="text-sm font-medium" style={{ color: isDark ? '#555' : '#AAA' }}>لا يوجد سجل استثمارات</p>
+   665→   665→                  <p className="text-[11px] mt-1" style={{ color: isDark ? '#444' : '#CCC' }}>ستظهر هنا استثماراتك السابقة</p>
+   666→   666→                </div>
+   667→   667→              )}
+   668→   668→            </motion.div>
+   669→   669→          )}
+   670→   670→        </AnimatePresence>
+   671→   671→      </div>
+   672→   672→
+   673→   673→      {/* Investment Modal */}
+   674→   674→      <AnimatePresence>
+   675→   675→        {showInvestModal && selectedPlan && (
+   676→   676→          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+   677→   677→            className="fixed inset-0 z-50 flex items-end justify-center"
+   678→   678→            style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(8px)' }}
+   679→   679→            onClick={() => setShowInvestModal(false)}>
+   680→   680→            <motion.div initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
+   681→   681→              transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+   682→   682→              className="w-full max-w-lg rounded-t-3xl p-5"
+   683→   683→              style={{ background: isDark ? '#0F0F0F' : '#F5F5F5' }}
+   684→   684→              onClick={(e) => e.stopPropagation()}>
+   685→   685→              {(() => {
+   686→   686→                const color = planColors[plans.indexOf(selectedPlan) % planColors.length] || '#10B981';
+   687→   687→                const currency = selectedPlan.currency || 'USD';
+   688→   688→                return (
+   689→   689→                  <>
+   690→   690→                    <div className="flex items-center gap-3 mb-4">
+   691→   691→                      <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: `${color}15` }}>
+   692→   692→                        <TrendingUp size={20} color={color} />
+   693→   693→                      </div>
+   694→   694→                      <div>
+   695→   695→                        <h3 className="text-base font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>استثمار في {selectedPlan.name}</h3>
+   696→   696→                        <p className="text-[11px]" style={{ color: isDark ? '#888' : '#AAA' }}>عائد يومي {selectedPlan.profitRate}% • {currency}</p>
+   697→   697→                      </div>
+   698→   698→                    </div>
+   699→   699→
+   700→   700→                    <div className="space-y-3">
+   701→   701→                      <div>
+   702→   702→                        <div className="flex items-center justify-between mb-1.5">
+   703→   703→                          <span className="text-[11px] font-medium" style={{ color: isDark ? '#888' : '#999' }}>مبلغ الاستثمار ({currency})</span>
+   704→   704→                          <span className="text-[11px]" style={{ color: isDark ? '#666' : '#BBB' }}>
+   705→   705→                            رصيدك: {formatAmount(selectedBalance, currency)} {currencySymbols[currency]}
+   706→   706→                          </span>
+   707→   707→                        </div>
+   708→   708→                        <div className="flex items-center gap-2 p-3 rounded-xl" style={{ background: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)' }}>
+   709→   709→                          <input type="number" value={investAmount} onChange={e => setInvestAmount(e.target.value)} placeholder="0" dir="ltr"
+   710→   710→                            className="flex-1 bg-transparent outline-none text-xl font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }} />
+   711→   711→                          <span className="text-sm font-bold" style={{ color: '#10B981' }}>{currency}</span>
+   712→   712→                        </div>
+   713→   713→                        <div className="flex gap-2 mt-2">
+   714→   714→                          {[selectedPlan.minAmount, selectedPlan.minAmount * 5, selectedPlan.minAmount * 10, selectedPlan.maxAmount].map((amt, i) => (
+   715→   715→                            <button key={i} onClick={() => setInvestAmount(amt.toString())}
+   716→   716→                              className="flex-1 py-1.5 rounded-lg text-[10px] font-bold"
+   717→   717→                              style={{ background: innerBg, color: isDark ? '#CCC' : '#444' }}>
+   718→   718→                              {formatAmount(amt, currency)}
+   719→   719→                            </button>
+   720→   720→                          ))}
+   721→   721→                        </div>
+   722→   722→                      </div>
+   723→   723→
+   724→   724→                      <div className="p-3 rounded-xl space-y-2" style={{ background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.15)' }}>
+   725→   725→                        <div className="flex items-center justify-between">
+   726→   726→                          <span className="text-[11px]" style={{ color: isDark ? '#888' : '#999' }}>عائد يومي</span>
+   727→   727→                          <span className="text-[11px] font-bold" style={{ color: '#10B981' }}>
+   728→   728→                            {formatAmount((parseFloat(investAmount) || 0) * (selectedPlan.profitRate / 100), currency)} {currencySymbols[currency]}
+   729→   729→                          </span>
+   730→   730→                        </div>
+   731→   731→                        <div className="flex items-center justify-between">
+   732→   732→                          <span className="text-[11px]" style={{ color: isDark ? '#888' : '#999' }}>عائد إجمالي ({selectedPlan.durationDays} يوم)</span>
+   733→   733→                          <span className="text-[11px] font-bold" style={{ color: '#10B981' }}>
+   734→   734→                            {formatAmount(estimatedProfit, currency)} {currencySymbols[currency]}
+   735→   735→                          </span>
+   736→   736→                        </div>
+   737→   737→                        <div className="h-px" style={{ background: 'rgba(16,185,129,0.2)' }} />
+   738→   738→                        <div className="flex items-center justify-between">
+   739→   739→                          <span className="text-xs font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>إجمالي الاسترداد</span>
+   740→   740→                          <span className="text-xs font-bold" style={{ color: '#10B981' }}>{formatAmount(estimatedReturn, currency)} {currencySymbols[currency]}</span>
+   741→   741→                        </div>
+   742→   742→                      </div>
+   743→   743→
+   744→   744→                      {(parseFloat(investAmount) || 0) > selectedBalance && (
+   745→   745→                        <div className="flex items-center gap-2 p-2.5 rounded-xl" style={{ background: 'rgba(92,26,27,0.1)', border: '1px solid rgba(92,26,27,0.2)' }}>
+   746→   746→                          <Wallet size={14} color="#5C1A1B" />
+   747→   747→                          <span className="text-[11px] font-medium" style={{ color: '#5C1A1B' }}>رصيد {currency} غير كافي</span>
+   748→   748→                        </div>
+   749→   749→                      )}
+   750→   750→
+   751→   751→                      <div className="flex gap-3">
+   752→   752→                        <motion.button whileTap={{ scale: 0.95 }} onClick={() => setShowInvestModal(false)}
+   753→   753→                          className="flex-1 py-3 rounded-xl text-sm font-bold"
+   754→   754→                          style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)', color: isDark ? '#FFF' : '#1a1a1a' }}>
+   755→   755→                          إلغاء
+   756→   756→                        </motion.button>
+   757→   757→                        <motion.button whileTap={{ scale: 0.95 }} onClick={handleConfirmInvest}
+   758→   758→                          disabled={isProcessing || (parseFloat(investAmount) || 0) < selectedPlan.minAmount || (parseFloat(investAmount) || 0) > selectedBalance}
+   759→   759→                          className="flex-1 py-3 rounded-xl text-sm font-bold text-white"
+   760→   760→                          style={{ background: (isProcessing || (parseFloat(investAmount) || 0) < selectedPlan.minAmount || (parseFloat(investAmount) || 0) > selectedBalance) ? '#555' : color }}>
+   761→   761→                          {isProcessing ? 'جارٍ الاستثمار...' : 'تأكيد الاستثمار'}
+   762→   762→                        </motion.button>
+   763→   763→                      </div>
+   764→   764→                    </div>
+   765→   765→                  </>
+   766→   766→                );
+   767→   767→              })()}
+   768→   768→            </motion.div>
+   769→   769→          </motion.div>
+   770→   770→        )}
+   771→   771→      </AnimatePresence>
+   772→   772→
+   773→   773→      {/* Success Toast */}
+   774→   774→      <AnimatePresence>
+   775→   775→        {showSuccess && (
+   776→   776→          <motion.div initial={{ opacity: 0, y: 50 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 50 }}
+   777→   777→            className="fixed bottom-20 left-4 right-4 z-50 rounded-2xl p-4 flex items-center gap-3"
+   778→   778→            style={{ background: 'rgba(16,185,129,0.95)', backdropFilter: 'blur(10px)' }}>
+   779→   779→            <CheckCircle2 size={20} color="#FFF" />
+   780→   780→            <p className="text-sm font-bold text-white">تم الاستثمار بنجاح!</p>
+   781→   781→          </motion.div>
+   782→   782→        )}
+   783→   783→      </AnimatePresence>
+   784→   784→    </div>
+   785→   785→  );
+   786→   786→}
+   787→   787→

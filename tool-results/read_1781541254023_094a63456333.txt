@@ -1,0 +1,919 @@
+     1→'use client';
+     2→
+     3→import { useState, useEffect } from 'react';
+     4→import { ref, onValue, update, set, get, remove } from 'firebase/database';
+     5→import { database } from '@/lib/firebase';
+     6→import { useAdminStore } from '@/lib/store';
+     7→import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+     8→import { Input } from '@/components/ui/input';
+     9→import { Button } from '@/components/ui/button';
+    10→import { Label } from '@/components/ui/label';
+    11→import { Badge } from '@/components/ui/badge';
+    12→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+    13→import { Switch } from '@/components/ui/switch';
+    14→import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+    15→
+    16→import { Textarea } from '@/components/ui/textarea';
+    17→import {
+    18→  Save, Loader2, Code, CheckCircle, XCircle, RefreshCw, DollarSign,
+    19→  Plus, Trash2, Edit, Zap, ArrowRight, Clock, Globe, Layers,
+    20→  ChevronDown, ChevronUp, Wifi, Search,
+    21→} from 'lucide-react';
+    22→import { motion, AnimatePresence } from 'framer-motion';
+    23→import { testApiConnection, generateApiProviderId, type ApiProviderConfig, type ApiTestResult } from '@/lib/api-provider';
+    24→import { syncExchangeRatesFromApi } from '@/lib/exchange-rate-sync';
+    25→
+    26→// ─── Exchange Rate Settings Sub-Component ──────────────────────────────
+    27→
+    28→function ExchangeRateSettings() {
+    29→  const { showToast } = useAdminStore();
+    30→  const [exchangeRateUrl, setExchangeRateUrl] = useState('https://cygrlhmnmckoefefnsjc.supabase.co/functions/v1/public-api/latest?city=aden&currency=usd');
+    31→  const [syncInterval, setSyncInterval] = useState('15');
+    32→  const [syncEnabled, setSyncEnabled] = useState(false);
+    33→  const [manualOverrides, setManualOverrides] = useState<Record<string, number>>({});
+    34→  const [saving, setSaving] = useState(false);
+    35→  const [testing, setTesting] = useState(false);
+    36→  const [testResult, setTestResult] = useState<{ success: boolean; data?: Record<string, unknown>; error?: string } | null>(null);
+    37→  const [currentRates, setCurrentRates] = useState<Record<string, unknown>>({});
+    38→  const [loading, setLoading] = useState(true);
+    39→
+    40→  useEffect(() => {
+    41→    const apiRef = ref(database, 'adminSettings/apiSettings');
+    42→    const unsub2 = onValue(apiRef, (snapshot) => {
+    43→      const data = snapshot.val() || {};
+    44→      setExchangeRateUrl(data.exchangeRateUrl || 'https://cygrlhmnmckoefefnsjc.supabase.co/functions/v1/public-api/latest?city=aden&currency=usd');
+    45→      setSyncInterval(String(data.exchangeRateSyncInterval || '15'));
+    46→      setSyncEnabled(data.syncEnabled || false);
+    47→      setManualOverrides(data.manualOverrides || {});
+    48→    });
+    49→
+    50→    const ratesRef = ref(database, 'adminSettings/exchangeRates');
+    51→    const unsub3 = onValue(ratesRef, (snapshot) => {
+    52→      setCurrentRates(snapshot.val() || {});
+    53→      setLoading(false);
+    54→    });
+    55→
+    56→    return () => { unsub2(); unsub3(); };
+    57→  }, []);
+    58→
+    59→  const handleSaveExchangeRateSettings = async () => {
+    60→    setSaving(true);
+    61→    try {
+    62→      await set(ref(database, 'adminSettings/apiSettings'), {
+    63→        exchangeRateUrl,
+    64→        exchangeRateSyncInterval: parseInt(syncInterval) || 15,
+    65→        syncEnabled,
+    66→        manualOverrides,
+    67→      });
+    68→      showToast('تم حفظ إعدادات أسعار الصرف', 'success');
+    69→    } catch { showToast('حدث خطأ', 'error'); }
+    70→    finally { setSaving(false); }
+    71→  };
+    72→
+    73→  const handleTestConnection = async () => {
+    74→    setTesting(true);
+    75→    setTestResult(null);
+    76→    try {
+    77→      // Use the new sync utility which fetches both USD and SAR from the API
+    78→      const ratesData = await syncExchangeRatesFromApi();
+    79→      setTestResult({
+    80→        success: true,
+    81→        data: {
+    82→          USD_sell: ratesData.sellRates.USD,
+    83→          USD_buy: ratesData.buyRates.USD,
+    84→          SAR_sell: ratesData.sellRates.SAR,
+    85→          SAR_buy: ratesData.buyRates.SAR,
+    86→          YER_USD: ratesData.USD,
+    87→          YER_SAR: ratesData.SAR,
+    88→          commission: ratesData.commission,
+    89→          lastSynced: ratesData.lastSynced,
+    90→        },
+    91→      });
+    92→      setCurrentRates({
+    93→        YER_USD: ratesData.USD,
+    94→        YER_SAR: ratesData.SAR,
+    95→        USD_buy: ratesData.buyRates.USD,
+    96→        USD_sell: ratesData.sellRates.USD,
+    97→        SAR_buy: ratesData.buyRates.SAR,
+    98→        SAR_sell: ratesData.sellRates.SAR,
+    99→        commission: ratesData.commission,
+   100→        lastSynced: ratesData.lastSynced,
+   101→      });
+   102→      showToast('تم جلب الأسعار وتحديثها بنجاح', 'success');
+   103→    } catch (err: unknown) {
+   104→      const message = err instanceof Error ? err.message : 'Unknown error';
+   105→      setTestResult({ success: false, error: message });
+   106→      showToast('فشل الاتصال', 'error');
+   107→    } finally {
+   108→      setTesting(false);
+   109→    }
+   110→  };
+   111→
+   112→  const handleSaveOverrides = async () => {
+   113→    try {
+   114→      await update(ref(database, 'adminSettings/apiSettings'), { manualOverrides });
+   115→      await update(ref(database, 'adminSettings/exchangeRates'), manualOverrides);
+   116→      showToast('تم حفظ الأسعار اليدوية', 'success');
+   117→    } catch { showToast('حدث خطأ', 'error'); }
+   118→  };
+   119→
+   120→  if (loading) return <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-purple-500" /></div>;
+   121→
+   122→  return (
+   123→    <div className="space-y-4">
+   124→      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
+   125→        <Card className="admin-card border-0 shadow-none">
+   126→          <CardHeader>
+   127→            <CardTitle className="text-base flex items-center gap-2">
+   128→              <DollarSign className="w-5 h-5 text-purple-500" /> إعدادات أسعار الصرف
+   129→            </CardTitle>
+   130→          </CardHeader>
+   131→          <CardContent className="space-y-4">
+   132→            <div>
+   133→              <Label>رابط API لأسعار الصرف</Label>
+   134→              <Input value={exchangeRateUrl} onChange={(e) => setExchangeRateUrl(e.target.value)} dir="ltr" placeholder="https://api.yemen-rate.com/v1/rates" />
+   135→            </div>
+   136→            <div>
+   137→              <Label>فترة المزامنة التلقائية</Label>
+   138→              <Select value={syncInterval} onValueChange={setSyncInterval}>
+   139→                <SelectTrigger><SelectValue /></SelectTrigger>
+   140→                <SelectContent>
+   141→                  <SelectItem value="5">كل 5 دقائق</SelectItem>
+   142→                  <SelectItem value="15">كل 15 دقيقة</SelectItem>
+   143→                  <SelectItem value="30">كل 30 دقيقة</SelectItem>
+   144→                  <SelectItem value="60">كل ساعة</SelectItem>
+   145→                </SelectContent>
+   146→              </Select>
+   147→            </div>
+   148→            <div className="flex items-center justify-between p-3 rounded-xl bg-muted">
+   149→              <div>
+   150→                <p className="text-sm font-medium">تفعيل المزامنة التلقائية</p>
+   151→                <p className="text-xs text-muted-foreground">تحديث الأسعار تلقائيا من API</p>
+   152→              </div>
+   153→              <Switch checked={syncEnabled} onCheckedChange={setSyncEnabled} />
+   154→            </div>
+   155→            <Button onClick={handleTestConnection} disabled={testing} variant="outline" className="w-full">
+   156→              {testing ? <Loader2 className="w-4 h-4 ml-2 animate-spin" /> : <RefreshCw className="w-4 h-4 ml-2" />}
+   157→              اختبار الاتصال وجلب الأسعار
+   158→            </Button>
+   159→            {testResult && (
+   160→              <div className={`p-3 rounded-xl ${testResult.success ? 'bg-green-500/10 border border-green-500/20' : 'bg-red-500/10 border border-red-500/20'}`}>
+   161→                <div className="flex items-center gap-2 mb-2">
+   162→                  {testResult.success ? <CheckCircle className="w-4 h-4 text-green-500" /> : <XCircle className="w-4 h-4 text-red-500" />}
+   163→                  <span className="text-sm font-medium">{testResult.success ? 'الاتصال ناجح' : 'الاتصال فشل'}</span>
+   164→                </div>
+   165→                {testResult.success && testResult.data && (
+   166→                  <pre className="text-xs bg-muted p-2 rounded-lg overflow-auto max-h-40" dir="ltr">{JSON.stringify(testResult.data, null, 2)}</pre>
+   167→                )}
+   168→                {testResult.error && <p className="text-xs text-red-500">{testResult.error}</p>}
+   169→              </div>
+   170→            )}
+   171→            <Button onClick={handleSaveExchangeRateSettings} disabled={saving} className="w-full bg-purple-600 hover:bg-purple-700">
+   172→              {saving ? <Loader2 className="w-4 h-4 ml-2 animate-spin" /> : <Save className="w-4 h-4 ml-2" />}
+   173→              حفظ إعدادات أسعار الصرف
+   174→            </Button>
+   175→          </CardContent>
+   176→        </Card>
+   177→      </motion.div>
+   178→
+   179→      {Object.keys(currentRates).length > 0 && (
+   180→        <Card className="admin-card border-0 shadow-none">
+   181→          <CardHeader><CardTitle className="text-base">الأسعار الحالية</CardTitle></CardHeader>
+   182→          <CardContent>
+   183→            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+   184→              {Object.entries(currentRates).map(([key, value]) => (
+   185→                <div key={key} className="p-3 rounded-xl bg-muted text-center">
+   186→                  <p className="text-xs text-muted-foreground">{key}</p>
+   187→                  <p className="font-bold">{typeof value === 'number' ? value.toFixed(2) : String(value)}</p>
+   188→                </div>
+   189→              ))}
+   190→            </div>
+   191→          </CardContent>
+   192→        </Card>
+   193→      )}
+   194→
+   195→      <Card className="admin-card border-0 shadow-none">
+   196→        <CardHeader><CardTitle className="text-base">تجاوز الأسعار يدويا</CardTitle></CardHeader>
+   197→        <CardContent className="space-y-3">
+   198→          <p className="text-xs text-muted-foreground">أدخل قيم الأسعار لتجاوز القيم من API</p>
+   199→          {[{key: 'YER_USD', label: 'دولار إلى ريال يمني'}, {key: 'YER_SAR', label: 'ريال سعودي إلى ريال يمني'}].map(({key, label}) => (
+   200→            <div key={key} className="flex items-center gap-3">
+   201→              <Label className="w-40 text-xs">{label} ({key})</Label>
+   202→              <Input type="number" value={manualOverrides[key] || ''} onChange={(e) => setManualOverrides(p => ({ ...p, [key]: parseFloat(e.target.value) || 0 }))} dir="ltr" className="flex-1" />
+   203→            </div>
+   204→          ))}
+   205→          <Button onClick={handleSaveOverrides} variant="outline" size="sm">حفظ التجاوزات</Button>
+   206→        </CardContent>
+   207→      </Card>
+   208→    </div>
+   209→  );
+   210→}
+   211→
+   212→// ─── API Provider Form Sub-Component ───────────────────────────────────
+   213→
+   214→interface ApiProviderFormProps {
+   215→  editing: ApiProviderConfig | null;
+   216→  onSave: (config: ApiProviderConfig) => void;
+   217→  onCancel: () => void;
+   218→  onTest: (config: Record<string, unknown>) => Promise<ApiTestResult>;
+   219→}
+   220→
+   221→function ApiProviderForm({ editing, onSave, onCancel, onTest }: ApiProviderFormProps) {
+   222→  const [name, setName] = useState(editing?.name || '');
+   223→  const [baseUrl, setBaseUrl] = useState(editing?.baseUrl || '');
+   224→  const [apiKey, setApiKey] = useState(editing?.apiKey || '');
+   225→  const [apiSecret, setApiSecret] = useState(editing?.apiSecret || '');
+   226→  const [method, setMethod] = useState<'GET' | 'POST'>(editing?.method || 'POST');
+   227→  const [headersText, setHeadersText] = useState(
+   228→    editing?.headers ? JSON.stringify(editing.headers, null, 2) : '{}'
+   229→  );
+   230→  const [bodyTemplate, setBodyTemplate] = useState(editing?.bodyTemplate || '');
+   231→  const [responseFormat, setResponseFormat] = useState<'json' | 'xml'>(editing?.responseFormat || 'json');
+   232→  const [sectionName, setSectionName] = useState(editing?.sectionName || '');
+   233→  const [sectionId, setSectionId] = useState(editing?.sectionId || '');
+   234→  const [isActive, setIsActive] = useState(editing?.isActive !== false);
+   235→
+   236→  // Field mappings
+   237→  const [statusField, setStatusField] = useState(editing?.fieldMappings?.statusField || '');
+   238→  const [successValue, setSuccessValue] = useState(editing?.fieldMappings?.successValue || '');
+   239→  const [balanceField, setBalanceField] = useState(editing?.fieldMappings?.balanceField || '');
+   240→  const [messageField, setMessageField] = useState(editing?.fieldMappings?.messageField || '');
+   241→  const [transactionIdField, setTransactionIdField] = useState(editing?.fieldMappings?.transactionIdField || '');
+   242→  const [errorCodeField, setErrorCodeField] = useState(editing?.fieldMappings?.errorCodeField || '');
+   243→
+   244→  // Test result
+   245→  const [testResult, setTestResult] = useState<ApiTestResult | null>(null);
+   246→  const [testing, setTesting] = useState(false);
+   247→
+   248→  // Show/hide sections
+   249→  const [showMappings, setShowMappings] = useState(!!editing?.fieldMappings);
+   250→  const [showAdvanced, setShowAdvanced] = useState(!!editing?.headers && Object.keys(editing.headers).length > 0);
+   251→
+   252→  const handleTest = async () => {
+   253→    if (!baseUrl) return;
+   254→    setTesting(true);
+   255→    setTestResult(null);
+   256→    try {
+   257→      const config = {
+   258→        name,
+   259→        baseUrl,
+   260→        apiKey,
+   261→        apiSecret,
+   262→        method,
+   263→        headers: JSON.parse(headersText || '{}'),
+   264→        bodyTemplate,
+   265→        responseFormat,
+   266→        fieldMappings: (statusField && successValue) ? {
+   267→          statusField,
+   268→          successValue,
+   269→          balanceField: balanceField || undefined,
+   270→          messageField: messageField || undefined,
+   271→          transactionIdField: transactionIdField || undefined,
+   272→          errorCodeField: errorCodeField || undefined,
+   273→        } : undefined,
+   274→      };
+   275→      const result = await onTest(config);
+   276→      setTestResult(result);
+   277→    } catch (err: unknown) {
+   278→      const message = err instanceof Error ? err.message : 'Unknown error';
+   279→      setTestResult({
+   280→        success: false,
+   281→        responseTime: 0,
+   282→        availableFields: [],
+   283→        error: message,
+   284→      });
+   285→    } finally {
+   286→      setTesting(false);
+   287→    }
+   288→  };
+   289→
+   290→  const handleSave = () => {
+   291→    if (!name || !baseUrl) return;
+   292→
+   293→    let parsedHeaders: Record<string, string> = {};
+   294→    try {
+   295→      parsedHeaders = JSON.parse(headersText || '{}');
+   296→    } catch {
+   297→      parsedHeaders = {};
+   298→    }
+   299→
+   300→    const config: ApiProviderConfig = {
+   301→      id: editing?.id || generateApiProviderId(),
+   302→      name,
+   303→      baseUrl,
+   304→      apiKey,
+   305→      apiSecret: apiSecret || undefined,
+   306→      method,
+   307→      headers: parsedHeaders,
+   308→      bodyTemplate: bodyTemplate || undefined,
+   309→      responseFormat,
+   310→      fieldMappings: (statusField && successValue) ? {
+   311→        statusField,
+   312→        successValue,
+   313→        balanceField: balanceField || undefined,
+   314→        messageField: messageField || undefined,
+   315→        transactionIdField: transactionIdField || undefined,
+   316→        errorCodeField: errorCodeField || undefined,
+   317→      } : undefined,
+   318→      syncEnabled: true,
+   319→      isActive,
+   320→      createdAt: editing?.createdAt || new Date().toISOString(),
+   321→      sectionName: sectionName || undefined,
+   322→      sectionId: sectionId || name.replace(/\s+/g, '-').toLowerCase(),
+   323→      sectionIcon: undefined,
+   324→    };
+   325→
+   326→    onSave(config);
+   327→  };
+   328→
+   329→  // Auto-fill mapping fields from test result
+   330→  const handleAutoFillMapping = (fieldPath: string, target: 'status' | 'balance' | 'message' | 'transactionId' | 'errorCode') => {
+   331→    switch (target) {
+   332→      case 'status': setStatusField(fieldPath); break;
+   333→      case 'balance': setBalanceField(fieldPath); break;
+   334→      case 'message': setMessageField(fieldPath); break;
+   335→      case 'transactionId': setTransactionIdField(fieldPath); break;
+   336→      case 'errorCode': setErrorCodeField(fieldPath); break;
+   337→    }
+   338→  };
+   339→
+   340→  return (
+   341→    <div className="space-y-4">
+   342→      {/* Basic Info */}
+   343→      <Card className="admin-card border-0 shadow-none">
+   344→        <CardHeader className="pb-3">
+   345→          <CardTitle className="text-base flex items-center gap-2">
+   346→            <Globe className="w-5 h-5 text-purple-500" /> معلومات المزود
+   347→          </CardTitle>
+   348→        </CardHeader>
+   349→        <CardContent className="space-y-3">
+   350→          <div><Label>اسم المزود (عربي)</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="مثال: مزود الشحن السريع" /></div>
+   351→          <div><Label>رابط API الأساسي</Label><Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} dir="ltr" placeholder="https://api.provider.com/v1/charge" /></div>
+   352→          <div className="grid grid-cols-2 gap-3">
+   353→            <div><Label>مفتاح API</Label><Input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} dir="ltr" placeholder="sk-xxxxx..." /></div>
+   354→            <div><Label>API Secret (اختياري)</Label><Input type="password" value={apiSecret} onChange={(e) => setApiSecret(e.target.value)} dir="ltr" placeholder="اختياري" /></div>
+   355→          </div>
+   356→          <div className="grid grid-cols-2 gap-3">
+   357→            <div>
+   358→              <Label>طريقة الطلب</Label>
+   359→              <Select value={method} onValueChange={(v: string) => setMethod(v as 'GET' | 'POST')}>
+   360→                <SelectTrigger><SelectValue /></SelectTrigger>
+   361→                <SelectContent>
+   362→                  <SelectItem value="POST">POST</SelectItem>
+   363→                  <SelectItem value="GET">GET</SelectItem>
+   364→                </SelectContent>
+   365→              </Select>
+   366→            </div>
+   367→            <div>
+   368→              <Label>صيغة الاستجابة</Label>
+   369→              <Select value={responseFormat} onValueChange={(v: string) => setResponseFormat(v as 'json' | 'xml')}>
+   370→                <SelectTrigger><SelectValue /></SelectTrigger>
+   371→                <SelectContent>
+   372→                  <SelectItem value="json">JSON</SelectItem>
+   373→                  <SelectItem value="xml">XML</SelectItem>
+   374→                </SelectContent>
+   375→              </Select>
+   376→            </div>
+   377→          </div>
+   378→        </CardContent>
+   379→      </Card>
+   380→
+   381→      {/* Category/Section Info */}
+   382→      <Card className="admin-card border-0 shadow-none">
+   383→        <CardHeader className="pb-3">
+   384→          <CardTitle className="text-base flex items-center gap-2">
+   385→            <Layers className="w-5 h-5 text-purple-500" /> قسم الخدمات
+   386→          </CardTitle>
+   387→        </CardHeader>
+   388→        <CardContent className="space-y-3">
+   389→          <p className="text-xs text-muted-foreground">عند إضافة قسم، ستظهر خدمات هذا المزود كقسم جديد في شاشة الخدمات بجانب &quot;خدمات المحفظة الخاصة&quot;</p>
+   390→          <div><Label>اسم القسم (عربي)</Label><Input value={sectionName} onChange={(e) => setSectionName(e.target.value)} placeholder="مثال: خدمات الشحن السريع" /></div>
+   391→          <div><Label>معرف القسم</Label><Input value={sectionId} onChange={(e) => setSectionId(e.target.value)} dir="ltr" placeholder="auto-generated أو أدخل يدوياً" /></div>
+   392→        </CardContent>
+   393→      </Card>
+   394→
+   395→      {/* Request Configuration */}
+   396→      <Card className="admin-card border-0 shadow-none">
+   397→        <CardHeader className="pb-3">
+   398→          <CardTitle className="text-base flex items-center gap-2">
+   399→            <Code className="w-5 h-5 text-purple-500" /> إعدادات الطلب
+   400→          </CardTitle>
+   401→        </CardHeader>
+   402→        <CardContent className="space-y-3">
+   403→          {/* Advanced Headers */}
+   404→          <button
+   405→            onClick={() => setShowAdvanced(!showAdvanced)}
+   406→            className="flex items-center gap-2 text-sm font-medium text-purple-500 hover:text-purple-400"
+   407→          >
+   408→            {showAdvanced ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+   409→            Headers مخصصة
+   410→          </button>
+   411→          <AnimatePresence>
+   412→            {showAdvanced && (
+   413→              <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}>
+   414→                <Label className="text-xs">Headers (JSON) - مفاتيح وقيم إضافية</Label>
+   415→                <Textarea
+   416→                  value={headersText}
+   417→                  onChange={(e) => setHeadersText(e.target.value)}
+   418→                  dir="ltr"
+   419→                  rows={4}
+   420→                  placeholder='{"X-Custom-Header": "value"}'
+   421→                  className="font-mono text-xs"
+   422→                />
+   423→              </motion.div>
+   424→            )}
+   425→          </AnimatePresence>
+   426→
+   427→          {/* Body Template */}
+   428→          {method === 'POST' && (
+   429→            <div>
+   430→              <Label>قالب Body (JSON)</Label>
+   431→              <p className="text-xs text-muted-foreground mb-1">
+   432→                استخدم المتغيرات: {'{{customerId}}'}, {'{{packageId}}'}, {'{{amount}}'}, {'{{currency}}'}, {'{{phone}}'}, {'{{apiKey}}'}, {'{{apiSecret}}'}
+   433→              </p>
+   434→              <Textarea
+   435→                value={bodyTemplate}
+   436→                onChange={(e) => setBodyTemplate(e.target.value)}
+   437→                dir="ltr"
+   438→                rows={6}
+   439→                placeholder={`{\n  "customer_id": "{{customerId}}",\n  "product_id": "{{packageId}}",\n  "amount": "{{amount}}"\n}`}
+   440→                className="font-mono text-xs"
+   441→              />
+   442→            </div>
+   443→          )}
+   444→        </CardContent>
+   445→      </Card>
+   446→
+   447→      {/* Test API Button */}
+   448→      <Card className="admin-card border-0 shadow-none">
+   449→        <CardHeader className="pb-3">
+   450→          <CardTitle className="text-base flex items-center gap-2">
+   451→            <Zap className="w-5 h-5 text-amber-500" /> اختبار الاتصال
+   452→          </CardTitle>
+   453→        </CardHeader>
+   454→        <CardContent className="space-y-3">
+   455→          <Button onClick={handleTest} disabled={testing || !baseUrl} variant="outline" className="w-full border-amber-500/30 hover:bg-amber-500/10">
+   456→            {testing ? <Loader2 className="w-4 h-4 ml-2 animate-spin" /> : <Zap className="w-4 h-4 ml-2" />}
+   457→            اختبار API الآن
+   458→          </Button>
+   459→
+   460→          {testResult && (
+   461→            <div className={`p-4 rounded-xl ${testResult.success ? 'bg-green-500/10 border border-green-500/20' : 'bg-red-500/10 border border-red-500/20'}`}>
+   462→              {/* Status Header */}
+   463→              <div className="flex items-center gap-2 mb-3">
+   464→                {testResult.success ? <CheckCircle className="w-5 h-5 text-green-500" /> : <XCircle className="w-5 h-5 text-red-500" />}
+   465→                <span className="font-bold">{testResult.success ? 'الاتصال ناجح' : 'الاتصال فشل'}</span>
+   466→                <Badge variant="outline" className="mr-auto">
+   467→                  <Clock className="w-3 h-3 ml-1" /> {testResult.responseTime}ms
+   468→                </Badge>
+   469→                {testResult.statusCode && (
+   470→                  <Badge className={testResult.statusCode < 400 ? 'bg-green-500/20 text-green-600' : 'bg-red-500/20 text-red-600'}>
+   471→                    HTTP {testResult.statusCode}
+   472→                  </Badge>
+   473→                )}
+   474→              </div>
+   475→
+   476→              {/* Error */}
+   477→              {testResult.error && (
+   478→                <div className="p-2 rounded-lg bg-red-500/10 mb-3">
+   479→                  <p className="text-xs text-red-500 font-medium">{testResult.error}</p>
+   480→                </div>
+   481→              )}
+   482→
+   483→              {/* Mapped Values */}
+   484→              {testResult.mappedValues && (
+   485→                <div className="mb-3">
+   486→                  <p className="text-xs font-semibold mb-2">القيم المستخرجة:</p>
+   487→                  <div className="grid grid-cols-2 gap-2">
+   488→                    {testResult.mappedValues.status !== undefined && (
+   489→                      <div className="p-2 rounded-lg bg-muted">
+   490→                        <p className="text-[10px] text-muted-foreground">الحالة</p>
+   491→                        <p className="text-xs font-bold">{testResult.mappedValues.status}</p>
+   492→                      </div>
+   493→                    )}
+   494→                    {testResult.mappedValues.balance !== undefined && (
+   495→                      <div className="p-2 rounded-lg bg-muted">
+   496→                        <p className="text-[10px] text-muted-foreground">الرصيد</p>
+   497→                        <p className="text-xs font-bold">{testResult.mappedValues.balance}</p>
+   498→                      </div>
+   499→                    )}
+   500→                    {testResult.mappedValues.message !== undefined && (
+   501→                      <div className="p-2 rounded-lg bg-muted">
+   502→                        <p className="text-[10px] text-muted-foreground">الرسالة</p>
+   503→                        <p className="text-xs font-bold">{testResult.mappedValues.message}</p>
+   504→                      </div>
+   505→                    )}
+   506→                    {testResult.mappedValues.transactionId !== undefined && (
+   507→                      <div className="p-2 rounded-lg bg-muted">
+   508→                        <p className="text-[10px] text-muted-foreground">رقم المعاملة</p>
+   509→                        <p className="text-xs font-bold">{testResult.mappedValues.transactionId}</p>
+   510→                      </div>
+   511→                    )}
+   512→                  </div>
+   513→                </div>
+   514→              )}
+   515→
+   516→              {/* Available Fields */}
+   517→              {testResult.availableFields.length > 0 && (
+   518→                <div className="mb-3">
+   519→                  <p className="text-xs font-semibold mb-2">الحقول المتاحة في الاستجابة:</p>
+   520→                  <div className="flex flex-wrap gap-1 max-h-32 overflow-y-auto">
+   521→                    {testResult.availableFields.map(field => (
+   522→                      <Badge key={field} variant="outline" className="text-[10px] cursor-pointer hover:bg-purple-500/10" title="انقر لتعيين كحقل">
+   523→                        {field}
+   524→                      </Badge>
+   525→                    ))}
+   526→                  </div>
+   527→                </div>
+   528→              )}
+   529→
+   530→              {/* Raw Response */}
+   531→              {testResult.rawResponse && (
+   532→                <details className="mt-2">
+   533→                  <summary className="text-xs font-medium cursor-pointer text-muted-foreground hover:text-foreground">
+   534→                    عرض الاستجابة الخام
+   535→                  </summary>
+   536→                  <pre className="text-[10px] bg-muted p-2 rounded-lg overflow-auto max-h-48 mt-2" dir="ltr">
+   537→                    {typeof testResult.parsedResponse === 'object'
+   538→                      ? JSON.stringify(testResult.parsedResponse, null, 2)
+   539→                      : testResult.rawResponse}
+   540→                  </pre>
+   541→                </details>
+   542→              )}
+   543→            </div>
+   544→          )}
+   545→        </CardContent>
+   546→      </Card>
+   547→
+   548→      {/* Field Mappings */}
+   549→      <Card className="admin-card border-0 shadow-none">
+   550→        <CardHeader className="pb-3">
+   551→          <CardTitle className="text-base flex items-center gap-2 justify-between">
+   552→            <span className="flex items-center gap-2">
+   553→              <ArrowRight className="w-5 h-5 text-purple-500" /> تعيين الحقول
+   554→            </span>
+   555→            <button onClick={() => setShowMappings(!showMappings)} className="text-sm text-purple-500">
+   556→              {showMappings ? 'إخفاء' : 'إظهار'}
+   557→            </button>
+   558→          </CardTitle>
+   559→        </CardHeader>
+   560→        <AnimatePresence>
+   561→          {showMappings && (
+   562→            <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }}>
+   563→              <CardContent className="space-y-3">
+   564→                <p className="text-xs text-muted-foreground">
+   565→                  عيّن حقول استجابة API إلى حقول التطبيق. انقر على الحقول المتاحة أعلاه لنسخها.
+   566→                </p>
+   567→                <div className="grid grid-cols-2 gap-3">
+   568→                  <div>
+   569→                    <Label className="text-xs">حقل الحالة *</Label>
+   570→                    <Input value={statusField} onChange={(e) => setStatusField(e.target.value)} dir="ltr" placeholder="data.status" />
+   571→                  </div>
+   572→                  <div>
+   573→                    <Label className="text-xs">قيمة النجاح *</Label>
+   574→                    <Input value={successValue} onChange={(e) => setSuccessValue(e.target.value)} dir="ltr" placeholder="success أو 200 أو 1" />
+   575→                  </div>
+   576→                </div>
+   577→                <div className="grid grid-cols-2 gap-3">
+   578→                  <div>
+   579→                    <Label className="text-xs">حقل الرصيد</Label>
+   580→                    <Input value={balanceField} onChange={(e) => setBalanceField(e.target.value)} dir="ltr" placeholder="data.balance" />
+   581→                  </div>
+   582→                  <div>
+   583→                    <Label className="text-xs">حقل الرسالة</Label>
+   584→                    <Input value={messageField} onChange={(e) => setMessageField(e.target.value)} dir="ltr" placeholder="data.message" />
+   585→                  </div>
+   586→                </div>
+   587→                <div className="grid grid-cols-2 gap-3">
+   588→                  <div>
+   589→                    <Label className="text-xs">حقل رقم المعاملة</Label>
+   590→                    <Input value={transactionIdField} onChange={(e) => setTransactionIdField(e.target.value)} dir="ltr" placeholder="data.transactionId" />
+   591→                  </div>
+   592→                  <div>
+   593→                    <Label className="text-xs">حقل رمز الخطأ</Label>
+   594→                    <Input value={errorCodeField} onChange={(e) => setErrorCodeField(e.target.value)} dir="ltr" placeholder="data.errorCode" />
+   595→                  </div>
+   596→                </div>
+   597→
+   598→                {/* Quick map from test result */}
+   599→                {testResult && testResult.availableFields.length > 0 && (
+   600→                  <div className="p-3 rounded-xl bg-muted/50">
+   601→                    <p className="text-xs font-semibold mb-2">تعيين سريع من الاستجابة:</p>
+   602→                    <div className="space-y-2">
+   603→                      {['status', 'balance', 'message', 'transactionId', 'errorCode'].map(target => (
+   604→                        <div key={target} className="flex items-center gap-2">
+   605→                          <span className="text-xs w-24 text-muted-foreground">{target === 'status' ? 'الحالة' : target === 'balance' ? 'الرصيد' : target === 'message' ? 'الرسالة' : target === 'transactionId' ? 'المعاملة' : 'الخطأ'}</span>
+   606→                          <div className="flex flex-wrap gap-1">
+   607→                            {testResult.availableFields.slice(0, 10).map(field => (
+   608→                              <button
+   609→                                key={field}
+   610→                                onClick={() => handleAutoFillMapping(field, target as 'status' | 'balance' | 'message' | 'transactionId' | 'errorCode')}
+   611→                                className="text-[9px] px-1.5 py-0.5 rounded border border-border hover:bg-purple-500/10 hover:border-purple-500/30 transition-colors"
+   612→                              >
+   613→                                {field.split('.').pop()}
+   614→                              </button>
+   615→                            ))}
+   616→                          </div>
+   617→                        </div>
+   618→                      ))}
+   619→                    </div>
+   620→                  </div>
+   621→                )}
+   622→              </CardContent>
+   623→            </motion.div>
+   624→          )}
+   625→        </AnimatePresence>
+   626→      </Card>
+   627→
+   628→      {/* Active Switch + Actions */}
+   629→      <div className="flex items-center justify-between p-4 rounded-xl bg-muted">
+   630→        <div className="flex items-center gap-3">
+   631→          <Switch checked={isActive} onCheckedChange={setIsActive} />
+   632→          <div>
+   633→            <p className="text-sm font-medium">{isActive ? 'مزود نشط' : 'مزود معطل'}</p>
+   634→            <p className="text-xs text-muted-foreground">{isActive ? 'سيتم استخدام هذا المزود للطلبات' : 'لن يتم استخدام هذا المزود'}</p>
+   635→          </div>
+   636→        </div>
+   637→      </div>
+   638→
+   639→      <div className="flex gap-2">
+   640→        <Button onClick={handleSave} disabled={!name || !baseUrl} className="flex-1 bg-purple-600 hover:bg-purple-700">
+   641→          <Save className="w-4 h-4 ml-2" />
+   642→          {editing ? 'تحديث المزود' : 'إضافة المزود'}
+   643→        </Button>
+   644→        <Button variant="outline" onClick={onCancel}>إلغاء</Button>
+   645→      </div>
+   646→    </div>
+   647→  );
+   648→}
+   649→
+   650→// ─── Main API Settings Panel ───────────────────────────────────────────
+   651→
+   652→export default function ApiSettingsPanel() {
+   653→  const { showToast } = useAdminStore();
+   654→  const [providers, setProviders] = useState<ApiProviderConfig[]>([]);
+   655→  const [loading, setLoading] = useState(true);
+   656→  const [showForm, setShowForm] = useState(false);
+   657→  const [editingProvider, setEditingProvider] = useState<ApiProviderConfig | null>(null);
+   658→  const [searchQuery, setSearchQuery] = useState('');
+   659→
+   660→  // Load providers from Firebase
+   661→  useEffect(() => {
+   662→    const providersRef = ref(database, 'adminSettings/apiProviders');
+   663→    const unsub = onValue(providersRef, (snapshot) => {
+   664→      if (snapshot.exists()) {
+   665→        const data = snapshot.val();
+   666→        const list: ApiProviderConfig[] = Object.values(data).map((p: Record<string, string | boolean | Record<string, string> | undefined>) => ({
+   667→          id: String(p.id || ''),
+   668→          name: String(p.name || ''),
+   669→          baseUrl: String(p.baseUrl || ''),
+   670→          apiKey: String(p.apiKey || ''),
+   671→          apiSecret: p.apiSecret ? String(p.apiSecret) : undefined,
+   672→          method: (p.method === 'GET' ? 'GET' : 'POST') as 'GET' | 'POST',
+   673→          headers: (p.headers as Record<string, string>) || {},
+   674→          bodyTemplate: p.bodyTemplate ? String(p.bodyTemplate) : undefined,
+   675→          responseFormat: (p.responseFormat === 'xml' ? 'xml' : 'json') as 'json' | 'xml',
+   676→          fieldMappings: (p.fieldMappings as ApiProviderConfig['fieldMappings']) || undefined,
+   677→          syncEnabled: p.syncEnabled !== false,
+   678→          isActive: p.isActive !== false,
+   679→          createdAt: String(p.createdAt || ''),
+   680→          sectionName: p.sectionName ? String(p.sectionName) : undefined,
+   681→          sectionId: p.sectionId ? String(p.sectionId) : undefined,
+   682→          sectionIcon: p.sectionIcon ? String(p.sectionIcon) : undefined,
+   683→        }));
+   684→        setProviders(list);
+   685→      } else {
+   686→        setProviders([]);
+   687→      }
+   688→      setLoading(false);
+   689→    }, (error) => {
+   690→      console.error('Firebase API providers error:', error);
+   691→      setLoading(false);
+   692→    });
+   693→
+   694→    return () => unsub();
+   695→  }, []);
+   696→
+   697→  const handleSaveProvider = async (config: ApiProviderConfig) => {
+   698→    try {
+   699→      const providerRef = ref(database, `adminSettings/apiProviders/${config.id}`);
+   700→      await set(providerRef, config);
+   701→      showToast(editingProvider ? 'تم تحديث المزود' : 'تم إضافة المزود', 'success');
+   702→      setShowForm(false);
+   703→      setEditingProvider(null);
+   704→
+   705→      // If sectionName is set, create the category in Firebase for the services screen
+   706→      if (config.sectionName && config.sectionId) {
+   707→        const categoryRef = ref(database, `adminSettings/categories/api-${config.sectionId}`);
+   708→        const snapshot = await get(categoryRef);
+   709→        if (!snapshot.exists()) {
+   710→          await set(categoryRef, {
+   711→            id: `api-${config.sectionId}`,
+   712→            name: config.sectionName,
+   713→            type: 'api',
+   714→            icon: config.sectionIcon || 'api',
+   715→          });
+   716→        }
+   717→      }
+   718→    } catch {
+   719→      showToast('حدث خطأ أثناء الحفظ', 'error');
+   720→    }
+   721→  };
+   722→
+   723→  const handleDeleteProvider = async (id: string) => {
+   724→    try {
+   725→      await remove(ref(database, `adminSettings/apiProviders/${id}`));
+   726→      showToast('تم حذف المزود', 'success');
+   727→    } catch {
+   728→      showToast('حدث خطأ أثناء الحذف', 'error');
+   729→    }
+   730→  };
+   731→
+   732→  const handleToggleProvider = async (provider: ApiProviderConfig) => {
+   733→    try {
+   734→      await update(ref(database, `adminSettings/apiProviders/${provider.id}`), {
+   735→        isActive: !provider.isActive,
+   736→      });
+   737→      showToast(provider.isActive ? 'تم تعطيل المزود' : 'تم تفعيل المزود', 'success');
+   738→    } catch {
+   739→      showToast('حدث خطأ', 'error');
+   740→    }
+   741→  };
+   742→
+   743→  const handleTestApi = async (config: Record<string, unknown>): Promise<ApiTestResult> => {
+   744→    return testApiConnection(config as any);
+   745→  };
+   746→
+   747→  const filteredProviders = providers.filter(p =>
+   748→    !searchQuery || p.name.includes(searchQuery) || p.baseUrl.includes(searchQuery)
+   749→  );
+   750→
+   751→  if (loading) {
+   752→    return (
+   753→      <div className="flex items-center justify-center min-h-[400px]">
+   754→        <div className="w-8 h-8 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" />
+   755→      </div>
+   756→    );
+   757→  }
+   758→
+   759→  return (
+   760→    <div className="space-y-6">
+   761→      <div>
+   762→        <h1 className="text-2xl font-bold">إعدادات API</h1>
+   763→        <p className="text-muted-foreground text-sm mt-1">تكوين مزودي API وأسعار الصرف</p>
+   764→      </div>
+   765→
+   766→      <Tabs defaultValue="providers">
+   767→        <TabsList className="w-full">
+   768→          <TabsTrigger value="providers" className="flex-1">مزودو API</TabsTrigger>
+   769→          <TabsTrigger value="exchange-rate" className="flex-1">أسعار الصرف</TabsTrigger>
+   770→        </TabsList>
+   771→
+   772→        <TabsContent value="providers" className="space-y-4">
+   773→          {!showForm ? (
+   774→            <>
+   775→              {/* Provider List Header */}
+   776→              <div className="flex items-center justify-between">
+   777→                <div className="flex items-center gap-2 flex-1">
+   778→                  <div className="relative flex-1 max-w-xs">
+   779→                    <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+   780→                    <Input
+   781→                      placeholder="بحث عن مزود..."
+   782→                      value={searchQuery}
+   783→                      onChange={(e) => setSearchQuery(e.target.value)}
+   784→                      className="pr-10"
+   785→                    />
+   786→                  </div>
+   787→                </div>
+   788→                <Button onClick={() => { setEditingProvider(null); setShowForm(true); }} size="sm">
+   789→                  <Plus className="w-4 h-4 ml-1" /> مزود جديد
+   790→                </Button>
+   791→              </div>
+   792→
+   793→              {/* Stats */}
+   794→              <div className="grid grid-cols-3 gap-4">
+   795→                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}>
+   796→                  <Card className="admin-card border-0 shadow-none">
+   797→                    <CardContent className="p-4 text-center">
+   798→                      <Code className="w-6 h-6 mx-auto mb-2 text-purple-500" />
+   799→                      <p className="text-2xl font-bold">{providers.length}</p>
+   800→                      <p className="text-xs text-muted-foreground">إجمالي المزودين</p>
+   801→                    </CardContent>
+   802→                  </Card>
+   803→                </motion.div>
+   804→                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
+   805→                  <Card className="admin-card border-0 shadow-none">
+   806→                    <CardContent className="p-4 text-center">
+   807→                      <CheckCircle className="w-6 h-6 mx-auto mb-2 text-green-500" />
+   808→                      <p className="text-2xl font-bold">{providers.filter(p => p.isActive).length}</p>
+   809→                      <p className="text-xs text-muted-foreground">مزود نشط</p>
+   810→                    </CardContent>
+   811→                  </Card>
+   812→                </motion.div>
+   813→                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
+   814→                  <Card className="admin-card border-0 shadow-none">
+   815→                    <CardContent className="p-4 text-center">
+   816→                      <Layers className="w-6 h-6 mx-auto mb-2 text-amber-500" />
+   817→                      <p className="text-2xl font-bold">{providers.filter(p => p.sectionName).length}</p>
+   818→                      <p className="text-xs text-muted-foreground">قسم خدمات</p>
+   819→                    </CardContent>
+   820→                  </Card>
+   821→                </motion.div>
+   822→              </div>
+   823→
+   824→              {/* Provider List */}
+   825→              {filteredProviders.length === 0 ? (
+   826→                <Card className="admin-card border-0 shadow-none">
+   827→                  <CardContent className="p-8 text-center">
+   828→                    <Wifi className="w-10 h-10 mx-auto mb-3 text-muted-foreground" />
+   829→                    <p className="font-medium text-muted-foreground">لا يوجد مزودو API</p>
+   830→                    <p className="text-xs text-muted-foreground mt-1">أضف مزود API لربط الخدمات تلقائياً</p>
+   831→                    <Button onClick={() => { setEditingProvider(null); setShowForm(true); }} size="sm" className="mt-3">
+   832→                      <Plus className="w-4 h-4 ml-1" /> إضافة مزود
+   833→                    </Button>
+   834→                  </CardContent>
+   835→                </Card>
+   836→              ) : (
+   837→                <div className="space-y-3 max-h-[calc(100vh-400px)] overflow-y-auto scrollbar-thin">
+   838→                  {filteredProviders.map((provider, i) => (
+   839→                    <motion.div key={provider.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.03 }}>
+   840→                      <Card className="admin-card border-0 shadow-none">
+   841→                        <CardContent className="p-4">
+   842→                          <div className="flex items-center justify-between">
+   843→                            <div className="flex items-center gap-3">
+   844→                              <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: 'rgba(139,92,246,0.1)' }}>
+   845→                                <Code className="w-5 h-5 text-purple-500" />
+   846→                              </div>
+   847→                              <div>
+   848→                                <p className="font-medium text-sm">{provider.name}</p>
+   849→                                <p className="text-xs text-muted-foreground" dir="ltr">{provider.baseUrl}</p>
+   850→                                {provider.sectionName && (
+   851→                                  <Badge variant="outline" className="mt-1 text-[10px]">
+   852→                                    <Layers className="w-3 h-3 ml-1" /> {provider.sectionName}
+   853→                                  </Badge>
+   854→                                )}
+   855→                              </div>
+   856→                            </div>
+   857→                            <div className="flex items-center gap-2">
+   858→                              <Badge className={provider.isActive ? 'bg-green-500/20 text-green-600 dark:text-green-400' : 'bg-red-500/20 text-red-600 dark:text-red-400'}>
+   859→                                {provider.isActive ? 'نشط' : 'معطل'}
+   860→                              </Badge>
+   861→                              <Badge variant="outline" className="text-[10px]">
+   862→                                {provider.method}
+   863→                              </Badge>
+   864→                              <Button variant="ghost" size="sm" onClick={() => handleToggleProvider(provider)}>
+   865→                                <Switch checked={provider.isActive} />
+   866→                              </Button>
+   867→                              <Button variant="ghost" size="sm" onClick={() => { setEditingProvider(provider); setShowForm(true); }}>
+   868→                                <Edit className="w-4 h-4" />
+   869→                              </Button>
+   870→                              <Button variant="ghost" size="sm" onClick={() => handleDeleteProvider(provider.id)}>
+   871→                                <Trash2 className="w-4 h-4 text-red-500" />
+   872→                              </Button>
+   873→                            </div>
+   874→                          </div>
+   875→                          {/* Show field mappings summary */}
+   876→                          {provider.fieldMappings && (
+   877→                            <div className="mt-3 pt-3 border-t border-border">
+   878→                              <p className="text-[10px] text-muted-foreground mb-1">تعيينات الحقول:</p>
+   879→                              <div className="flex flex-wrap gap-1">
+   880→                                <Badge variant="outline" className="text-[9px]">
+   881→                                  الحالة: {provider.fieldMappings.statusField} = {provider.fieldMappings.successValue}
+   882→                                </Badge>
+   883→                                {provider.fieldMappings.balanceField && (
+   884→                                  <Badge variant="outline" className="text-[9px]">الرصيد: {provider.fieldMappings.balanceField}</Badge>
+   885→                                )}
+   886→                                {provider.fieldMappings.messageField && (
+   887→                                  <Badge variant="outline" className="text-[9px]">الرسالة: {provider.fieldMappings.messageField}</Badge>
+   888→                                )}
+   889→                                {provider.fieldMappings.transactionIdField && (
+   890→                                  <Badge variant="outline" className="text-[9px]">المعاملة: {provider.fieldMappings.transactionIdField}</Badge>
+   891→                                )}
+   892→                              </div>
+   893→                            </div>
+   894→                          )}
+   895→                        </CardContent>
+   896→                      </Card>
+   897→                    </motion.div>
+   898→                  ))}
+   899→                </div>
+   900→              )}
+   901→            </>
+   902→          ) : (
+   903→            <ApiProviderForm
+   904→              editing={editingProvider}
+   905→              onSave={handleSaveProvider}
+   906→              onCancel={() => { setShowForm(false); setEditingProvider(null); }}
+   907→              onTest={handleTestApi}
+   908→            />
+   909→          )}
+   910→        </TabsContent>
+   911→
+   912→        <TabsContent value="exchange-rate">
+   913→          <ExchangeRateSettings />
+   914→        </TabsContent>
+   915→      </Tabs>
+   916→    </div>
+   917→  );
+   918→}
+   919→

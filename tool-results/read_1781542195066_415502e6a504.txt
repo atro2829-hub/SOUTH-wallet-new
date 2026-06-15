@@ -1,0 +1,501 @@
+     1→     1→'use client';
+     2→     2→
+     3→     3→import { useState, useEffect } from 'react';
+     4→     4→import { ref, onValue, update, remove, set } from 'firebase/database';
+     5→     5→import { database } from '@/lib/firebase';
+     6→     6→import { useAdminStore } from '@/lib/store';
+     7→     7→import { formatNumber, compressBase64Image } from '@/lib/utils';
+     8→     8→import { Card, CardContent } from '@/components/ui/card';
+     9→     9→import { Input } from '@/components/ui/input';
+    10→    10→import { Button } from '@/components/ui/button';
+    11→    11→import { Badge } from '@/components/ui/badge';
+    12→    12→import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+    13→    13→import { Label } from '@/components/ui/label';
+    14→    14→import { Switch } from '@/components/ui/switch';
+    15→    15→import { Search, Plus, Edit, Trash2, Wallet, Upload, Package, ChevronDown, ChevronUp, PackagePlus, Loader2 } from 'lucide-react';
+    16→    16→import { motion, AnimatePresence } from 'framer-motion';
+    17→    17→
+    18→    18→export default function WalletServicesPanel() {
+    19→    19→  const { showToast } = useAdminStore();
+    20→    20→  const [services, setServices] = useState<Record<string, any>>({});
+    21→    21→  const [sections, setSections] = useState<Record<string, any>>({});
+    22→    22→  const [loading, setLoading] = useState(true);
+    23→    23→  const [saving, setSaving] = useState(false);
+    24→    24→  const [search, setSearch] = useState('');
+    25→    25→  const [dialog, setDialog] = useState(false);
+    26→    26→  const [packageDialog, setPackageDialog] = useState(false);
+    27→    27→  const [editing, setEditing] = useState<string | null>(null);
+    28→    28→  const [editingPkg, setEditingPkg] = useState<string | null>(null);
+    29→    29→  const [parentService, setParentService] = useState<string | null>(null);
+    30→    30→  const [expandedService, setExpandedService] = useState<string | null>(null);
+    31→    31→
+    32→    32→  // Form state
+    33→    33→  const [name, setName] = useState('');
+    34→    34→  const [description, setDescription] = useState('');
+    35→    35→  const [icon, setIcon] = useState('');
+    36→    36→  const [color, setColor] = useState('#5C1A1B');
+    37→    37→  const [categoryId, setCategoryId] = useState('wallet-services');
+    38→    38→  const [sectionId, setSectionId] = useState('wallet-services');
+    39→    39→  const [inputLabel, setInputLabel] = useState('معرف العميل');
+    40→    40→  const [inputType, setInputType] = useState('text');
+    41→    41→  const [inputPrefix, setInputPrefix] = useState('');
+    42→    42→  const [isActive, setIsActive] = useState(true);
+    43→    43→  const [sortOrder, setSortOrder] = useState(0);
+    44→    44→
+    45→    45→  // Package form state
+    46→    46→  const [pkgName, setPkgName] = useState('');
+    47→    47→  const [pkgPrice, setPkgPrice] = useState(0);
+    48→    48→  const [pkgCurrency, setPkgCurrency] = useState<'YER' | 'SAR' | 'USD'>('YER');
+    49→    49→  const [pkgCostPrice, setPkgCostPrice] = useState(0);
+    50→    50→  const [pkgCommission, setPkgCommission] = useState(0);
+    51→    51→  const [pkgCommissionType, setPkgCommissionType] = useState<'percentage' | 'fixed'>('percentage');
+    52→    52→  const [pkgExecutionType, setPkgExecutionType] = useState<'manual' | 'auto'>('manual');
+    53→    53→  const [pkgApiProviderId, setPkgApiProviderId] = useState('');
+    54→    54→  const [pkgApiProductId, setPkgApiProductId] = useState('');
+    55→    55→  const [pkgIsActive, setPkgIsActive] = useState(true);
+    56→    56→  const [pkgSortOrder, setPkgSortOrder] = useState(0);
+    57→    57→  const [pkgDescription, setPkgDescription] = useState('');
+    58→    58→
+    59→    59→  // Listen to wallet services
+    60→    60→  useEffect(() => {
+    61→    61→    const servicesRef = ref(database, 'walletServices');
+    62→    62→    const unsub = onValue(servicesRef, (snapshot) => {
+    63→    63→      setServices(snapshot.val() || {});
+    64→    64→      setLoading(false);
+    65→    65→    }, (error) => {
+    66→    66→      console.error('[WalletServicesPanel] Firebase listen error:', error);
+    67→    67→      showToast('خطأ في تحميل الخدمات من Firebase', 'error');
+    68→    68→      setLoading(false);
+    69→    69→    });
+    70→    70→    return () => unsub();
+    71→    71→  }, [showToast]);
+    72→    72→
+    73→    73→  // Listen to sections
+    74→    74→  useEffect(() => {
+    75→    75→    const sectionsRef = ref(database, 'sections');
+    76→    76→    const unsub = onValue(sectionsRef, (snapshot) => {
+    77→    77→      setSections(snapshot.val() || {});
+    78→    78→    });
+    79→    79→    return () => unsub();
+    80→    80→  }, []);
+    81→    81→
+    82→    82→  const resetForm = () => {
+    83→    83→    setName(''); setDescription(''); setIcon(''); setColor('#5C1A1B'); setCategoryId('wallet-services');
+    84→    84→    setSectionId('wallet-services'); setInputLabel('معرف العميل'); setInputType('text'); setInputPrefix('');
+    85→    85→    setIsActive(true); setSortOrder(0); setEditing(null);
+    86→    86→  };
+    87→    87→
+    88→    88→  const resetPkgForm = () => {
+    89→    89→    setPkgName(''); setPkgPrice(0); setPkgCurrency('YER'); setPkgCostPrice(0); setPkgCommission(0);
+    90→    90→    setPkgCommissionType('percentage'); setPkgExecutionType('manual'); setPkgApiProviderId('');
+    91→    91→    setPkgApiProductId(''); setPkgIsActive(true); setPkgSortOrder(0); setPkgDescription('');
+    92→    92→    setEditingPkg(null); setParentService(null);
+    93→    93→  };
+    94→    94→
+    95→    95→  const handleIconUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    96→    96→    const file = e.target.files?.[0];
+    97→    97→    if (!file) return;
+    98→    98→    if (file.size > 2000000) {
+    99→    99→      showToast('حجم الصورة يجب أن يكون أقل من 2MB', 'error');
+   100→   100→      return;
+   101→   101→    }
+   102→   102→    const reader = new FileReader();
+   103→   103→    reader.onload = async (ev) => {
+   104→   104→      try {
+   105→   105→        const base64 = ev.target?.result as string;
+   106→   106→        // Compress to max 128x128 for Firebase RTDB size limits and user app performance
+   107→   107→        const compressed = await compressBase64Image(base64, 128, 0.7);
+   108→   108→        setIcon(compressed);
+   109→   109→        showToast('تم رفع الأيقونة بنجاح', 'success');
+   110→   110→      } catch (err) {
+   111→   111→        console.error('[WalletServicesPanel] Icon compression failed:', err);
+   112→   112→        // Fallback to original if compression fails
+   113→   113→        setIcon(ev.target?.result as string);
+   114→   114→        showToast('تم رفع الأيقونة (بدون ضغط)', 'info');
+   115→   115→      }
+   116→   116→    };
+   117→   117→    reader.readAsDataURL(file);
+   118→   118→  };
+   119→   119→
+   120→   120→  const handleSave = async () => {
+   121→   121→    if (!name.trim()) { showToast('يرجى إدخال الاسم', 'error'); return; }
+   122→   122→    setSaving(true);
+   123→   123→    try {
+   124→   124→      const serviceId = editing || name.trim().replace(/[\s]+/g, '-').replace(/[^\u0600-\u06FFa-zA-Z0-9\-]/g, '').toLowerCase() || `service-${Date.now()}`;
+   125→   125→
+   126→   126→      const data = {
+   127→   127→        id: serviceId, name: name.trim(), description: description.trim(), icon, color, categoryId,
+   128→   128→        sectionId, inputLabel: inputLabel.trim(), inputType, inputPrefix: inputPrefix.trim(),
+   129→   129→        isActive, sortOrder, updatedAt: new Date().toISOString(),
+   130→   130→        createdAt: editing && services[editing]?.createdAt ? services[editing].createdAt : new Date().toISOString(),
+   131→   131→      };
+   132→   132→
+   133→   133→      // Use update() instead of set() to avoid overwriting nested data like packages
+   134→   134→      await update(ref(database, `walletServices/${serviceId}`), data);
+   135→   135→
+   136→   136→      // Also sync to providers path for compatibility with user app
+   137→   137→      // Use update() to avoid overwriting existing provider fields that may have been set elsewhere
+   138→   138→      await update(ref(database, `providers/${serviceId}`), {
+   139→   139→        id: serviceId, name: name.trim(), color, icon, categoryId, sectionId,
+   140→   140→        inputLabel: inputLabel.trim(), inputType, inputPrefix: inputPrefix.trim(), isActive,
+   141→   141→        updatedAt: new Date().toISOString(),
+   142→   142→      });
+   143→   143→
+   144→   144→      // Update visibility
+   145→   145→      await update(ref(database, `adminSettings/visibility/providers/${serviceId}`), {});
+   146→   146→
+   147→   147→      showToast(editing ? 'تم تحديث الخدمة بنجاح' : 'تم إضافة الخدمة بنجاح', 'success');
+   148→   148→      setDialog(false);
+   149→   149→      resetForm();
+   150→   150→    } catch (e) {
+   151→   151→      console.error('[WalletServicesPanel] handleSave error:', e);
+   152→   152→      showToast(`حدث خطأ أثناء الحفظ: ${e instanceof Error ? e.message : 'خطأ غير معروف'}`, 'error');
+   153→   153→    } finally {
+   154→   154→      setSaving(false);
+   155→   155→    }
+   156→   156→  };
+   157→   157→
+   158→   158→  const handleSavePkg = async () => {
+   159→   159→    if (!pkgName.trim() || !parentService) { showToast('يرجى إدخال البيانات', 'error'); return; }
+   160→   160→    setSaving(true);
+   161→   161→    try {
+   162→   162→      const pkgId = editingPkg || `pkg-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+   163→   163→      const data = {
+   164→   164→        id: pkgId, name: pkgName.trim(), price: pkgPrice, currency: pkgCurrency,
+   165→   165→        costPrice: pkgCostPrice, commission: pkgCommission, commissionType: pkgCommissionType,
+   166→   166→        executionType: pkgExecutionType, apiProviderId: pkgApiProviderId.trim(),
+   167→   167→        apiProductId: pkgApiProductId.trim(), isActive: pkgIsActive, sortOrder: pkgSortOrder,
+   168→   168→        description: pkgDescription.trim(),
+   169→   169→      };
+   170→   170→
+   171→   171→      await set(ref(database, `walletServices/${parentService}/packages/${pkgId}`), data);
+   172→   172→      showToast(editingPkg ? 'تم تحديث الباقة' : 'تم إضافة الباقة', 'success');
+   173→   173→      setPackageDialog(false);
+   174→   174→      resetPkgForm();
+   175→   175→    } catch (e) {
+   176→   176→      console.error('[WalletServicesPanel] handleSavePkg error:', e);
+   177→   177→      showToast('حدث خطأ أثناء الحفظ', 'error');
+   178→   178→    } finally {
+   179→   179→      setSaving(false);
+   180→   180→    }
+   181→   181→  };
+   182→   182→
+   183→   183→  const handleDelete = async (id: string) => {
+   184→   184→    if (!confirm('هل أنت متأكد من حذف هذه الخدمة؟')) return;
+   185→   185→    try {
+   186→   186→      await remove(ref(database, `walletServices/${id}`));
+   187→   187→      await remove(ref(database, `providers/${id}`));
+   188→   188→      await remove(ref(database, `adminSettings/visibility/providers/${id}`));
+   189→   189→      showToast('تم حذف الخدمة بنجاح', 'success');
+   190→   190→    } catch (e) {
+   191→   191→      console.error('[WalletServicesPanel] handleDelete error:', e);
+   192→   192→      showToast('حدث خطأ أثناء الحذف', 'error');
+   193→   193→    }
+   194→   194→  };
+   195→   195→
+   196→   196→  const handleDeletePkg = async (serviceId: string, pkgId: string) => {
+   197→   197→    try {
+   198→   198→      await remove(ref(database, `walletServices/${serviceId}/packages/${pkgId}`));
+   199→   199→      showToast('تم حذف الباقة', 'success');
+   200→   200→    } catch (e) {
+   201→   201→      console.error('[WalletServicesPanel] handleDeletePkg error:', e);
+   202→   202→      showToast('حدث خطأ أثناء الحذف', 'error');
+   203→   203→    }
+   204→   204→  };
+   205→   205→
+   206→   206→  const handleToggleActive = async (serviceId: string, active: boolean) => {
+   207→   207→    try {
+   208→   208→      const now = new Date().toISOString();
+   209→   209→      // Update walletServices path
+   210→   210→      await update(ref(database, `walletServices/${serviceId}`), { isActive: active, updatedAt: now });
+   211→   211→      // Also sync isActive to providers path so user app sees the change
+   212→   212→      await update(ref(database, `providers/${serviceId}`), { isActive: active, updatedAt: now });
+   213→   213→      showToast(active ? 'تم تفعيل الخدمة' : 'تم تعطيل الخدمة', 'success');
+   214→   214→    } catch (e) {
+   215→   215→      console.error('[WalletServicesPanel] handleToggleActive error:', e);
+   216→   216→      showToast('حدث خطأ أثناء تحديث الحالة', 'error');
+   217→   217→    }
+   218→   218→  };
+   219→   219→
+   220→   220→  const sectionOptions = [
+   221→   221→    { value: 'wallet-services', label: 'خدمات المحفظة' },
+   222→   222→    { value: 'entertainment', label: 'الخدمات الترفيهية' },
+   223→   223→    { value: 'providers', label: 'مزودين الخدمات' },
+   224→   224→    { value: 'telecom', label: 'الاتصالات' },
+   225→   225→    { value: 'internet', label: 'الإنترنت' },
+   226→   226→    { value: 'electricity', label: 'الكهرباء والماء' },
+   227→   227→    { value: 'government', label: 'خدمات حكومية' },
+   228→   228→    { value: 'crypto', label: 'الكريبتو' },
+   229→   229→    ...Object.entries(sections).map(([id, s]: [string, any]) => ({ value: id, label: s.name || id })),
+   230→   230→  ];
+   231→   231→
+   232→   232→  const serviceList = Object.entries(services).map(([id, s]) => ({ id, ...s }));
+   233→   233→  const filteredServices = serviceList.filter(s => !search || s.name?.includes(search) || s.description?.includes(search));
+   234→   234→
+   235→   235→  if (loading) return <div className="flex items-center justify-center min-h-[400px]"><div className="w-8 h-8 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" /></div>;
+   236→   236→
+   237→   237→  return (
+   238→   238→    <div className="space-y-6">
+   239→   239→      <div className="flex items-center justify-between">
+   240→   240→        <div>
+   241→   241→          <h1 className="text-2xl font-bold">خدمات المحفظة</h1>
+   242→   242→          <p className="text-muted-foreground text-sm mt-1">{formatNumber(serviceList.length)} خدمة مخصصة</p>
+   243→   243→        </div>
+   244→   244→        <Button size="sm" onClick={() => { resetForm(); setDialog(true); }}>
+   245→   245→          <Plus className="w-4 h-4 ml-1" /> خدمة جديدة
+   246→   246→        </Button>
+   247→   247→      </div>
+   248→   248→
+   249→   249→      <div className="relative">
+   250→   250→        <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+   251→   251→        <Input placeholder="بحث..." value={search} onChange={(e) => setSearch(e.target.value)} className="pr-10" />
+   252→   252→      </div>
+   253→   253→
+   254→   254→      <div className="space-y-3 max-h-[calc(100vh-280px)] overflow-y-auto scrollbar-thin">
+   255→   255→        {filteredServices.map((svc, i) => {
+   256→   256→          const isExpanded = expandedService === svc.id;
+   257→   257→          const packages = svc.packages || {};
+   258→   258→          const pkgCount = Object.keys(packages).length;
+   259→   259→          const sectionLabel = sectionOptions.find(s => s.value === svc.sectionId)?.label || svc.sectionId;
+   260→   260→
+   261→   261→          return (
+   262→   262→            <motion.div key={svc.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.02 }}>
+   263→   263→              <Card className="admin-card border-0 shadow-none">
+   264→   264→                <CardContent className="p-4">
+   265→   265→                  <div className="flex items-center justify-between">
+   266→   266→                    <div className="flex items-center gap-3 min-w-0 flex-1">
+   267→   267→                      {svc.icon ? (
+   268→   268→                        <img src={svc.icon} className="w-10 h-10 rounded-lg object-cover shrink-0" alt="" />
+   269→   269→                      ) : (
+   270→   270→                        <div className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0" style={{ backgroundColor: (svc.color || '#5C1A1B') + '20' }}>
+   271→   271→                          <Wallet className="w-5 h-5" style={{ color: svc.color || '#5C1A1B' }} />
+   272→   272→                        </div>
+   273→   273→                      )}
+   274→   274→                      <div className="min-w-0 flex-1">
+   275→   275→                        <p className="font-medium text-sm">{svc.name}</p>
+   276→   276→                        <div className="flex items-center gap-2 mt-1 flex-wrap">
+   277→   277→                          <Badge variant="outline" className="text-[10px] py-0">{sectionLabel}</Badge>
+   278→   278→                          {pkgCount > 0 && <Badge variant="outline" className="text-[10px] py-0">{pkgCount} باقة</Badge>}
+   279→   279→                          {svc.inputLabel && <span className="text-[10px] text-muted-foreground">حقل: {svc.inputLabel}</span>}
+   280→   280→                        </div>
+   281→   281→                        {svc.description && <p className="text-[10px] text-muted-foreground mt-0.5 truncate">{svc.description}</p>}
+   282→   282→                      </div>
+   283→   283→                    </div>
+   284→   284→                    <div className="flex items-center gap-1.5 shrink-0">
+   285→   285→                      <Switch checked={svc.isActive !== false} onCheckedChange={(v) => handleToggleActive(svc.id, v)} />
+   286→   286→                      <Button variant="ghost" size="sm" onClick={() => {
+   287→   287→                        setParentService(svc.id);
+   288→   288→                        resetPkgForm();
+   289→   289→                        setPackageDialog(true);
+   290→   290→                      }} title="إضافة باقة">
+   291→   291→                        <PackagePlus className="w-4 h-4" />
+   292→   292→                      </Button>
+   293→   293→                      <Button variant="ghost" size="sm" onClick={() => setExpandedService(isExpanded ? null : svc.id)}>
+   294→   294→                        {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+   295→   295→                      </Button>
+   296→   296→                      <Button variant="ghost" size="sm" onClick={() => {
+   297→   297→                        setEditing(svc.id);
+   298→   298→                        setName(svc.name || ''); setDescription(svc.description || ''); setIcon(svc.icon || '');
+   299→   299→                        setColor(svc.color || '#5C1A1B'); setCategoryId(svc.categoryId || 'wallet-services');
+   300→   300→                        setSectionId(svc.sectionId || 'wallet-services');
+   301→   301→                        setInputLabel(svc.inputLabel || 'معرف العميل'); setInputType(svc.inputType || 'text');
+   302→   302→                        setInputPrefix(svc.inputPrefix || ''); setIsActive(svc.isActive !== false);
+   303→   303→                        setSortOrder(svc.sortOrder || 0); setDialog(true);
+   304→   304→                      }}><Edit className="w-4 h-4" /></Button>
+   305→   305→                      <Button variant="ghost" size="sm" onClick={() => handleDelete(svc.id)}><Trash2 className="w-4 h-4 text-red-500" /></Button>
+   306→   306→                    </div>
+   307→   307→                  </div>
+   308→   308→
+   309→   309→                  {/* Expanded: Show packages */}
+   310→   310→                  <AnimatePresence>
+   311→   311→                    {isExpanded && (
+   312→   312→                      <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+   313→   313→                        <div className="mt-3 pt-3 border-t border-border/50 space-y-2 max-h-60 overflow-y-auto scrollbar-thin">
+   314→   314→                          {pkgCount > 0 ? (
+   315→   315→                            Object.entries(packages).map(([pkgId, pkg]: [string, any]) => (
+   316→   316→                              <div key={pkgId} className="flex items-center justify-between p-2 rounded-lg bg-muted/30">
+   317→   317→                                <div className="flex items-center gap-2 min-w-0 flex-1">
+   318→   318→                                  <Package className="w-4 h-4 text-muted-foreground shrink-0" />
+   319→   319→                                  <div className="min-w-0 flex-1">
+   320→   320→                                    <p className="text-xs font-medium truncate">{pkg.name}</p>
+   321→   321→                                    <div className="flex items-center gap-2 mt-0.5">
+   322→   322→                                      <span className="text-[10px] font-medium">{pkg.price} {pkg.currency}</span>
+   323→   323→                                      {pkg.commission > 0 && <span className="text-[10px] text-green-600">عمولة: {pkg.commission}{pkg.commissionType === 'percentage' ? '%' : ''}</span>}
+   324→   324→                                      {pkg.executionType === 'auto' && <Badge className="bg-blue-500/20 text-blue-600 text-[9px] py-0">تلقائي</Badge>}
+   325→   325→                                    </div>
+   326→   326→                                  </div>
+   327→   327→                                </div>
+   328→   328→                                <div className="flex items-center gap-1 shrink-0">
+   329→   329→                                  <Badge className={pkg.isActive !== false ? 'bg-green-500/20 text-green-600 text-[9px] py-0' : 'bg-red-500/20 text-red-500 text-[9px] py-0'}>
+   330→   330→                                    {pkg.isActive !== false ? 'نشط' : 'معطل'}
+   331→   331→                                  </Badge>
+   332→   332→                                  <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => {
+   333→   333→                                    setParentService(svc.id);
+   334→   334→                                    setEditingPkg(pkgId);
+   335→   335→                                    setPkgName(pkg.name || ''); setPkgPrice(pkg.price || 0);
+   336→   336→                                    setPkgCurrency(pkg.currency || 'YER'); setPkgCostPrice(pkg.costPrice || 0);
+   337→   337→                                    setPkgCommission(pkg.commission || 0); setPkgCommissionType(pkg.commissionType || 'percentage');
+   338→   338→                                    setPkgExecutionType(pkg.executionType || 'manual');
+   339→   339→                                    setPkgApiProviderId(pkg.apiProviderId || ''); setPkgApiProductId(pkg.apiProductId || '');
+   340→   340→                                    setPkgIsActive(pkg.isActive !== false); setPkgSortOrder(pkg.sortOrder || 0);
+   341→   341→                                    setPkgDescription(pkg.description || '');
+   342→   342→                                    setPackageDialog(true);
+   343→   343→                                  }}><Edit className="w-3 h-3" /></Button>
+   344→   344→                                  <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => handleDeletePkg(svc.id, pkgId)}><Trash2 className="w-3 h-3 text-red-500" /></Button>
+   345→   345→                                </div>
+   346→   346→                              </div>
+   347→   347→                            ))
+   348→   348→                          ) : (
+   349→   349→                            <p className="text-xs text-muted-foreground text-center py-2">لا توجد باقات. اضغط على + لإضافة باقة</p>
+   350→   350→                          )}
+   351→   351→                        </div>
+   352→   352→                      </motion.div>
+   353→   353→                    )}
+   354→   354→                  </AnimatePresence>
+   355→   355→                </CardContent>
+   356→   356→              </Card>
+   357→   357→            </motion.div>
+   358→   358→          );
+   359→   359→        })}
+   360→   360→        {filteredServices.length === 0 && <p className="text-center text-muted-foreground py-8">لا توجد خدمات مخصصة</p>}
+   361→   361→      </div>
+   362→   362→
+   363→   363→      {/* Service Dialog */}
+   364→   364→      <Dialog open={dialog} onOpenChange={(open) => { setDialog(open); if (!open) resetForm(); }}>
+   365→   365→        <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto">
+   366→   366→          <DialogHeader><DialogTitle>{editing ? 'تعديل خدمة' : 'إضافة خدمة'}</DialogTitle></DialogHeader>
+   367→   367→          <div className="space-y-4">
+   368→   368→            <div><Label>الاسم</Label><Input value={name} onChange={(e) => setName(e.target.value)} placeholder="مثال: ببجي موبايل" /></div>
+   369→   369→            <div><Label>الوصف</Label><Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder="وصف مختصر" /></div>
+   370→   370→            <div>
+   371→   371→              <Label>القسم</Label>
+   372→   372→              <div className="flex flex-wrap gap-2 mt-1">
+   373→   373→                {sectionOptions.map(opt => (
+   374→   374→                  <button key={opt.value} onClick={() => { setSectionId(opt.value); setCategoryId(opt.value); }}
+   375→   375→                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${sectionId === opt.value ? 'bg-purple-500 text-white' : 'bg-muted hover:bg-muted/80 text-muted-foreground'}`}>
+   376→   376→                    {opt.label}
+   377→   377→                  </button>
+   378→   378→                ))}
+   379→   379→              </div>
+   380→   380→            </div>
+   381→   381→            <div><Label>اللون</Label><Input type="color" value={color} onChange={(e) => setColor(e.target.value)} /></div>
+   382→   382→            <div>
+   383→   383→              <Label>الأيقونة</Label>
+   384→   384→              <div className="flex items-center gap-3 mt-1">
+   385→   385→                {icon ? (
+   386→   386→                  <div className="relative">
+   387→   387→                    <img src={icon} className="w-10 h-10 rounded-lg object-cover" alt="" />
+   388→   388→                    <button
+   389→   389→                      type="button"
+   390→   390→                      onClick={() => setIcon('')}
+   391→   391→                      className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 text-white flex items-center justify-center"
+   392→   392→                    >
+   393→   393→                      <Trash2 className="w-3 h-3" />
+   394→   394→                    </button>
+   395→   395→                  </div>
+   396→   396→                ) : null}
+   397→   397→                <Button variant="outline" size="sm" asChild>
+   398→   398→                  <label><Upload className="w-4 h-4 ml-1" /> رفع أيقونة<input type="file" accept="image/*" className="hidden" onChange={handleIconUpload} /></label>
+   399→   399→                </Button>
+   400→   400→              </div>
+   401→   401→              <p className="text-[10px] text-muted-foreground mt-1">سيتم ضغط الصورة تلقائياً (128x128) لتسريع التحميل في تطبيق المستخدم</p>
+   402→   402→            </div>
+   403→   403→            <div><Label>تسمية حقل الإدخال</Label><Input value={inputLabel} onChange={(e) => setInputLabel(e.target.value)} placeholder="مثال: Player ID" /></div>
+   404→   404→            <div>
+   405→   405→              <Label>نوع حقل الإدخال</Label>
+   406→   406→              <div className="flex gap-2 mt-1">
+   407→   407→                {['text', 'phone', 'number', 'email'].map(t => (
+   408→   408→                  <button key={t} onClick={() => setInputType(t)}
+   409→   409→                    className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${inputType === t ? 'bg-purple-500 text-white' : 'bg-muted hover:bg-muted/80 text-muted-foreground'}`}>
+   410→   410→                    {t === 'text' ? 'نص' : t === 'phone' ? 'هاتف' : t === 'number' ? 'رقم' : 'بريد'}
+   411→   411→                  </button>
+   412→   412→                ))}
+   413→   413→              </div>
+   414→   414→            </div>
+   415→   415→            <div><Label>بادئة الحقل</Label><Input value={inputPrefix} onChange={(e) => setInputPrefix(e.target.value)} dir="ltr" placeholder="مثال: +967" /></div>
+   416→   416→            <div><Label>ترتيب الفرز</Label><Input type="number" value={sortOrder} onChange={(e) => setSortOrder(Number(e.target.value))} /></div>
+   417→   417→            <div className="flex items-center gap-2"><Switch checked={isActive} onCheckedChange={setIsActive} /><Label>نشط</Label></div>
+   418→   418→          </div>
+   419→   419→          <DialogFooter>
+   420→   420→            <Button variant="outline" onClick={() => { setDialog(false); resetForm(); }}>إلغاء</Button>
+   421→   421→            <Button onClick={handleSave} disabled={saving}>
+   422→   422→              {saving ? <Loader2 className="w-4 h-4 ml-1 animate-spin" /> : null}
+   423→   423→              {editing ? 'تحديث' : 'إضافة'}
+   424→   424→            </Button>
+   425→   425→          </DialogFooter>
+   426→   426→        </DialogContent>
+   427→   427→      </Dialog>
+   428→   428→
+   429→   429→      {/* Package Dialog */}
+   430→   430→      <Dialog open={packageDialog} onOpenChange={(open) => { setPackageDialog(open); if (!open) resetPkgForm(); }}>
+   431→   431→        <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto">
+   432→   432→          <DialogHeader><DialogTitle>{editingPkg ? 'تعديل باقة' : 'إضافة باقة'}</DialogTitle></DialogHeader>
+   433→   433→          <div className="space-y-4">
+   434→   434→            <div className="flex items-center gap-2 p-2 rounded-lg bg-muted/30">
+   435→   435→              <Package className="w-4 h-4 text-muted-foreground" />
+   436→   436→              <span className="text-xs text-muted-foreground">الخدمة: {services[parentService!]?.name || parentService}</span>
+   437→   437→            </div>
+   438→   438→            <div><Label>اسم الباقة</Label><Input value={pkgName} onChange={(e) => setPkgName(e.target.value)} placeholder="مثال: 100 UC" /></div>
+   439→   439→            <div className="grid grid-cols-2 gap-3">
+   440→   440→              <div><Label>السعر</Label><Input type="number" value={pkgPrice} onChange={(e) => setPkgPrice(Number(e.target.value))} /></div>
+   441→   441→              <div>
+   442→   442→                <Label>العملة</Label>
+   443→   443→                <div className="flex gap-1 mt-1">
+   444→   444→                  {(['YER', 'SAR', 'USD'] as const).map(c => (
+   445→   445→                    <button key={c} onClick={() => setPkgCurrency(c)}
+   446→   446→                      className={`flex-1 py-1.5 rounded-lg text-xs font-medium transition-colors ${pkgCurrency === c ? 'bg-purple-500 text-white' : 'bg-muted text-muted-foreground'}`}>
+   447→   447→                      {c}
+   448→   448→                    </button>
+   449→   449→                  ))}
+   450→   450→                </div>
+   451→   451→              </div>
+   452→   452→            </div>
+   453→   453→            <div className="grid grid-cols-2 gap-3">
+   454→   454→              <div><Label>سعر التكلفة</Label><Input type="number" value={pkgCostPrice} onChange={(e) => setPkgCostPrice(Number(e.target.value))} /></div>
+   455→   455→              <div>
+   456→   456→                <Label>العمولة</Label>
+   457→   457→                <div className="flex gap-1">
+   458→   458→                  <Input type="number" value={pkgCommission} onChange={(e) => setPkgCommission(Number(e.target.value))} className="flex-1" />
+   459→   459→                  <button onClick={() => setPkgCommissionType('percentage')}
+   460→   460→                    className={`px-2 py-1.5 rounded-lg text-xs font-medium ${pkgCommissionType === 'percentage' ? 'bg-purple-500 text-white' : 'bg-muted text-muted-foreground'}`}>%</button>
+   461→   461→                  <button onClick={() => setPkgCommissionType('fixed')}
+   462→   462→                    className={`px-2 py-1.5 rounded-lg text-xs font-medium ${pkgCommissionType === 'fixed' ? 'bg-purple-500 text-white' : 'bg-muted text-muted-foreground'}`}>ثابت</button>
+   463→   463→                </div>
+   464→   464→              </div>
+   465→   465→            </div>
+   466→   466→            <div>
+   467→   467→              <Label>نوع التنفيذ</Label>
+   468→   468→              <div className="flex gap-2 mt-1">
+   469→   469→                <button onClick={() => setPkgExecutionType('manual')}
+   470→   470→                  className={`px-4 py-1.5 rounded-lg text-xs font-medium transition-colors ${pkgExecutionType === 'manual' ? 'bg-purple-500 text-white' : 'bg-muted hover:bg-muted/80 text-muted-foreground'}`}>
+   471→   471→                  يدوي
+   472→   472→                </button>
+   473→   473→                <button onClick={() => setPkgExecutionType('auto')}
+   474→   474→                  className={`px-4 py-1.5 rounded-lg text-xs font-medium transition-colors ${pkgExecutionType === 'auto' ? 'bg-purple-500 text-white' : 'bg-muted hover:bg-muted/80 text-muted-foreground'}`}>
+   475→   475→                  تلقائي (API)
+   476→   476→                </button>
+   477→   477→              </div>
+   478→   478→            </div>
+   479→   479→            {pkgExecutionType === 'auto' && (
+   480→   480→              <div className="space-y-3 p-3 rounded-lg bg-muted/30">
+   481→   481→                <div><Label>معرف مزود API</Label><Input value={pkgApiProviderId} onChange={(e) => setPkgApiProviderId(e.target.value)} dir="ltr" placeholder="g2bulk" /></div>
+   482→   482→                <div><Label>معرف المنتج في API</Label><Input value={pkgApiProductId} onChange={(e) => setPkgApiProductId(e.target.value)} dir="ltr" placeholder="123" /></div>
+   483→   483→              </div>
+   484→   484→            )}
+   485→   485→            <div><Label>الوصف (اختياري)</Label><Input value={pkgDescription} onChange={(e) => setPkgDescription(e.target.value)} placeholder="وصف الباقة" /></div>
+   486→   486→            <div><Label>ترتيب الفرز</Label><Input type="number" value={pkgSortOrder} onChange={(e) => setPkgSortOrder(Number(e.target.value))} /></div>
+   487→   487→            <div className="flex items-center gap-2"><Switch checked={pkgIsActive} onCheckedChange={setPkgIsActive} /><Label>نشط</Label></div>
+   488→   488→          </div>
+   489→   489→          <DialogFooter>
+   490→   490→            <Button variant="outline" onClick={() => { setPackageDialog(false); resetPkgForm(); }}>إلغاء</Button>
+   491→   491→            <Button onClick={handleSavePkg} disabled={saving}>
+   492→   492→              {saving ? <Loader2 className="w-4 h-4 ml-1 animate-spin" /> : null}
+   493→   493→              {editingPkg ? 'تحديث' : 'إضافة'}
+   494→   494→            </Button>
+   495→   495→          </DialogFooter>
+   496→   496→        </DialogContent>
+   497→   497→      </Dialog>
+   498→   498→    </div>
+   499→   499→  );
+   500→   500→}
+   501→   501→

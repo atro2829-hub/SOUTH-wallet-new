@@ -1,0 +1,1475 @@
+     1→     1→'use client';
+     2→     2→
+     3→     3→/* eslint-disable @typescript-eslint/no-explicit-any */
+     4→     4→/* eslint-disable @next/next/no-img-element */
+     5→     5→
+     6→     6→import { useState, useEffect, useCallback } from 'react';
+     7→     7→import { ref, onValue, update, remove, set, push } from 'firebase/database';
+     8→     8→import { database } from '@/lib/firebase';
+     9→     9→import { supabase } from '@/lib/supabase';
+    10→    10→import { useAdminStore } from '@/lib/store';
+    11→    11→import { formatNumber, cn } from '@/lib/utils';
+    12→    12→import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+    13→    13→import { Input } from '@/components/ui/input';
+    14→    14→import { Button } from '@/components/ui/button';
+    15→    15→import { Badge } from '@/components/ui/badge';
+    16→    16→import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+    17→    17→import {
+    18→    18→  AlertDialog,
+    19→    19→  AlertDialogAction,
+    20→    20→  AlertDialogCancel,
+    21→    21→  AlertDialogContent,
+    22→    22→  AlertDialogDescription,
+    23→    23→  AlertDialogFooter,
+    24→    24→  AlertDialogHeader,
+    25→    25→  AlertDialogTitle,
+    26→    26→} from '@/components/ui/alert-dialog';
+    27→    27→import { Label } from '@/components/ui/label';
+    28→    28→import { Switch } from '@/components/ui/switch';
+    29→    29→import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+    30→    30→import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+    31→    31→import {
+    32→    32→  Table,
+    33→    33→  TableBody,
+    34→    34→  TableCell,
+    35→    35→  TableHead,
+    36→    36→  TableHeader,
+    37→    37→  TableRow,
+    38→    38→} from '@/components/ui/table';
+    39→    39→import {
+    40→    40→  ChartContainer,
+    41→    41→  ChartTooltip,
+    42→    42→  ChartTooltipContent,
+    43→    43→  type ChartConfig,
+    44→    44→} from '@/components/ui/chart';
+    45→    45→import {
+    46→    46→  Search, Plus, Edit, Trash2, Server, RefreshCw, CheckCircle2, XCircle,
+    47→    47→  Loader2, ChevronDown, ChevronUp, Eye, EyeOff, Globe, KeyRound, Zap,
+    48→    48→  DollarSign, Wallet, Upload, AlertTriangle, Download, Clock, Activity,
+    49→    49→  TrendingDown, TrendingUp, BarChart3, ArrowUpDown, Filter, Repeat,
+    50→    50→} from 'lucide-react';
+    51→    51→import { motion, AnimatePresence } from 'framer-motion';
+    52→    52→import {
+    53→    53→  AreaChart,
+    54→    54→  Area,
+    55→    55→  XAxis,
+    56→    56→  YAxis,
+    57→    57→  CartesianGrid,
+    58→    58→} from 'recharts';
+    59→    59→import {
+    60→    60→  testApiConnection,
+    61→    61→  fetchProviderBalance,
+    62→    62→  syncProviderToFirebase,
+    63→    63→  type ApiProviderConfig,
+    64→    64→} from '@/lib/api-provider';
+    65→    65→
+    66→    66→// ─── Maroon Theme ─────────────────────────────────────────────────────
+    67→    67→const MAROON = {
+    68→    68→  primary: '#5C1A1B',
+    69→    69→  dark: '#3D0F10',
+    70→    70→  darkest: '#1A0A0E',
+    71→    71→  accent: '#C41E3A',
+    72→    72→  light: '#8B3A3A',
+    73→    73→  muted: '#A05050',
+    74→    74→  bg: '#2A1012',
+    75→    75→  card: '#331416',
+    76→    76→  border: '#5C1A1B40',
+    77→    77→};
+    78→    78→
+    79→    79→const LOW_BALANCE_THRESHOLD = 50;
+    80→    80→
+    81→    81→// ─── Chart Config ─────────────────────────────────────────────────────
+    82→    82→const balanceChartConfig: ChartConfig = {
+    83→    83→  balance: {
+    84→    84→    label: 'الرصيد',
+    85→    85→    color: MAROON.accent,
+    86→    86→  },
+    87→    87→};
+    88→    88→
+    89→    89→// ─── Types ────────────────────────────────────────────────────────────
+    90→    90→interface BalanceLogEntry {
+    91→    91→  id: string;
+    92→    92→  providerId: string;
+    93→    93→  providerName: string;
+    94→    94→  previousBalance: number;
+    95→    95→  newBalance: number;
+    96→    96→  currency: string;
+    97→    97→  changedAt: string;
+    98→    98→}
+    99→    99→
+   100→   100→interface BalanceHistoryPoint {
+   101→   101→  date: string;
+   102→   102→  balance: number;
+   103→   103→}
+   104→   104→
+   105→   105→export default function ApiProvidersPanel() {
+   106→   106→  const { showToast } = useAdminStore();
+   107→   107→  const [providers, setProviders] = useState<Record<string, any>>({});
+   108→   108→  const [sections, setSections] = useState<Record<string, any>>({});
+   109→   109→  const [loading, setLoading] = useState(true);
+   110→   110→  const [search, setSearch] = useState('');
+   111→   111→  const [dialog, setDialog] = useState(false);
+   112→   112→  const [editing, setEditing] = useState<string | null>(null);
+   113→   113→  const [expandedProvider, setExpandedProvider] = useState<string | null>(null);
+   114→   114→  const [syncingProvider, setSyncingProvider] = useState<string | null>(null);
+   115→   115→  const [testingProvider, setTestingProvider] = useState<string | null>(null);
+   116→   116→  const [refreshingBalance, setRefreshingBalance] = useState<string | null>(null);
+   117→   117→  const [testResult, setTestResult] = useState<{ providerId: string; success: boolean; message: string; balance?: string } | null>(null);
+   118→   118→  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+   119→   119→  const [activeTab, setActiveTab] = useState('providers');
+   120→   120→  const [balanceLogs, setBalanceLogs] = useState<BalanceLogEntry[]>([]);
+   121→   121→  const [logFilterProvider, setLogFilterProvider] = useState<string>('all');
+   122→   122→  const [checkingAllBalances, setCheckingAllBalances] = useState(false);
+   123→   123→
+   124→   124→  // Form state
+   125→   125→  const [name, setName] = useState('');
+   126→   126→  const [baseUrl, setBaseUrl] = useState('');
+   127→   127→  const [apiKey, setApiKey] = useState('');
+   128→   128→  const [apiSecret, setApiSecret] = useState('');
+   129→   129→  const [authHeader, setAuthHeader] = useState('X-API-Key');
+   130→   130→  const [isActive, setIsActive] = useState(true);
+   131→   131→  const [syncEnabled, setSyncEnabled] = useState(true);
+   132→   132→  const [showApiKey, setShowApiKey] = useState(false);
+   133→   133→  const [sectionId, setSectionId] = useState('service-providers');
+   134→   134→  const [commission, setCommission] = useState(0);
+   135→   135→  const [commissionType, setCommissionType] = useState<'percentage' | 'fixed'>('percentage');
+   136→   136→  const [icon, setIcon] = useState('');
+   137→   137→
+   138→   138→  // Listen to API providers from Firebase
+   139→   139→  useEffect(() => {
+   140→   140→    const provRef = ref(database, 'adminSettings/apiProviders');
+   141→   141→    const unsub = onValue(provRef, (snapshot) => {
+   142→   142→      setProviders(snapshot.val() || {});
+   143→   143→      setLoading(false);
+   144→   144→    });
+   145→   145→    return () => unsub();
+   146→   146→  }, []);
+   147→   147→
+   148→   148→  // Listen to sections for assignment dropdown
+   149→   149→  useEffect(() => {
+   150→   150→    const sectionsRef = ref(database, 'sections');
+   151→   151→    const unsub = onValue(sectionsRef, (snapshot) => {
+   152→   152→      setSections(snapshot.val() || {});
+   153→   153→    });
+   154→   154→    return () => unsub();
+   155→   155→  }, []);
+   156→   156→
+   157→   157→  // Load balance logs from Firebase
+   158→   158→  useEffect(() => {
+   159→   159→    const logRef = ref(database, 'adminSettings/balanceLogs');
+   160→   160→    const unsub = onValue(logRef, (snapshot) => {
+   161→   161→      const data = snapshot.val() || {};
+   162→   162→      const logs: BalanceLogEntry[] = Object.entries(data).map(([id, v]: [string, any]) => ({
+   163→   163→        id,
+   164→   164→        providerId: v.providerId || '',
+   165→   165→        providerName: v.providerName || '',
+   166→   166→        previousBalance: v.previousBalance || 0,
+   167→   167→        newBalance: v.newBalance || 0,
+   168→   168→        currency: v.currency || 'USD',
+   169→   169→        changedAt: v.changedAt || '',
+   170→   170→      }));
+   171→   171→      logs.sort((a, b) => new Date(b.changedAt).getTime() - new Date(a.changedAt).getTime());
+   172→   172→      setBalanceLogs(logs);
+   173→   173→    });
+   174→   174→    return () => unsub();
+   175→   175→  }, []);
+   176→   176→
+   177→   177→  const resetForm = () => {
+   178→   178→    setName(''); setBaseUrl(''); setApiKey(''); setApiSecret(''); setAuthHeader('X-API-Key');
+   179→   179→    setIsActive(true); setSyncEnabled(true); setEditing(null); setShowApiKey(false);
+   180→   180→    setSectionId('service-providers'); setCommission(0); setCommissionType('percentage');
+   181→   181→    setIcon('');
+   182→   182→  };
+   183→   183→
+   184→   184→  const handleIconUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+   185→   185→    const file = e.target.files?.[0];
+   186→   186→    if (!file) return;
+   187→   187→    if (file.size > 500000) { showToast('حجم الصورة يجب أن يكون أقل من 500KB', 'error'); return; }
+   188→   188→    const reader = new FileReader();
+   189→   189→    reader.onload = (ev) => setIcon(ev.target?.result as string);
+   190→   190→    reader.readAsDataURL(file);
+   191→   191→  };
+   192→   192→
+   193→   193→  // ─── Record balance log ────────────────────────────────────────────
+   194→   194→  const recordBalanceLog = useCallback(async (
+   195→   195→    providerId: string,
+   196→   196→    providerName: string,
+   197→   197→    previousBalance: number,
+   198→   198→    newBalance: number,
+   199→   199→    currency: string,
+   200→   200→  ) => {
+   201→   201→    if (previousBalance === newBalance) return;
+   202→   202→    const logRef = push(ref(database, 'adminSettings/balanceLogs'));
+   203→   203→    await set(logRef, {
+   204→   204→      providerId,
+   205→   205→      providerName,
+   206→   206→      previousBalance,
+   207→   207→      newBalance,
+   208→   208→      currency,
+   209→   209→      changedAt: new Date().toISOString(),
+   210→   210→    });
+   211→   211→  }, []);
+   212→   212→
+   213→   213→  // ─── Record balance history point ──────────────────────────────────
+   214→   214→  const recordBalanceHistory = useCallback(async (
+   215→   215→    providerId: string,
+   216→   216→    balance: number,
+   217→   217→    currency: string,
+   218→   218→  ) => {
+   219→   219→    const today = new Date().toISOString().split('T')[0];
+   220→   220→    const historyRef = ref(database, `adminSettings/apiProviders/${providerId}/balanceHistory/${today}`);
+   221→   221→    await set(historyRef, {
+   222→   222→      date: today,
+   223→   223→      balance,
+   224→   224→      currency,
+   225→   225→      recordedAt: new Date().toISOString(),
+   226→   226→    });
+   227→   227→  }, []);
+   228→   228→
+   229→   229→  // ─── Save Provider ─────────────────────────────────────────────────
+   230→   230→  const handleSave = async () => {
+   231→   231→    if (!name.trim()) { showToast('يرجى إدخال الاسم', 'error'); return; }
+   232→   232→    if (!baseUrl.trim()) { showToast('يرجى إدخال رابط API', 'error'); return; }
+   233→   233→    if (!apiKey.trim()) { showToast('يرجى إدخال مفتاح API', 'error'); return; }
+   234→   234→
+   235→   235→    try {
+   236→   236→      const providerId = editing || name.trim().toLowerCase().replace(/[\s]+/g, '-').replace(/[^\u0600-\u06FFa-zA-Z0-9\-]/g, '') || `provider-${Date.now()}`;
+   237→   237→
+   238→   238→      const data: any = {
+   239→   239→        id: providerId,
+   240→   240→        name: name.trim(),
+   241→   241→        baseUrl: baseUrl.trim().endsWith('/') ? baseUrl.trim() : baseUrl.trim() + '/',
+   242→   242→        apiKey: apiKey.trim(),
+   243→   243→        authHeader: authHeader.trim() || 'X-API-Key',
+   244→   244→        isActive,
+   245→   245→        syncEnabled,
+   246→   246→        sectionId: sectionId || 'service-providers',
+   247→   247→        commission: commission || 0,
+   248→   248→        commissionType: commissionType || 'percentage',
+   249→   249→        icon: icon || '',
+   250→   250→        createdAt: editing && providers[editing]?.createdAt ? providers[editing].createdAt : new Date().toISOString(),
+   251→   251→      };
+   252→   252→
+   253→   253→      if (apiSecret.trim()) data.apiSecret = apiSecret.trim();
+   254→   254→
+   255→   255→      if (sectionId && sections[sectionId]) {
+   256→   256→        data.sectionName = sections[sectionId].name || '';
+   257→   257→        data.sectionIcon = sections[sectionId].icon || '';
+   258→   258→      }
+   259→   259→
+   260→   260→      await set(ref(database, `adminSettings/apiProviders/${providerId}`), {
+   261→   261→        ...providers[providerId],
+   262→   262→        ...data,
+   263→   263→      });
+   264→   264→
+   265→   265→      const targetSectionId = sectionId || 'service-providers';
+   266→   266→      const subSectionData = {
+   267→   267→        id: providerId,
+   268→   268→        name: name.trim(),
+   269→   269→        icon: icon || '',
+   270→   270→        isActive,
+   271→   271→        parentId: targetSectionId,
+   272→   272→        sortOrder: 0,
+   273→   273→        apiProviderId: providerId,
+   274→   274→      };
+   275→   275→      await set(ref(database, `sections/${targetSectionId}/subSections/${providerId}`), subSectionData);
+   276→   276→
+   277→   277→      if (!sections[targetSectionId]) {
+   278→   278→        await set(ref(database, `sections/${targetSectionId}`), {
+   279→   279→          id: targetSectionId,
+   280→   280→          name: targetSectionId === 'service-providers' ? 'خدمات المزودين' : targetSectionId,
+   281→   281→          icon: icon || 'globe',
+   282→   282→          color: MAROON.accent,
+   283→   283→          sortOrder: 1,
+   284→   284→          isActive: true,
+   285→   285→          type: 'main',
+   286→   286→          subSections: { [providerId]: subSectionData },
+   287→   287→        });
+   288→   288→      }
+   289→   289→
+   290→   290→      // Also upsert to Supabase api_providers table
+   291→   291→      try {
+   292→   292→        const { error: sbError } = await supabase
+   293→   293→          .from('api_providers')
+   294→   294→          .upsert({
+   295→   295→            id: providerId,
+   296→   296→            name: name.trim(),
+   297→   297→            description: '',
+   298→   298→            website: '',
+   299→   299→            api_url: baseUrl.trim().endsWith('/') ? baseUrl.trim() : baseUrl.trim() + '/',
+   300→   300→            api_key: apiKey.trim(),
+   301→   301→            auth_header: authHeader.trim() || 'X-API-Key',
+   302→   302→            auth_type: authHeader.trim().toLowerCase() === 'authorization' ? 'bearer' : 'header',
+   303→   303→            is_active: isActive,
+   304→   304→            balance: providers[providerId]?.balance || 0,
+   305→   305→            balance_currency: providers[providerId]?.balanceCurrency || 'USD',
+   306→   306→            last_balance_check: providers[providerId]?.lastBalanceCheck || null,
+   307→   307→            default_commission: commission || 0,
+   308→   308→            commission_type: commissionType || 'percentage',
+   309→   309→            sync_categories: syncEnabled,
+   310→   310→            sync_products: syncEnabled,
+   311→   311→            last_sync_at: null,
+   312→   312→            config: { icon: icon || '', sectionId: sectionId || 'service-providers' },
+   313→   313→          }, { onConflict: 'id' });
+   314→   314→        if (sbError) console.warn('Supabase upsert warning:', sbError.message);
+   315→   315→      } catch (sbErr) {
+   316→   316→        console.warn('Supabase sync warning:', sbErr);
+   317→   317→      }
+   318→   318→
+   319→   319→      showToast(editing ? 'تم تحديث المزود' : 'تم إضافة المزود', 'success');
+   320→   320→      setDialog(false);
+   321→   321→      resetForm();
+   322→   322→    } catch {
+   323→   323→      showToast('حدث خطأ', 'error');
+   324→   324→    }
+   325→   325→  };
+   326→   326→
+   327→   327→  // ─── Delete Provider (with confirmation) ───────────────────────────
+   328→   328→  const handleDelete = async (id: string) => {
+   329→   329→    try {
+   330→   330→      await remove(ref(database, `adminSettings/apiProviders/${id}`));
+   331→   331→      const prov = providers[id];
+   332→   332→      if (prov?.sectionId) {
+   333→   333→        await remove(ref(database, `sections/${prov.sectionId}/subSections/${id}`));
+   334→   334→      }
+   335→   335→      // Also delete from Supabase
+   336→   336→      try {
+   337→   337→        await supabase.from('api_providers').delete().eq('id', id);
+   338→   338→      } catch (sbErr) {
+   339→   339→        console.warn('Supabase delete warning:', sbErr);
+   340→   340→      }
+   341→   341→      showToast('تم حذف المزود', 'success');
+   342→   342→      setDeleteConfirm(null);
+   343→   343→    } catch {
+   344→   344→      showToast('حدث خطأ', 'error');
+   345→   345→    }
+   346→   346→  };
+   347→   347→
+   348→   348→  // ─── Test Connection ───────────────────────────────────────────────
+   349→   349→  const handleTest = async (providerId: string) => {
+   350→   350→    setTestingProvider(providerId);
+   351→   351→    setTestResult(null);
+   352→   352→    try {
+   353→   353→      const prov = providers[providerId];
+   354→   354→      const config: ApiProviderConfig = {
+   355→   355→        id: prov.id, name: prov.name, baseUrl: prov.baseUrl, apiKey: prov.apiKey,
+   356→   356→        authHeader: prov.authHeader || 'X-API-Key', method: 'GET', responseFormat: 'json',
+   357→   357→        isActive: true, syncEnabled: true, createdAt: prov.createdAt || '',
+   358→   358→      };
+   359→   359→
+   360→   360→      const result = await testApiConnection(config);
+   361→   361→      setTestResult({
+   362→   362→        providerId, success: result.success,
+   363→   363→        message: result.success ? `الاتصال ناجح (${result.responseTime}ms)` : (result.error || 'فشل الاتصال'),
+   364→   364→      });
+   365→   365→
+   366→   366→      if (result.success) {
+   367→   367→        const balanceResult = await fetchProviderBalance(config);
+   368→   368→        if (balanceResult) {
+   369→   369→          const prevBalance = prov.balance || 0;
+   370→   370→          setTestResult(prev => prev ? { ...prev, balance: `${balanceResult.balance} ${balanceResult.currency}` } : null);
+   371→   371→          await update(ref(database, `adminSettings/apiProviders/${providerId}`), {
+   372→   372→            balance: balanceResult.balance,
+   373→   373→            balanceCurrency: balanceResult.currency,
+   374→   374→            lastBalanceCheck: new Date().toISOString(),
+   375→   375→          });
+   376→   376→          await recordBalanceLog(providerId, prov.name, prevBalance, balanceResult.balance, balanceResult.currency);
+   377→   377→          await recordBalanceHistory(providerId, balanceResult.balance, balanceResult.currency);
+   378→   378→        }
+   379→   379→      }
+   380→   380→    } catch (e: any) {
+   381→   381→      setTestResult({ providerId, success: false, message: e.message || 'فشل الاتصال' });
+   382→   382→    } finally {
+   383→   383→      setTestingProvider(null);
+   384→   384→    }
+   385→   385→  };
+   386→   386→
+   387→   387→  // ─── Check Balance ─────────────────────────────────────────────────
+   388→   388→  const handleRefreshBalance = async (providerId: string) => {
+   389→   389→    setRefreshingBalance(providerId);
+   390→   390→    try {
+   391→   391→      const prov = providers[providerId];
+   392→   392→      const config: ApiProviderConfig = {
+   393→   393→        id: prov.id, name: prov.name, baseUrl: prov.baseUrl, apiKey: prov.apiKey,
+   394→   394→        authHeader: prov.authHeader || 'X-API-Key', method: 'GET', responseFormat: 'json',
+   395→   395→        isActive: true, syncEnabled: true, createdAt: prov.createdAt || '',
+   396→   396→      };
+   397→   397→      const balanceResult = await fetchProviderBalance(config);
+   398→   398→      if (balanceResult) {
+   399→   399→        const prevBalance = prov.balance || 0;
+   400→   400→        await update(ref(database, `adminSettings/apiProviders/${providerId}`), {
+   401→   401→          balance: balanceResult.balance,
+   402→   402→          balanceCurrency: balanceResult.currency,
+   403→   403→          lastBalanceCheck: new Date().toISOString(),
+   404→   404→        });
+   405→   405→        await recordBalanceLog(providerId, prov.name, prevBalance, balanceResult.balance, balanceResult.currency);
+   406→   406→        await recordBalanceHistory(providerId, balanceResult.balance, balanceResult.currency);
+   407→   407→        showToast(`الرصيد: ${balanceResult.balance} ${balanceResult.currency}`, 'success');
+   408→   408→      } else {
+   409→   409→        showToast('لم يتم الحصول على الرصيد', 'error');
+   410→   410→      }
+   411→   411→    } catch (e: any) {
+   412→   412→      showToast(`خطأ: ${e.message}`, 'error');
+   413→   413→    } finally {
+   414→   414→      setRefreshingBalance(null);
+   415→   415→    }
+   416→   416→  };
+   417→   417→
+   418→   418→  // ─── Check All Balances ────────────────────────────────────────────
+   419→   419→  const handleCheckAllBalances = async () => {
+   420→   420→    setCheckingAllBalances(true);
+   421→   421→    const providerList = Object.entries(providers).map(([id, p]) => ({ id, ...p }));
+   422→   422→    const activeProviders = providerList.filter(p => p.isActive !== false);
+   423→   423→    let checked = 0;
+   424→   424→    for (const prov of activeProviders) {
+   425→   425→      try {
+   426→   426→        const config: ApiProviderConfig = {
+   427→   427→          id: prov.id, name: prov.name, baseUrl: prov.baseUrl, apiKey: prov.apiKey,
+   428→   428→          authHeader: prov.authHeader || 'X-API-Key', method: 'GET', responseFormat: 'json',
+   429→   429→          isActive: true, syncEnabled: true, createdAt: prov.createdAt || '',
+   430→   430→        };
+   431→   431→        const balanceResult = await fetchProviderBalance(config);
+   432→   432→        if (balanceResult) {
+   433→   433→          const prevBalance = prov.balance || 0;
+   434→   434→          await update(ref(database, `adminSettings/apiProviders/${prov.id}`), {
+   435→   435→            balance: balanceResult.balance,
+   436→   436→            balanceCurrency: balanceResult.currency,
+   437→   437→            lastBalanceCheck: new Date().toISOString(),
+   438→   438→          });
+   439→   439→          await recordBalanceLog(prov.id, prov.name, prevBalance, balanceResult.balance, balanceResult.currency);
+   440→   440→          await recordBalanceHistory(prov.id, balanceResult.balance, balanceResult.currency);
+   441→   441→          checked++;
+   442→   442→        }
+   443→   443→      } catch {
+   444→   444→        // skip this provider
+   445→   445→      }
+   446→   446→    }
+   447→   447→    setCheckingAllBalances(false);
+   448→   448→    showToast(`تم فحص رصيد ${checked} مزود`, 'success');
+   449→   449→  };
+   450→   450→
+   451→   451→  // ─── Sync Provider ─────────────────────────────────────────────────
+   452→   452→  const handleSync = async (providerId: string) => {
+   453→   453→    setSyncingProvider(providerId);
+   454→   454→    try {
+   455→   455→      const prov = providers[providerId];
+   456→   456→      const config: ApiProviderConfig = {
+   457→   457→        id: prov.id, name: prov.name, baseUrl: prov.baseUrl, apiKey: prov.apiKey,
+   458→   458→        authHeader: prov.authHeader || 'X-API-Key', method: 'GET', responseFormat: 'json',
+   459→   459→        isActive: true, syncEnabled: true, createdAt: prov.createdAt || '',
+   460→   460→        sectionId: prov.sectionId || 'service-providers',
+   461→   461→        icon: prov.icon || '',
+   462→   462→      };
+   463→   463→      const result = await syncProviderToFirebase(config, database, ref, update);
+   464→   464→      showToast(`تمت المزامنة: ${result.categoriesCount} تصنيف و ${result.productsCount} منتج`, 'success');
+   465→   465→    } catch (e: any) {
+   466→   466→      showToast(`فشلت المزامنة: ${e.message}`, 'error');
+   467→   467→    } finally {
+   468→   468→      setSyncingProvider(null);
+   469→   469→    }
+   470→   470→  };
+   471→   471→
+   472→   472→  // ─── Toggle Active ─────────────────────────────────────────────────
+   473→   473→  const handleToggleActive = async (providerId: string, active: boolean) => {
+   474→   474→    try {
+   475→   475→      await update(ref(database, `adminSettings/apiProviders/${providerId}`), { isActive: active });
+   476→   476→      const prov = providers[providerId];
+   477→   477→      if (prov?.sectionId) {
+   478→   478→        await update(ref(database, `sections/${prov.sectionId}/subSections/${providerId}`), { isActive: active });
+   479→   479→      }
+   480→   480→      // Also update Supabase
+   481→   481→      try {
+   482→   482→        await supabase.from('api_providers').update({ is_active: active }).eq('id', providerId);
+   483→   483→      } catch (sbErr) {
+   484→   484→        console.warn('Supabase update warning:', sbErr);
+   485→   485→      }
+   486→   486→      showToast(active ? 'تم تفعيل المزود' : 'تم تعطيل المزود', 'success');
+   487→   487→    } catch {
+   488→   488→      showToast('حدث خطأ', 'error');
+   489→   489→    }
+   490→   490→  };
+   491→   491→
+   492→   492→  // ─── Quick Add G2Bulk ──────────────────────────────────────────────
+   493→   493→  const handleQuickAddG2Bulk = async () => {
+   494→   494→    try {
+   495→   495→      const g2bulkData = {
+   496→   496→        id: 'g2bulk', name: 'G2Bulk', baseUrl: 'https://api.g2bulk.com/v1/',
+   497→   497→        apiKey: '4882984fe50f9038432b21e5fb37ecbf38a029c40a45c73f27da374ac933bd45',
+   498→   498→        authHeader: 'X-API-Key', isActive: true, syncEnabled: true,
+   499→   499→        sectionId: 'service-providers', sectionName: 'خدمات المزودين', sectionIcon: 'globe',
+   500→   500→        commission: 5, commissionType: 'percentage',
+   501→   501→        balance: 0, balanceCurrency: 'USD', lastBalanceCheck: '',
+   502→   502→        createdAt: new Date().toISOString(),
+   503→   503→      };
+   504→   504→      await set(ref(database, 'adminSettings/apiProviders/g2bulk'), g2bulkData);
+   505→   505→
+   506→   506→      await set(ref(database, 'sections/service-providers/subSections/g2bulk'), {
+   507→   507→        id: 'g2bulk', name: 'G2Bulk', icon: '', isActive: true,
+   508→   508→        parentId: 'service-providers', sortOrder: 0, apiProviderId: 'g2bulk',
+   509→   509→      });
+   510→   510→
+   511→   511→      // Also insert to Supabase
+   512→   512→      try {
+   513→   513→        await supabase.from('api_providers').upsert({
+   514→   514→          id: 'g2bulk',
+   515→   515→          name: 'G2Bulk',
+   516→   516→          description: 'G2Bulk API Provider',
+   517→   517→          website: 'https://g2bulk.com',
+   518→   518→          api_url: 'https://api.g2bulk.com/v1/',
+   519→   519→          api_key: '4882984fe50f9038432b21e5fb37ecbf38a029c40a45c73f27da374ac933bd45',
+   520→   520→          auth_header: 'X-API-Key',
+   521→   521→          auth_type: 'header',
+   522→   522→          is_active: true,
+   523→   523→          balance: 0,
+   524→   524→          balance_currency: 'USD',
+   525→   525→          default_commission: 5,
+   526→   526→          commission_type: 'percentage',
+   527→   527→          sync_categories: true,
+   528→   528→          sync_products: true,
+   529→   529→          config: { sectionId: 'service-providers' },
+   530→   530→        }, { onConflict: 'id' });
+   531→   531→      } catch (sbErr) {
+   532→   532→        console.warn('Supabase insert warning:', sbErr);
+   533→   533→      }
+   534→   534→
+   535→   535→      showToast('تم إضافة G2Bulk', 'success');
+   536→   536→    } catch { showToast('حدث خطأ', 'error'); }
+   537→   537→  };
+   538→   538→
+   539→   539→  // ─── Export Balance Logs to CSV ────────────────────────────────────
+   540→   540→  const handleExportCSV = () => {
+   541→   541→    const filtered = logFilterProvider === 'all'
+   542→   542→      ? balanceLogs
+   543→   543→      : balanceLogs.filter(l => l.providerId === logFilterProvider);
+   544→   544→
+   545→   545→    if (filtered.length === 0) {
+   546→   546→      showToast('لا توجد بيانات للتصدير', 'error');
+   547→   547→      return;
+   548→   548→    }
+   549→   549→
+   550→   550→    const headers = ['المزود', 'الرصيد السابق', 'الرصيد الجديد', 'العملة', 'التاريخ'];
+   551→   551→    const rows = filtered.map(l => [
+   552→   552→      l.providerName,
+   553→   553→      l.previousBalance.toString(),
+   554→   554→      l.newBalance.toString(),
+   555→   555→      l.currency,
+   556→   556→      new Date(l.changedAt).toLocaleString('ar'),
+   557→   557→    ]);
+   558→   558→
+   559→   559→    const csvContent = [headers, ...rows].map(r => r.join(',')).join('\n');
+   560→   560→    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+   561→   561→    const url = URL.createObjectURL(blob);
+   562→   562→    const a = document.createElement('a');
+   563→   563→    a.href = url;
+   564→   564→    a.download = `balance-logs-${new Date().toISOString().split('T')[0]}.csv`;
+   565→   565→    a.click();
+   566→   566→    URL.revokeObjectURL(url);
+   567→   567→    showToast('تم تصدير السجل بنجاح', 'success');
+   568→   568→  };
+   569→   569→
+   570→   570→  // ─── Compute Stats ─────────────────────────────────────────────────
+   571→   571→  const providerList = Object.entries(providers).map(([id, p]) => ({ id, ...p }));
+   572→   572→  const filteredProviders = providerList.filter(p => !search || p.name?.includes(search) || p.baseUrl?.includes(search));
+   573→   573→  const activeProviders = providerList.filter(p => p.isActive !== false);
+   574→   574→  const inactiveProviders = providerList.filter(p => p.isActive === false);
+   575→   575→  const totalBalance = activeProviders.reduce((sum, p) => sum + (p.balance || 0), 0);
+   576→   576→  const lowBalanceProviders = activeProviders.filter(p => (p.balance || 0) < LOW_BALANCE_THRESHOLD);
+   577→   577→  const lastSyncTime = providerList.reduce((latest: string | null, p) => {
+   578→   578→    if (p.lastSync && (!latest || p.lastSync > latest)) return p.lastSync;
+   579→   579→    return latest;
+   580→   580→  }, null);
+   581→   581→
+   582→   582→  // ─── Get Balance History for chart (last 7 days) ──────────────────
+   583→   583→  const getBalanceHistory = (prov: any): BalanceHistoryPoint[] => {
+   584→   584→    const history = prov.balanceHistory || {};
+   585→   585→    const points: BalanceHistoryPoint[] = [];
+   586→   586→    const now = new Date();
+   587→   587→    for (let i = 6; i >= 0; i--) {
+   588→   588→      const d = new Date(now);
+   589→   589→      d.setDate(d.getDate() - i);
+   590→   590→      const dateKey = d.toISOString().split('T')[0];
+   591→   591→      const entry = history[dateKey];
+   592→   592→      if (entry) {
+   593→   593→        points.push({ date: dateKey, balance: entry.balance || 0 });
+   594→   594→      } else if (points.length > 0) {
+   595→   595→        // Carry forward last known balance
+   596→   596→        points.push({ date: dateKey, balance: points[points.length - 1].balance });
+   597→   597→      }
+   598→   598→    }
+   599→   599→    return points;
+   600→   600→  };
+   601→   601→
+   602→   602→  const sectionOptions = [
+   603→   603→    { value: 'service-providers', label: 'خدمات المزودين' },
+   604→   604→    { value: 'entertainment', label: 'الخدمات الترفيهية' },
+   605→   605→    { value: 'telecom', label: 'خدمات الاتصالات' },
+   606→   606→    { value: 'internet', label: 'الإنترنت' },
+   607→   607→    { value: 'electricity', label: 'الكهرباء والماء' },
+   608→   608→    { value: 'government', label: 'خدمات حكومية' },
+   609→   609→    { value: 'wallet-services', label: 'خدمات المحفظة' },
+   610→   610→    { value: 'crypto', label: 'الكريبتو' },
+   611→   611→    ...Object.entries(sections).map(([id, s]: [string, any]) => ({ value: id, label: s.name || id })),
+   612→   612→  ];
+   613→   613→
+   614→   614→  if (loading) {
+   615→   615→    return (
+   616→   616→      <div className="flex items-center justify-center min-h-[400px]">
+   617→   617→        <div className="w-8 h-8 border-2 rounded-full animate-spin" style={{ borderColor: `${MAROON.accent} transparent transparent transparent` }} />
+   618→   618→      </div>
+   619→   619→    );
+   620→   620→  }
+   621→   621→
+   622→   622→  return (
+   623→   623→    <div className="space-y-6" dir="rtl">
+   624→   624→      {/* ─── Stats Dashboard ──────────────────────────────────────────── */}
+   625→   625→      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+   626→   626→        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0 }}>
+   627→   627→          <Card className="border-0 shadow-sm" style={{ backgroundColor: MAROON.card }}>
+   628→   628→            <CardContent className="p-4">
+   629→   629→              <div className="flex items-center gap-3">
+   630→   630→                <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: `${MAROON.accent}20` }}>
+   631→   631→                  <Globe className="w-5 h-5" style={{ color: MAROON.accent }} />
+   632→   632→                </div>
+   633→   633→                <div>
+   634→   634→                  <p className="text-xs" style={{ color: MAROON.muted }}>إجمالي المزودين</p>
+   635→   635→                  <p className="text-xl font-bold text-white">{formatNumber(providerList.length)}</p>
+   636→   636→                </div>
+   637→   637→              </div>
+   638→   638→            </CardContent>
+   639→   639→          </Card>
+   640→   640→        </motion.div>
+   641→   641→
+   642→   642→        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}>
+   643→   643→          <Card className="border-0 shadow-sm" style={{ backgroundColor: MAROON.card }}>
+   644→   644→            <CardContent className="p-4">
+   645→   645→              <div className="flex items-center gap-3">
+   646→   646→                <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: '#22C55E20' }}>
+   647→   647→                  <DollarSign className="w-5 h-5 text-green-500" />
+   648→   648→                </div>
+   649→   649→                <div>
+   650→   650→                  <p className="text-xs" style={{ color: MAROON.muted }}>إجمالي الأرصدة</p>
+   651→   651→                  <p className="text-xl font-bold text-white">{formatNumber(totalBalance)} $</p>
+   652→   652→                </div>
+   653→   653→              </div>
+   654→   654→            </CardContent>
+   655→   655→          </Card>
+   656→   656→        </motion.div>
+   657→   657→
+   658→   658→        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
+   659→   659→          <Card className="border-0 shadow-sm" style={{ backgroundColor: MAROON.card }}>
+   660→   660→            <CardContent className="p-4">
+   661→   661→              <div className="flex items-center gap-3">
+   662→   662→                <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: '#22C55E20' }}>
+   663→   663→                  <CheckCircle2 className="w-5 h-5 text-green-500" />
+   664→   664→                </div>
+   665→   665→                <div>
+   666→   666→                  <p className="text-xs" style={{ color: MAROON.muted }}>نشط / غير نشط</p>
+   667→   667→                  <p className="text-xl font-bold text-white">
+   668→   668→                    <span className="text-green-400">{activeProviders.length}</span>
+   669→   669→                    <span className="mx-1" style={{ color: MAROON.muted }}>/</span>
+   670→   670→                    <span className="text-red-400">{inactiveProviders.length}</span>
+   671→   671→                  </p>
+   672→   672→                </div>
+   673→   673→              </div>
+   674→   674→            </CardContent>
+   675→   675→          </Card>
+   676→   676→        </motion.div>
+   677→   677→
+   678→   678→        <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}>
+   679→   679→          <Card className="border-0 shadow-sm" style={{ backgroundColor: MAROON.card }}>
+   680→   680→            <CardContent className="p-4">
+   681→   681→              <div className="flex items-center gap-3">
+   682→   682→                <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: `${MAROON.accent}20` }}>
+   683→   683→                  <Clock className="w-5 h-5" style={{ color: MAROON.accent }} />
+   684→   684→                </div>
+   685→   685→                <div>
+   686→   686→                  <p className="text-xs" style={{ color: MAROON.muted }}>آخر مزامنة</p>
+   687→   687→                  <p className="text-sm font-bold text-white">
+   688→   688→                    {lastSyncTime ? new Date(lastSyncTime).toLocaleString('ar', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'لا يوجد'}
+   689→   689→                  </p>
+   690→   690→                </div>
+   691→   691→              </div>
+   692→   692→            </CardContent>
+   693→   693→          </Card>
+   694→   694→        </motion.div>
+   695→   695→      </div>
+   696→   696→
+   697→   697→      {/* ─── Low Balance Alert ──────────────────────────────────────────── */}
+   698→   698→      {lowBalanceProviders.length > 0 && (
+   699→   699→        <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}>
+   700→   700→          <Card className="border-0 shadow-sm" style={{ backgroundColor: '#7F1D1D' }}>
+   701→   701→            <CardContent className="p-4">
+   702→   702→              <div className="flex items-center gap-3">
+   703→   703→                <AlertTriangle className="w-5 h-5 text-amber-400 shrink-0" />
+   704→   704→                <div className="flex-1">
+   705→   705→                  <p className="text-sm font-medium text-amber-200">
+   706→   706→                    تنبيه: {lowBalanceProviders.length} مزود برصيد منخفض (أقل من {LOW_BALANCE_THRESHOLD}$)
+   707→   707→                  </p>
+   708→   708→                  <div className="flex gap-2 mt-1.5 flex-wrap">
+   709→   709→                    {lowBalanceProviders.map(p => (
+   710→   710→                      <Badge key={p.id} variant="outline" className="text-[10px] text-amber-300 border-amber-500/50">
+   711→   711→                        {p.name}: {p.balance || 0} {p.balanceCurrency || 'USD'}
+   712→   712→                      </Badge>
+   713→   713→                    ))}
+   714→   714→                  </div>
+   715→   715→                </div>
+   716→   716→                <Button
+   717→   717→                  size="sm"
+   718→   718→                  variant="outline"
+   719→   719→                  className="border-amber-500/50 text-amber-200 hover:bg-amber-500/20"
+   720→   720→                  onClick={handleCheckAllBalances}
+   721→   721→                  disabled={checkingAllBalances}
+   722→   722→                >
+   723→   723→                  {checkingAllBalances ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4 ml-1" />}
+   724→   724→                  فحص الكل
+   725→   725→                </Button>
+   726→   726→              </div>
+   727→   727→            </CardContent>
+   728→   728→          </Card>
+   729→   729→        </motion.div>
+   730→   730→      )}
+   731→   731→
+   732→   732→      {/* ─── Tabs ──────────────────────────────────────────────────────── */}
+   733→   733→      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+   734→   734→        <div className="flex items-center justify-between flex-wrap gap-3">
+   735→   735→          <TabsList className="bg-muted/50">
+   736→   736→            <TabsTrigger value="providers" className="gap-1.5 text-xs">
+   737→   737→              <Server className="w-3.5 h-3.5" /> المزودين
+   738→   738→            </TabsTrigger>
+   739→   739→            <TabsTrigger value="balance" className="gap-1.5 text-xs">
+   740→   740→              <Wallet className="w-3.5 h-3.5" /> الأرصدة
+   741→   741→            </TabsTrigger>
+   742→   742→            <TabsTrigger value="logs" className="gap-1.5 text-xs">
+   743→   743→              <BarChart3 className="w-3.5 h-3.5" /> سجل الأرصدة
+   744→   744→            </TabsTrigger>
+   745→   745→            <TabsTrigger value="g2bulk" className="gap-1.5 text-xs">
+   746→   746→              <Zap className="w-3.5 h-3.5" /> G2Bulk
+   747→   747→            </TabsTrigger>
+   748→   748→          </TabsList>
+   749→   749→          <div className="flex gap-2">
+   750→   750→            {activeTab === 'providers' && (
+   751→   751→              <Button size="sm" onClick={() => { resetForm(); setDialog(true); }} style={{ backgroundColor: MAROON.accent }}>
+   752→   752→                <Plus className="w-4 h-4 ml-1" /> مزود جديد
+   753→   753→              </Button>
+   754→   754→            )}
+   755→   755→            {activeTab === 'balance' && (
+   756→   756→              <Button size="sm" variant="outline" onClick={handleCheckAllBalances} disabled={checkingAllBalances}>
+   757→   757→                {checkingAllBalances ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4 ml-1" />}
+   758→   758→                فحص أرصدة الكل
+   759→   759→              </Button>
+   760→   760→            )}
+   761→   761→            {activeTab === 'logs' && (
+   762→   762→              <Button size="sm" variant="outline" onClick={handleExportCSV}>
+   763→   763→                <Download className="w-4 h-4 ml-1" /> تصدير CSV
+   764→   764→              </Button>
+   765→   765→            )}
+   766→   766→          </div>
+   767→   767→        </div>
+   768→   768→
+   769→   769→        {/* ─── Tab: Providers ─────────────────────────────────────────── */}
+   770→   770→        <TabsContent value="providers" className="space-y-4 mt-4">
+   771→   771→          <div className="relative">
+   772→   772→            <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+   773→   773→            <Input placeholder="بحث عن مزود..." value={search} onChange={(e) => setSearch(e.target.value)} className="pr-10" />
+   774→   774→          </div>
+   775→   775→
+   776→   776→          {/* Quick Add G2Bulk */}
+   777→   777→          {providerList.length === 0 && (
+   778→   778→            <Card className="border-dashed border-2" style={{ borderColor: `${MAROON.accent}50`, backgroundColor: `${MAROON.darkest}` }}>
+   779→   779→              <CardContent className="p-4">
+   780→   780→                <div className="flex items-center justify-between">
+   781→   781→                  <div className="flex items-center gap-3">
+   782→   782→                    <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: `${MAROON.accent}20` }}>
+   783→   783→                      <Zap className="w-5 h-5" style={{ color: MAROON.accent }} />
+   784→   784→                    </div>
+   785→   785→                    <div>
+   786→   786→                      <p className="font-medium text-sm text-white">إضافة G2Bulk تلقائياً</p>
+   787→   787→                      <p className="text-xs" style={{ color: MAROON.muted }}>أضف مزود G2Bulk API بالإعدادات الافتراضية</p>
+   788→   788→                    </div>
+   789→   789→                  </div>
+   790→   790→                  <Button size="sm" variant="outline" style={{ borderColor: MAROON.accent, color: MAROON.accent }} onClick={handleQuickAddG2Bulk}>
+   791→   791→                    إضافة سريعة
+   792→   792→                  </Button>
+   793→   793→                </div>
+   794→   794→              </CardContent>
+   795→   795→            </Card>
+   796→   796→          )}
+   797→   797→
+   798→   798→          <div className="space-y-3 max-h-[calc(100vh-420px)] overflow-y-auto" style={{ scrollbarWidth: 'thin' }}>
+   799→   799→            {filteredProviders.map((prov, i) => {
+   800→   800→              const isExpanded = expandedProvider === prov.id;
+   801→   801→              const categories = prov.categories || {};
+   802→   802→              const categoryCount = Object.keys(categories).length;
+   803→   803→              let productCount = 0;
+   804→   804→              Object.values(categories).forEach((cat: any) => {
+   805→   805→                if (cat.products) productCount += Object.keys(cat.products).length;
+   806→   806→              });
+   807→   807→              const isSyncing = syncingProvider === prov.id;
+   808→   808→              const isTesting = testingProvider === prov.id;
+   809→   809→              const isRefreshing = refreshingBalance === prov.id;
+   810→   810→              const testRes = testResult?.providerId === prov.id ? testResult : null;
+   811→   811→              const assignedSection = sectionOptions.find(s => s.value === prov.sectionId);
+   812→   812→              const isLowBalance = (prov.balance || 0) < LOW_BALANCE_THRESHOLD;
+   813→   813→
+   814→   814→              return (
+   815→   815→                <motion.div key={prov.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.02 }}>
+   816→   816→                  <Card className="border-0 shadow-sm" style={{ backgroundColor: MAROON.card }}>
+   817→   817→                    <CardContent className="p-4">
+   818→   818→                      <div className="flex items-center justify-between">
+   819→   819→                        <div className="flex items-center gap-3 flex-1 min-w-0">
+   820→   820→                          <div className="w-10 h-10 rounded-lg flex items-center justify-center shrink-0 overflow-hidden" style={{ backgroundColor: prov.icon ? 'transparent' : `${MAROON.accent}20` }}>
+   821→   821→                            {prov.icon ? (
+   822→   822→                              <img src={prov.icon} alt="" className="w-full h-full object-contain rounded-lg" />
+   823→   823→                            ) : (
+   824→   824→                              <Globe className="w-5 h-5" style={{ color: MAROON.accent }} />
+   825→   825→                            )}
+   826→   826→                          </div>
+   827→   827→                          <div className="min-w-0 flex-1">
+   828→   828→                            <div className="flex items-center gap-2">
+   829→   829→                              <p className="font-medium text-sm text-white truncate">{prov.name}</p>
+   830→   830→                              {isLowBalance && prov.balance !== undefined && (
+   831→   831→                                <Badge className="text-[9px] px-1.5 py-0 bg-amber-500/20 text-amber-400 border-amber-500/30">رصيد منخفض</Badge>
+   832→   832→                              )}
+   833→   833→                            </div>
+   834→   834→                            <p className="text-xs truncate" style={{ color: MAROON.muted }} dir="ltr">{prov.baseUrl}</p>
+   835→   835→                            <div className="flex items-center gap-2 mt-1 flex-wrap">
+   836→   836→                              {categoryCount > 0 && <Badge variant="outline" className="text-[10px] py-0" style={{ borderColor: MAROON.border, color: MAROON.muted }}>{categoryCount} تصنيف</Badge>}
+   837→   837→                              {productCount > 0 && <Badge variant="outline" className="text-[10px] py-0" style={{ borderColor: MAROON.border, color: MAROON.muted }}>{productCount} منتج</Badge>}
+   838→   838→                              {assignedSection && <Badge variant="outline" className="text-[10px] py-0" style={{ borderColor: MAROON.border, color: MAROON.muted }}>{assignedSection.label}</Badge>}
+   839→   839→                              {prov.commission > 0 && <Badge variant="outline" className="text-[10px] py-0" style={{ borderColor: MAROON.border, color: MAROON.muted }}>عمولة: {prov.commission}{prov.commissionType === 'percentage' ? '%' : ''}</Badge>}
+   840→   840→                            </div>
+   841→   841→                          </div>
+   842→   842→                        </div>
+   843→   843→                        <div className="flex items-center gap-1.5 shrink-0">
+   844→   844→                          <Switch checked={prov.isActive !== false} onCheckedChange={(v) => handleToggleActive(prov.id, v)} />
+   845→   845→                          <Button variant="ghost" size="sm" onClick={() => handleRefreshBalance(prov.id)} disabled={isRefreshing} title="تحديث الرصيد">
+   846→   846→                            {isRefreshing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wallet className="w-4 h-4" style={{ color: MAROON.muted }} />}
+   847→   847→                          </Button>
+   848→   848→                          <Button variant="ghost" size="sm" onClick={() => handleTest(prov.id)} disabled={isTesting} title="اختبار الاتصال">
+   849→   849→                            {isTesting ? <Loader2 className="w-4 h-4 animate-spin" /> : <KeyRound className="w-4 h-4" style={{ color: MAROON.muted }} />}
+   850→   850→                          </Button>
+   851→   851→                          <Button variant="ghost" size="sm" onClick={() => handleSync(prov.id)} disabled={isSyncing || !prov.syncEnabled} title="مزامنة">
+   852→   852→                            {isSyncing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" style={{ color: MAROON.muted }} />}
+   853→   853→                          </Button>
+   854→   854→                          <Button variant="ghost" size="sm" onClick={() => setExpandedProvider(isExpanded ? null : prov.id)}>
+   855→   855→                            {isExpanded ? <ChevronUp className="w-4 h-4" style={{ color: MAROON.muted }} /> : <ChevronDown className="w-4 h-4" style={{ color: MAROON.muted }} />}
+   856→   856→                          </Button>
+   857→   857→                          <Button variant="ghost" size="sm" onClick={() => {
+   858→   858→                            setEditing(prov.id);
+   859→   859→                            setName(prov.name || ''); setBaseUrl(prov.baseUrl || ''); setApiKey(prov.apiKey || '');
+   860→   860→                            setApiSecret(prov.apiSecret || ''); setAuthHeader(prov.authHeader || 'X-API-Key');
+   861→   861→                            setIsActive(prov.isActive !== false); setSyncEnabled(prov.syncEnabled !== false);
+   862→   862→                            setSectionId(prov.sectionId || 'service-providers');
+   863→   863→                            setCommission(prov.commission || 0); setCommissionType(prov.commissionType || 'percentage');
+   864→   864→                            setIcon(prov.icon || '');
+   865→   865→                            setDialog(true);
+   866→   866→                          }}><Edit className="w-4 h-4" style={{ color: MAROON.muted }} /></Button>
+   867→   867→                          <Button variant="ghost" size="sm" onClick={() => setDeleteConfirm(prov.id)}>
+   868→   868→                            <Trash2 className="w-4 h-4 text-red-500" />
+   869→   869→                          </Button>
+   870→   870→                        </div>
+   871→   871→                      </div>
+   872→   872→
+   873→   873→                      {/* Balance & Info Bar */}
+   874→   874→                      {(prov.balance !== undefined || prov.lastBalanceCheck) && (
+   875→   875→                        <div className="mt-2 flex items-center gap-3 flex-wrap">
+   876→   876→                          {prov.balance !== undefined && (
+   877→   877→                            <div className={cn(
+   878→   878→                              "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium",
+   879→   879→                              isLowBalance ? "bg-amber-500/10 text-amber-500" : "bg-green-500/10 text-green-600"
+   880→   880→                            )}>
+   881→   881→                              <DollarSign size={12} />
+   882→   882→                              <span>{prov.balance} {prov.balanceCurrency || 'USD'}</span>
+   883→   883→                              {isLowBalance && <AlertTriangle size={12} className="mr-1" />}
+   884→   884→                            </div>
+   885→   885→                          )}
+   886→   886→                          {prov.lastBalanceCheck && (
+   887→   887→                            <span className="text-[10px]" style={{ color: MAROON.muted }}>
+   888→   888→                              آخر فحص: {new Date(prov.lastBalanceCheck).toLocaleString('ar')}
+   889→   889→                            </span>
+   890→   890→                          )}
+   891→   891→                          {prov.lastSync && (
+   892→   892→                            <span className="text-[10px]" style={{ color: MAROON.muted }}>
+   893→   893→                              آخر مزامنة: {new Date(prov.lastSync).toLocaleString('ar')}
+   894→   894→                            </span>
+   895→   895→                          )}
+   896→   896→                        </div>
+   897→   897→                      )}
+   898→   898→
+   899→   899→                      {/* Test result */}
+   900→   900→                      {testRes && (
+   901→   901→                        <div className={`mt-2 p-2 rounded-lg text-xs flex items-center gap-2 ${testRes.success ? 'bg-green-500/10 text-green-600' : 'bg-red-500/10 text-red-500'}`}>
+   902→   902→                          {testRes.success ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
+   903→   903→                          <span>{testRes.message}</span>
+   904→   904→                          {testRes.balance && <Badge variant="outline" className="text-[10px] mr-auto">الرصيد: {testRes.balance}</Badge>}
+   905→   905→                        </div>
+   906→   906→                      )}
+   907→   907→
+   908→   908→                      {/* Expanded: Show categories and products */}
+   909→   909→                      <AnimatePresence>
+   910→   910→                        {isExpanded && (
+   911→   911→                          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+   912→   912→                            <div className="mt-3 pt-3 space-y-2 max-h-80 overflow-y-auto" style={{ borderTop: `1px solid ${MAROON.border}`, scrollbarWidth: 'thin' }}>
+   913→   913→                              {categoryCount > 0 ? (
+   914→   914→                                Object.entries(categories).map(([catId, cat]: [string, any]) => {
+   915→   915→                                  const catProducts = cat.products || {};
+   916→   916→                                  const catProductCount = Object.keys(catProducts).length;
+   917→   917→                                  return (
+   918→   918→                                    <div key={catId} className="p-2 rounded-lg" style={{ backgroundColor: MAROON.darkest }}>
+   919→   919→                                      <div className="flex items-center gap-2">
+   920→   920→                                        {cat.icon ? (
+   921→   921→                                          <img src={cat.icon} alt="" className="w-6 h-6 object-contain rounded" />
+   922→   922→                                        ) : (
+   923→   923→                                          <div className="w-6 h-6 rounded flex items-center justify-center" style={{ backgroundColor: `${MAROON.accent}20` }}>
+   924→   924→                                            <Server className="w-3 h-3" style={{ color: MAROON.accent }} />
+   925→   925→                                          </div>
+   926→   926→                                        )}
+   927→   927→                                        <span className="text-xs font-medium text-white flex-1">{cat.title}</span>
+   928→   928→                                        <Badge variant="outline" className="text-[9px] py-0" style={{ borderColor: MAROON.border, color: MAROON.muted }}>{catProductCount} منتج</Badge>
+   929→   929→                                      </div>
+   930→   930→                                      {catProductCount > 0 && (
+   931→   931→                                        <div className="mt-1.5 grid grid-cols-2 gap-1">
+   932→   932→                                          {Object.entries(catProducts).slice(0, 6).map(([prodId, prod]: [string, any]) => (
+   933→   933→                                            <div key={prodId} className="text-[10px] px-1.5 py-0.5 rounded truncate" style={{ backgroundColor: MAROON.bg, color: MAROON.muted }}>
+   934→   934→                                              {prod.title} - {prod.unit_price}$
+   935→   935→                                            </div>
+   936→   936→                                          ))}
+   937→   937→                                          {catProductCount > 6 && (
+   938→   938→                                            <div className="text-[10px] px-1.5 py-0.5 rounded" style={{ backgroundColor: MAROON.bg, color: MAROON.muted }}>
+   939→   939→                                              +{catProductCount - 6} المزيد
+   940→   940→                                            </div>
+   941→   941→                                          )}
+   942→   942→                                        </div>
+   943→   943→                                      )}
+   944→   944→                                    </div>
+   945→   945→                                  );
+   946→   946→                                })
+   947→   947→                              ) : (
+   948→   948→                                <p className="text-xs text-center py-4" style={{ color: MAROON.muted }}>
+   949→   949→                                  لم يتم مزامنة التصنيفات بعد. اضغط على زر المزامنة
+   950→   950→                                </p>
+   951→   951→                              )}
+   952→   952→                            </div>
+   953→   953→                          </motion.div>
+   954→   954→                        )}
+   955→   955→                      </AnimatePresence>
+   956→   956→                    </CardContent>
+   957→   957→                  </Card>
+   958→   958→                </motion.div>
+   959→   959→              );
+   960→   960→            })}
+   961→   961→            {filteredProviders.length === 0 && <p className="text-center py-8" style={{ color: MAROON.muted }}>لا يوجد مزودي API</p>}
+   962→   962→          </div>
+   963→   963→        </TabsContent>
+   964→   964→
+   965→   965→        {/* ─── Tab: Balance Tracking ──────────────────────────────────── */}
+   966→   966→        <TabsContent value="balance" className="space-y-4 mt-4">
+   967→   967→          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+   968→   968→            {providerList.map((prov, i) => {
+   969→   969→              const isRefreshing = refreshingBalance === prov.id;
+   970→   970→              const isLowBalance = (prov.balance || 0) < LOW_BALANCE_THRESHOLD;
+   971→   971→              const balanceHistory = getBalanceHistory(prov);
+   972→   972→              const hasHistory = balanceHistory.length > 0;
+   973→   973→
+   974→   974→              return (
+   975→   975→                <motion.div key={prov.id} initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.03 }}>
+   976→   976→                  <Card className="border-0 shadow-sm overflow-hidden" style={{ backgroundColor: MAROON.card }}>
+   977→   977→                    <CardHeader className="p-4 pb-2">
+   978→   978→                      <div className="flex items-center justify-between">
+   979→   979→                        <div className="flex items-center gap-3">
+   980→   980→                          <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ backgroundColor: `${MAROON.accent}20` }}>
+   981→   981→                            {prov.icon ? (
+   982→   982→                              <img src={prov.icon} alt="" className="w-5 h-5 object-contain rounded" />
+   983→   983→                            ) : (
+   984→   984→                              <Globe className="w-4 h-4" style={{ color: MAROON.accent }} />
+   985→   985→                            )}
+   986→   986→                          </div>
+   987→   987→                          <div>
+   988→   988→                            <CardTitle className="text-sm text-white">{prov.name}</CardTitle>
+   989→   989→                            <CardDescription className="text-[10px]" style={{ color: MAROON.muted }}>
+   990→   990→                              {prov.isActive !== false ? 'نشط' : 'غير نشط'}
+   991→   991→                            </CardDescription>
+   992→   992→                          </div>
+   993→   993→                        </div>
+   994→   994→                        <Button
+   995→   995→                          size="sm"
+   996→   996→                          variant="outline"
+   997→   997→                          className="h-7 text-xs"
+   998→   998→                          style={{ borderColor: isLowBalance ? '#F59E0B' : MAROON.accent, color: isLowBalance ? '#F59E0B' : MAROON.accent }}
+   999→   999→                          onClick={() => handleRefreshBalance(prov.id)}
+  1000→  1000→                          disabled={isRefreshing}
+  1001→  1001→                        >
+  1002→  1002→                          {isRefreshing ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3 ml-1" />}
+  1003→  1003→                          فحص الرصيد
+  1004→  1004→                        </Button>
+  1005→  1005→                      </div>
+  1006→  1006→                    </CardHeader>
+  1007→  1007→                    <CardContent className="p-4 pt-2">
+  1008→  1008→                      {/* Balance Display */}
+  1009→  1009→                      <div className="flex items-center gap-4 mb-3">
+  1010→  1010→                        <div className={cn(
+  1011→  1011→                          "flex items-center gap-2 px-3 py-2 rounded-lg",
+  1012→  1012→                          isLowBalance ? "bg-amber-500/10" : "bg-green-500/10"
+  1013→  1013→                        )}>
+  1014→  1014→                          <DollarSign className={cn("w-5 h-5", isLowBalance ? "text-amber-500" : "text-green-500")} />
+  1015→  1015→                          <div>
+  1016→  1016→                            <p className={cn("text-lg font-bold", isLowBalance ? "text-amber-400" : "text-green-400")}>
+  1017→  1017→                              {prov.balance !== undefined ? formatNumber(prov.balance) : '—'}
+  1018→  1018→                            </p>
+  1019→  1019→                            <p className="text-[10px]" style={{ color: MAROON.muted }}>{prov.balanceCurrency || 'USD'}</p>
+  1020→  1020→                          </div>
+  1021→  1021→                        </div>
+  1022→  1022→                        <div className="flex-1">
+  1023→  1023→                          {prov.lastBalanceCheck ? (
+  1024→  1024→                            <div className="flex items-center gap-1.5">
+  1025→  1025→                              <Clock size={12} style={{ color: MAROON.muted }} />
+  1026→  1026→                              <span className="text-[10px]" style={{ color: MAROON.muted }}>
+  1027→  1027→                                آخر فحص: {new Date(prov.lastBalanceCheck).toLocaleString('ar', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+  1028→  1028→                              </span>
+  1029→  1029→                            </div>
+  1030→  1030→                          ) : (
+  1031→  1031→                            <span className="text-[10px]" style={{ color: MAROON.muted }}>لم يتم فحص الرصيد بعد</span>
+  1032→  1032→                          )}
+  1033→  1033→                          {isLowBalance && prov.balance !== undefined && (
+  1034→  1034→                            <div className="flex items-center gap-1.5 mt-1">
+  1035→  1035→                              <AlertTriangle size={12} className="text-amber-500" />
+  1036→  1036→                              <span className="text-[10px] text-amber-400">رصيد منخفض — أقل من {LOW_BALANCE_THRESHOLD}$</span>
+  1037→  1037→                            </div>
+  1038→  1038→                          )}
+  1039→  1039→                        </div>
+  1040→  1040→                      </div>
+  1041→  1041→
+  1042→  1042→                      {/* Balance History Chart */}
+  1043→  1043→                      {hasHistory && (
+  1044→  1044→                        <div className="mt-2 rounded-lg p-2" style={{ backgroundColor: MAROON.darkest }}>
+  1045→  1045→                          <p className="text-[10px] mb-1.5" style={{ color: MAROON.muted }}>آخر 7 أيام</p>
+  1046→  1046→                          <ChartContainer config={balanceChartConfig} className="h-[80px] w-full">
+  1047→  1047→                            <AreaChart data={balanceHistory} margin={{ top: 2, right: 4, left: 4, bottom: 2 }}>
+  1048→  1048→                              <CartesianGrid strokeDasharray="3 3" stroke={MAROON.border} />
+  1049→  1049→                              <XAxis
+  1050→  1050→                                dataKey="date"
+  1051→  1051→                                tickLine={false}
+  1052→  1052→                                axisLine={false}
+  1053→  1053→                                tick={{ fontSize: 9, fill: MAROON.muted }}
+  1054→  1054→                                tickFormatter={(v) => new Date(v).getDate().toString()}
+  1055→  1055→                              />
+  1056→  1056→                              <YAxis
+  1057→  1057→                                tickLine={false}
+  1058→  1058→                                axisLine={false}
+  1059→  1059→                                tick={{ fontSize: 9, fill: MAROON.muted }}
+  1060→  1060→                                width={35}
+  1061→  1061→                              />
+  1062→  1062→                              <ChartTooltip content={<ChartTooltipContent />} />
+  1063→  1063→                              <defs>
+  1064→  1064→                                <linearGradient id={`fillBalance-${prov.id}`} x1="0" y1="0" x2="0" y2="1">
+  1065→  1065→                                  <stop offset="5%" stopColor={MAROON.accent} stopOpacity={0.4} />
+  1066→  1066→                                  <stop offset="95%" stopColor={MAROON.accent} stopOpacity={0.05} />
+  1067→  1067→                                </linearGradient>
+  1068→  1068→                              </defs>
+  1069→  1069→                              <Area
+  1070→  1070→                                type="monotone"
+  1071→  1071→                                dataKey="balance"
+  1072→  1072→                                stroke={MAROON.accent}
+  1073→  1073→                                fill={`url(#fillBalance-${prov.id})`}
+  1074→  1074→                                strokeWidth={2}
+  1075→  1075→                              />
+  1076→  1076→                            </AreaChart>
+  1077→  1077→                          </ChartContainer>
+  1078→  1078→                        </div>
+  1079→  1079→                      )}
+  1080→  1080→
+  1081→  1081→                      {!hasHistory && prov.balance === undefined && (
+  1082→  1082→                        <div className="text-center py-3 rounded-lg" style={{ backgroundColor: MAROON.darkest }}>
+  1083→  1083→                          <p className="text-[10px]" style={{ color: MAROON.muted }}>اضغط &quot;فحص الرصيد&quot; لبدء تسجيل البيانات</p>
+  1084→  1084→                        </div>
+  1085→  1085→                      )}
+  1086→  1086→                    </CardContent>
+  1087→  1087→                  </Card>
+  1088→  1088→                </motion.div>
+  1089→  1089→              );
+  1090→  1090→            })}
+  1091→  1091→            {providerList.length === 0 && (
+  1092→  1092→              <div className="col-span-2 text-center py-12" style={{ color: MAROON.muted }}>
+  1093→  1093→                <Globe className="w-10 h-10 mx-auto mb-2 opacity-40" />
+  1094→  1094→                <p>لا يوجد مزودين. أضف مزود أولاً.</p>
+  1095→  1095→              </div>
+  1096→  1096→            )}
+  1097→  1097→          </div>
+  1098→  1098→        </TabsContent>
+  1099→  1099→
+  1100→  1100→        {/* ─── Tab: Balance Logs ──────────────────────────────────────── */}
+  1101→  1101→        <TabsContent value="logs" className="space-y-4 mt-4">
+  1102→  1102→          <div className="flex items-center gap-3 flex-wrap">
+  1103→  1103→            <div className="flex items-center gap-2">
+  1104→  1104→              <Filter size={14} style={{ color: MAROON.muted }} />
+  1105→  1105→              <Select value={logFilterProvider} onValueChange={setLogFilterProvider}>
+  1106→  1106→                <SelectTrigger className="w-48 h-8 text-xs">
+  1107→  1107→                  <SelectValue placeholder="تصفية حسب المزود" />
+  1108→  1108→                </SelectTrigger>
+  1109→  1109→                <SelectContent>
+  1110→  1110→                  <SelectItem value="all">جميع المزودين</SelectItem>
+  1111→  1111→                  {providerList.map(p => (
+  1112→  1112→                    <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>
+  1113→  1113→                  ))}
+  1114→  1114→                </SelectContent>
+  1115→  1115→              </Select>
+  1116→  1116→            </div>
+  1117→  1117→            <Badge variant="outline" className="text-[10px]" style={{ borderColor: MAROON.border, color: MAROON.muted }}>
+  1118→  1118→              {logFilterProvider === 'all' ? balanceLogs.length : balanceLogs.filter(l => l.providerId === logFilterProvider).length} سجل
+  1119→  1119→            </Badge>
+  1120→  1120→          </div>
+  1121→  1121→
+  1122→  1122→          <Card className="border-0 shadow-sm" style={{ backgroundColor: MAROON.card }}>
+  1123→  1123→            <CardContent className="p-0">
+  1124→  1124→              <div className="max-h-[calc(100vh-360px)] overflow-y-auto" style={{ scrollbarWidth: 'thin' }}>
+  1125→  1125→                <Table>
+  1126→  1126→                  <TableHeader>
+  1127→  1127→                    <TableRow style={{ borderBottomColor: MAROON.border }}>
+  1128→  1128→                      <TableHead className="text-xs" style={{ color: MAROON.muted }}>المزود</TableHead>
+  1129→  1129→                      <TableHead className="text-xs" style={{ color: MAROON.muted }}>الرصيد السابق</TableHead>
+  1130→  1130→                      <TableHead className="text-xs" style={{ color: MAROON.muted }}>الرصيد الجديد</TableHead>
+  1131→  1131→                      <TableHead className="text-xs" style={{ color: MAROON.muted }}>التغيير</TableHead>
+  1132→  1132→                      <TableHead className="text-xs" style={{ color: MAROON.muted }}>العملة</TableHead>
+  1133→  1133→                      <TableHead className="text-xs" style={{ color: MAROON.muted }}>التاريخ</TableHead>
+  1134→  1134→                    </TableRow>
+  1135→  1135→                  </TableHeader>
+  1136→  1136→                  <TableBody>
+  1137→  1137→                    {(logFilterProvider === 'all' ? balanceLogs : balanceLogs.filter(l => l.providerId === logFilterProvider))
+  1138→  1138→                      .slice(0, 100)
+  1139→  1139→                      .map((log) => {
+  1140→  1140→                        const change = log.newBalance - log.previousBalance;
+  1141→  1141→                        const isPositive = change > 0;
+  1142→  1142→                        const isNeutral = change === 0;
+  1143→  1143→                        return (
+  1144→  1144→                          <TableRow key={log.id} style={{ borderBottomColor: MAROON.border }}>
+  1145→  1145→                            <TableCell className="text-xs font-medium text-white">{log.providerName}</TableCell>
+  1146→  1146→                            <TableCell className="text-xs" style={{ color: MAROON.muted }}>{formatNumber(log.previousBalance)}</TableCell>
+  1147→  1147→                            <TableCell className="text-xs font-medium text-white">{formatNumber(log.newBalance)}</TableCell>
+  1148→  1148→                            <TableCell className="text-xs">
+  1149→  1149→                              <span className={cn(
+  1150→  1150→                                "inline-flex items-center gap-1",
+  1151→  1151→                                isNeutral ? "text-muted-foreground" : isPositive ? "text-green-500" : "text-red-500"
+  1152→  1152→                              )}>
+  1153→  1153→                                {isPositive ? <TrendingUp size={12} /> : isNeutral ? <ArrowUpDown size={12} /> : <TrendingDown size={12} />}
+  1154→  1154→                                {isPositive ? '+' : ''}{formatNumber(change)}
+  1155→  1155→                              </span>
+  1156→  1156→                            </TableCell>
+  1157→  1157→                            <TableCell className="text-xs" style={{ color: MAROON.muted }}>{log.currency}</TableCell>
+  1158→  1158→                            <TableCell className="text-xs" style={{ color: MAROON.muted }}>
+  1159→  1159→                              {new Date(log.changedAt).toLocaleString('ar', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+  1160→  1160→                            </TableCell>
+  1161→  1161→                          </TableRow>
+  1162→  1162→                        );
+  1163→  1163→                      })}
+  1164→  1164→                    {balanceLogs.length === 0 && (
+  1165→  1165→                      <TableRow>
+  1166→  1166→                        <TableCell colSpan={6} className="text-center py-8" style={{ color: MAROON.muted }}>
+  1167→  1167→                          لا توجد سجلات أرصدة بعد
+  1168→  1168→                        </TableCell>
+  1169→  1169→                      </TableRow>
+  1170→  1170→                    )}
+  1171→  1171→                  </TableBody>
+  1172→  1172→                </Table>
+  1173→  1173→              </div>
+  1174→  1174→            </CardContent>
+  1175→  1175→          </Card>
+  1176→  1176→        </TabsContent>
+  1177→  1177→
+  1178→  1178→        {/* ─── Tab: G2Bulk Integration ────────────────────────────────── */}
+  1179→  1179→        <TabsContent value="g2bulk" className="space-y-4 mt-4">
+  1180→  1180→          {(() => {
+  1181→  1181→            const g2bulk = providers['g2bulk'];
+  1182→  1182→            const isSyncingG2 = syncingProvider === 'g2bulk';
+  1183→  1183→            const categories = g2bulk?.categories || {};
+  1184→  1184→            const categoryCount = Object.keys(categories).length;
+  1185→  1185→            let productCount = 0;
+  1186→  1186→            Object.values(categories).forEach((cat: any) => {
+  1187→  1187→              if (cat.products) productCount += Object.keys(cat.products).length;
+  1188→  1188→            });
+  1189→  1189→
+  1190→  1190→            if (!g2bulk) {
+  1191→  1191→              return (
+  1192→  1192→                <Card className="border-dashed border-2" style={{ borderColor: `${MAROON.accent}50`, backgroundColor: MAROON.darkest }}>
+  1193→  1193→                  <CardContent className="p-6">
+  1194→  1194→                    <div className="text-center space-y-4">
+  1195→  1195→                      <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto" style={{ backgroundColor: `${MAROON.accent}20` }}>
+  1196→  1196→                        <Zap className="w-8 h-8" style={{ color: MAROON.accent }} />
+  1197→  1197→                      </div>
+  1198→  1198→                      <div>
+  1199→  1199→                        <h3 className="text-lg font-bold text-white">G2Bulk API</h3>
+  1200→  1200→                        <p className="text-sm mt-1" style={{ color: MAROON.muted }}>مزود خدمات جملة متكامل — تصنيفات ومنتجات متنوعة</p>
+  1201→  1201→                      </div>
+  1202→  1202→                      <div className="space-y-2 text-xs" style={{ color: MAROON.muted }}>
+  1203→  1203→                        <p>API URL: <code dir="ltr" className="px-2 py-0.5 rounded" style={{ backgroundColor: MAROON.bg }}>https://api.g2bulk.com/v1/</code></p>
+  1204→  1204→                      </div>
+  1205→  1205→                      <Button onClick={handleQuickAddG2Bulk} style={{ backgroundColor: MAROON.accent }} className="gap-2">
+  1206→  1206→                        <Plus className="w-4 h-4" /> إضافة وتفعيل G2Bulk
+  1207→  1207→                      </Button>
+  1208→  1208→                    </div>
+  1209→  1209→                  </CardContent>
+  1210→  1210→                </Card>
+  1211→  1211→              );
+  1212→  1212→            }
+  1213→  1213→
+  1214→  1214→            return (
+  1215→  1215→              <>
+  1216→  1216→                {/* G2Bulk Status Card */}
+  1217→  1217→                <Card className="border-0 shadow-sm" style={{ backgroundColor: MAROON.card }}>
+  1218→  1218→                  <CardHeader className="p-4 pb-2">
+  1219→  1219→                    <div className="flex items-center justify-between">
+  1220→  1220→                      <div className="flex items-center gap-3">
+  1221→  1221→                        <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={{ backgroundColor: `${MAROON.accent}20` }}>
+  1222→  1222→                          <Zap className="w-6 h-6" style={{ color: MAROON.accent }} />
+  1223→  1223→                        </div>
+  1224→  1224→                        <div>
+  1225→  1225→                          <CardTitle className="text-base text-white">G2Bulk</CardTitle>
+  1226→  1226→                          <div className="flex items-center gap-2 mt-1">
+  1227→  1227→                            <Badge className={cn("text-[10px]", g2bulk.isActive !== false ? "bg-green-500/20 text-green-400" : "bg-red-500/20 text-red-400")}>
+  1228→  1228→                              {g2bulk.isActive !== false ? 'نشط' : 'معطل'}
+  1229→  1229→                            </Badge>
+  1230→  1230→                            {g2bulk.lastSync && (
+  1231→  1231→                              <span className="text-[10px]" style={{ color: MAROON.muted }}>
+  1232→  1232→                                آخر مزامنة: {new Date(g2bulk.lastSync).toLocaleString('ar')}
+  1233→  1233→                              </span>
+  1234→  1234→                            )}
+  1235→  1235→                          </div>
+  1236→  1236→                        </div>
+  1237→  1237→                      </div>
+  1238→  1238→                      <div className="flex gap-2">
+  1239→  1239→                        <Button
+  1240→  1240→                          size="sm"
+  1241→  1241→                          variant="outline"
+  1242→  1242→                          style={{ borderColor: MAROON.accent, color: MAROON.accent }}
+  1243→  1243→                          onClick={() => handleSync('g2bulk')}
+  1244→  1244→                          disabled={isSyncingG2}
+  1245→  1245→                        >
+  1246→  1246→                          {isSyncingG2 ? <Loader2 className="w-4 h-4 animate-spin" /> : <Repeat className="w-4 h-4 ml-1" />}
+  1247→  1247→                          مزامنة الآن
+  1248→  1248→                        </Button>
+  1249→  1249→                        <Button
+  1250→  1250→                          size="sm"
+  1251→  1251→                          variant="outline"
+  1252→  1252→                          onClick={() => handleRefreshBalance('g2bulk')}
+  1253→  1253→                          disabled={refreshingBalance === 'g2bulk'}
+  1254→  1254→                        >
+  1255→  1255→                          {refreshingBalance === 'g2bulk' ? <Loader2 className="w-4 h-4 animate-spin" /> : <DollarSign className="w-4 h-4 ml-1" />}
+  1256→  1256→                          فحص الرصيد
+  1257→  1257→                        </Button>
+  1258→  1258→                      </div>
+  1259→  1259→                    </div>
+  1260→  1260→                  </CardHeader>
+  1261→  1261→                  <CardContent className="p-4 pt-2">
+  1262→  1262→                    {/* Sync Stats */}
+  1263→  1263→                    <div className="grid grid-cols-3 gap-3 mb-4">
+  1264→  1264→                      <div className="rounded-lg p-3 text-center" style={{ backgroundColor: MAROON.darkest }}>
+  1265→  1265→                        <p className="text-xl font-bold text-white">{categoryCount}</p>
+  1266→  1266→                        <p className="text-[10px]" style={{ color: MAROON.muted }}>تصنيف</p>
+  1267→  1267→                      </div>
+  1268→  1268→                      <div className="rounded-lg p-3 text-center" style={{ backgroundColor: MAROON.darkest }}>
+  1269→  1269→                        <p className="text-xl font-bold text-white">{productCount}</p>
+  1270→  1270→                        <p className="text-[10px]" style={{ color: MAROON.muted }}>منتج</p>
+  1271→  1271→                      </div>
+  1272→  1272→                      <div className="rounded-lg p-3 text-center" style={{ backgroundColor: MAROON.darkest }}>
+  1273→  1273→                        <p className={cn("text-xl font-bold", (g2bulk.balance || 0) < LOW_BALANCE_THRESHOLD ? "text-amber-400" : "text-green-400")}>
+  1274→  1274→                          {g2bulk.balance !== undefined ? formatNumber(g2bulk.balance) : '—'}
+  1275→  1275→                        </p>
+  1276→  1276→                        <p className="text-[10px]" style={{ color: MAROON.muted }}>{g2bulk.balanceCurrency || 'USD'}</p>
+  1277→  1277→                      </div>
+  1278→  1278→                    </div>
+  1279→  1279→
+  1280→  1280→                    {/* API Info */}
+  1281→  1281→                    <div className="rounded-lg p-3 space-y-2" style={{ backgroundColor: MAROON.darkest }}>
+  1282→  1282→                      <div className="flex items-center gap-2">
+  1283→  1283→                        <Globe size={12} style={{ color: MAROON.muted }} />
+  1284→  1284→                        <span className="text-[10px]" style={{ color: MAROON.muted }}>API URL:</span>
+  1285→  1285→                        <code className="text-[10px] text-white" dir="ltr">https://api.g2bulk.com/v1/</code>
+  1286→  1286→                      </div>
+  1287→  1287→                      <div className="flex items-center gap-2">
+  1288→  1288→                        <KeyRound size={12} style={{ color: MAROON.muted }} />
+  1289→  1289→                        <span className="text-[10px]" style={{ color: MAROON.muted }}>API Key:</span>
+  1290→  1290→                        <code className="text-[10px] text-white" dir="ltr">{g2bulk.apiKey ? `${g2bulk.apiKey.slice(0, 12)}...` : '—'}</code>
+  1291→  1291→                      </div>
+  1292→  1292→                      <div className="flex items-center gap-2">
+  1293→  1293→                        <Activity size={12} style={{ color: MAROON.muted }} />
+  1294→  1294→                        <span className="text-[10px]" style={{ color: MAROON.muted }}>Auth Header:</span>
+  1295→  1295→                        <code className="text-[10px] text-white" dir="ltr">{g2bulk.authHeader || 'X-API-Key'}</code>
+  1296→  1296→                      </div>
+  1297→  1297→                    </div>
+  1298→  1298→                  </CardContent>
+  1299→  1299→                </Card>
+  1300→  1300→
+  1301→  1301→                {/* Categories & Products Grid */}
+  1302→  1302→                {categoryCount > 0 && (
+  1303→  1303→                  <div className="space-y-3">
+  1304→  1304→                    <h3 className="text-sm font-medium text-white">التصنيفات والمنتجات</h3>
+  1305→  1305→                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-[400px] overflow-y-auto" style={{ scrollbarWidth: 'thin' }}>
+  1306→  1306→                      {Object.entries(categories).map(([catId, cat]: [string, any]) => {
+  1307→  1307→                        const catProducts = cat.products || {};
+  1308→  1308→                        const catProductCount = Object.keys(catProducts).length;
+  1309→  1309→                        return (
+  1310→  1310→                          <Card key={catId} className="border-0 shadow-sm" style={{ backgroundColor: MAROON.card }}>
+  1311→  1311→                            <CardContent className="p-3">
+  1312→  1312→                              <div className="flex items-center gap-2 mb-2">
+  1313→  1313→                                {cat.icon ? (
+  1314→  1314→                                  <img src={cat.icon} alt="" className="w-7 h-7 object-contain rounded" />
+  1315→  1315→                                ) : (
+  1316→  1316→                                  <div className="w-7 h-7 rounded flex items-center justify-center" style={{ backgroundColor: `${MAROON.accent}20` }}>
+  1317→  1317→                                    <Server className="w-3.5 h-3.5" style={{ color: MAROON.accent }} />
+  1318→  1318→                                  </div>
+  1319→  1319→                                )}
+  1320→  1320→                                <span className="text-xs font-medium text-white flex-1">{cat.title}</span>
+  1321→  1321→                                <Badge variant="outline" className="text-[9px] py-0" style={{ borderColor: MAROON.border, color: MAROON.muted }}>{catProductCount} منتج</Badge>
+  1322→  1322→                              </div>
+  1323→  1323→                              {catProductCount > 0 && (
+  1324→  1324→                                <div className="space-y-1 max-h-32 overflow-y-auto" style={{ scrollbarWidth: 'thin' }}>
+  1325→  1325→                                  {Object.entries(catProducts).slice(0, 10).map(([prodId, prod]: [string, any]) => (
+  1326→  1326→                                    <div key={prodId} className="flex items-center justify-between text-[10px] px-2 py-1 rounded" style={{ backgroundColor: MAROON.darkest }}>
+  1327→  1327→                                      <span className="truncate text-white">{prod.title}</span>
+  1328→  1328→                                      <span style={{ color: MAROON.muted }}>{prod.unit_price}$</span>
+  1329→  1329→                                    </div>
+  1330→  1330→                                  ))}
+  1331→  1331→                                  {catProductCount > 10 && (
+  1332→  1332→                                    <p className="text-[10px] text-center" style={{ color: MAROON.muted }}>+{catProductCount - 10} المزيد</p>
+  1333→  1333→                                  )}
+  1334→  1334→                                </div>
+  1335→  1335→                              )}
+  1336→  1336→                            </CardContent>
+  1337→  1337→                          </Card>
+  1338→  1338→                        );
+  1339→  1339→                      })}
+  1340→  1340→                    </div>
+  1341→  1341→                  </div>
+  1342→  1342→                )}
+  1343→  1343→              </>
+  1344→  1344→            );
+  1345→  1345→          })()}
+  1346→  1346→        </TabsContent>
+  1347→  1347→      </Tabs>
+  1348→  1348→
+  1349→  1349→      {/* ─── Provider Add/Edit Dialog ────────────────────────────────── */}
+  1350→  1350→      <Dialog open={dialog} onOpenChange={(open) => { setDialog(open); if (!open) resetForm(); }}>
+  1351→  1351→        <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto" style={{ backgroundColor: MAROON.card, border: `1px solid ${MAROON.border}` }}>
+  1352→  1352→          <DialogHeader>
+  1353→  1353→            <DialogTitle className="text-white">{editing ? 'تعديل مزود API' : 'إضافة مزود API'}</DialogTitle>
+  1354→  1354→          </DialogHeader>
+  1355→  1355→          <div className="space-y-4">
+  1356→  1356→            <div>
+  1357→  1357→              <Label className="text-white">الاسم</Label>
+  1358→  1358→              <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="مثال: G2Bulk" className="mt-1" style={{ backgroundColor: MAROON.darkest, color: 'white', border: `1px solid ${MAROON.border}` }} />
+  1359→  1359→            </div>
+  1360→  1360→
+  1361→  1361→            {/* Icon Upload */}
+  1362→  1362→            <div>
+  1363→  1363→              <Label className="text-white">أيقونة المزود</Label>
+  1364→  1364→              <div className="flex items-center gap-3 mt-1">
+  1365→  1365→                {icon && <img src={icon} className="w-10 h-10 rounded-lg object-cover" alt="" />}
+  1366→  1366→                <Button variant="outline" size="sm" asChild style={{ borderColor: MAROON.border, color: MAROON.muted }}>
+  1367→  1367→                  <label><Upload className="w-4 h-4 ml-1" /> رفع أيقونة<input type="file" accept="image/*" className="hidden" onChange={handleIconUpload} /></label>
+  1368→  1368→                </Button>
+  1369→  1369→                {icon && <Button variant="ghost" size="sm" onClick={() => setIcon('')}><Trash2 className="w-4 h-4" /></Button>}
+  1370→  1370→              </div>
+  1371→  1371→            </div>
+  1372→  1372→
+  1373→  1373→            <div>
+  1374→  1374→              <Label className="text-white">رابط API الأساسي</Label>
+  1375→  1375→              <Input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} dir="ltr" placeholder="https://api.g2bulk.com/v1/" className="mt-1" style={{ backgroundColor: MAROON.darkest, color: 'white', border: `1px solid ${MAROON.border}` }} />
+  1376→  1376→            </div>
+  1377→  1377→            <div>
+  1378→  1378→              <Label className="text-white">مفتاح API</Label>
+  1379→  1379→              <div className="relative mt-1">
+  1380→  1380→                <Input value={apiKey} onChange={(e) => setApiKey(e.target.value)} dir="ltr" type={showApiKey ? 'text' : 'password'} placeholder="أدخل مفتاح API" className="pl-10" style={{ backgroundColor: MAROON.darkest, color: 'white', border: `1px solid ${MAROON.border}` }} />
+  1381→  1381→                <button type="button" onClick={() => setShowApiKey(!showApiKey)} className="absolute left-2 top-1/2 -translate-y-1/2 hover:text-foreground" style={{ color: MAROON.muted }}>
+  1382→  1382→                  {showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
+  1383→  1383→                </button>
+  1384→  1384→              </div>
+  1385→  1385→            </div>
+  1386→  1386→            <div>
+  1387→  1387→              <Label className="text-white">رأس المصادقة</Label>
+  1388→  1388→              <Input value={authHeader} onChange={(e) => setAuthHeader(e.target.value)} dir="ltr" placeholder="X-API-Key" className="mt-1" style={{ backgroundColor: MAROON.darkest, color: 'white', border: `1px solid ${MAROON.border}` }} />
+  1389→  1389→              <p className="text-[10px] mt-1" style={{ color: MAROON.muted }}>مثال: X-API-Key أو Authorization</p>
+  1390→  1390→            </div>
+  1391→  1391→            <div>
+  1392→  1392→              <Label className="text-white">API Secret (اختياري)</Label>
+  1393→  1393→              <Input value={apiSecret} onChange={(e) => setApiSecret(e.target.value)} dir="ltr" type="password" placeholder="اختياري" className="mt-1" style={{ backgroundColor: MAROON.darkest, color: 'white', border: `1px solid ${MAROON.border}` }} />
+  1394→  1394→            </div>
+  1395→  1395→
+  1396→  1396→            {/* Section Assignment */}
+  1397→  1397→            <div>
+  1398→  1398→              <Label className="text-white">القسم الذي يظهر فيه</Label>
+  1399→  1399→              <div className="flex flex-wrap gap-2 mt-1">
+  1400→  1400→                {sectionOptions.map(opt => (
+  1401→  1401→                  <button key={opt.value} onClick={() => setSectionId(opt.value)}
+  1402→  1402→                    className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
+  1403→  1403→                    style={{
+  1404→  1404→                      backgroundColor: sectionId === opt.value ? MAROON.accent : MAROON.darkest,
+  1405→  1405→                      color: sectionId === opt.value ? 'white' : MAROON.muted,
+  1406→  1406→                    }}>
+  1407→  1407→                    {opt.label}
+  1408→  1408→                  </button>
+  1409→  1409→                ))}
+  1410→  1410→              </div>
+  1411→  1411→            </div>
+  1412→  1412→
+  1413→  1413→            {/* Commission */}
+  1414→  1414→            <div>
+  1415→  1415→              <Label className="text-white">العمولة</Label>
+  1416→  1416→              <div className="flex gap-2 mt-1">
+  1417→  1417→                <Input type="number" value={commission} onChange={(e) => setCommission(Number(e.target.value))} className="flex-1" placeholder="0" style={{ backgroundColor: MAROON.darkest, color: 'white', border: `1px solid ${MAROON.border}` }} />
+  1418→  1418→                <div className="flex gap-1">
+  1419→  1419→                  <button onClick={() => setCommissionType('percentage')}
+  1420→  1420→                    className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
+  1421→  1421→                    style={{
+  1422→  1422→                      backgroundColor: commissionType === 'percentage' ? MAROON.accent : MAROON.darkest,
+  1423→  1423→                      color: commissionType === 'percentage' ? 'white' : MAROON.muted,
+  1424→  1424→                    }}>
+  1425→  1425→                    %
+  1426→  1426→                  </button>
+  1427→  1427→                  <button onClick={() => setCommissionType('fixed')}
+  1428→  1428→                    className="px-3 py-1.5 rounded-lg text-xs font-medium transition-colors"
+  1429→  1429→                    style={{
+  1430→  1430→                      backgroundColor: commissionType === 'fixed' ? MAROON.accent : MAROON.darkest,
+  1431→  1431→                      color: commissionType === 'fixed' ? 'white' : MAROON.muted,
+  1432→  1432→                    }}>
+  1433→  1433→                    ثابت
+  1434→  1434→                  </button>
+  1435→  1435→                </div>
+  1436→  1436→              </div>
+  1437→  1437→            </div>
+  1438→  1438→
+  1439→  1439→            <div className="flex items-center gap-2">
+  1440→  1440→              <Switch checked={isActive} onCheckedChange={setIsActive} />
+  1441→  1441→              <Label className="text-white">نشط</Label>
+  1442→  1442→            </div>
+  1443→  1443→            <div className="flex items-center gap-2">
+  1444→  1444→              <Switch checked={syncEnabled} onCheckedChange={setSyncEnabled} />
+  1445→  1445→              <Label className="text-white">تفعيل المزامنة</Label>
+  1446→  1446→            </div>
+  1447→  1447→          </div>
+  1448→  1448→          <DialogFooter>
+  1449→  1449→            <Button variant="outline" onClick={() => { setDialog(false); resetForm(); }} style={{ borderColor: MAROON.border, color: MAROON.muted }}>إلغاء</Button>
+  1450→  1450→            <Button onClick={handleSave} style={{ backgroundColor: MAROON.accent }}>{editing ? 'تحديث' : 'إضافة'}</Button>
+  1451→  1451→          </DialogFooter>
+  1452→  1452→        </DialogContent>
+  1453→  1453→      </Dialog>
+  1454→  1454→
+  1455→  1455→      {/* ─── Delete Confirmation Dialog ──────────────────────────────── */}
+  1456→  1456→      <AlertDialog open={!!deleteConfirm} onOpenChange={(open) => { if (!open) setDeleteConfirm(null); }}>
+  1457→  1457→        <AlertDialogContent style={{ backgroundColor: MAROON.card, border: `1px solid ${MAROON.border}` }}>
+  1458→  1458→          <AlertDialogHeader>
+  1459→  1459→            <AlertDialogTitle className="text-white">تأكيد حذف المزود</AlertDialogTitle>
+  1460→  1460→            <AlertDialogDescription style={{ color: MAROON.muted }}>
+  1461→  1461→              هل أنت متأكد من حذف المزود &quot;{deleteConfirm ? providers[deleteConfirm]?.name : ''}&quot;؟ لا يمكن التراجع عن هذا الإجراء. سيتم حذف جميع التصنيفات والمنتجات المرتبطة.
+  1462→  1462→            </AlertDialogDescription>
+  1463→  1463→          </AlertDialogHeader>
+  1464→  1464→          <AlertDialogFooter>
+  1465→  1465→            <AlertDialogCancel style={{ borderColor: MAROON.border, color: MAROON.muted }}>إلغاء</AlertDialogCancel>
+  1466→  1466→            <AlertDialogAction onClick={() => deleteConfirm && handleDelete(deleteConfirm)} className="bg-red-600 hover:bg-red-700 text-white">
+  1467→  1467→              حذف
+  1468→  1468→            </AlertDialogAction>
+  1469→  1469→          </AlertDialogFooter>
+  1470→  1470→        </AlertDialogContent>
+  1471→  1471→      </AlertDialog>
+  1472→  1472→    </div>
+  1473→  1473→  );
+  1474→  1474→}
+  1475→  1475→

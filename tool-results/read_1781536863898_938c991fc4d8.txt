@@ -1,0 +1,1282 @@
+     1→'use client';
+     2→
+     3→import { useState, useEffect, useCallback } from 'react';
+     4→import { useTheme } from 'next-themes';
+     5→import { motion, AnimatePresence } from 'framer-motion';
+     6→import {
+     7→  ArrowRight, Shield, Clock, CheckCircle2, AlertCircle,
+     8→  XCircle, Plus, Eye, ChevronDown, ChevronUp, History,
+     9→  Wallet, Users, FileText, AlertTriangle, MessageSquare,
+    10→  Send, Copy, Check, Info,
+    11→} from 'lucide-react';
+    12→import { useAppStore } from '@/lib/store';
+    13→import { currencySymbols, formatNumber, formatBalance, generateReference } from '@/lib/utils';
+    14→import { database } from '@/lib/firebase';
+    15→import { ref, set, get, update, onValue, off, push, runTransaction } from 'firebase/database';
+    16→
+    17→// Escrow status type
+    18→type EscrowStatus = 'pending' | 'funded' | 'buyer_confirmed' | 'seller_confirmed' | 'completed' | 'disputed' | 'cancelled';
+    19→
+    20→// Escrow interface
+    21→interface EscrowTransaction {
+    22→  id: string;
+    23→  title: string;
+    24→  description: string;
+    25→  amount: number;
+    26→  currency: 'YER' | 'SAR' | 'USD';
+    27→  buyerId: string;
+    28→  buyerName: string;
+    29→  sellerId: string;
+    30→  sellerName: string;
+    31→  status: EscrowStatus;
+    32→  buyerConfirmed: boolean;
+    33→  sellerConfirmed: boolean;
+    34→  createdBy: string;
+    35→  createdAt: string;
+    36→  fundedAt?: string;
+    37→  completedAt?: string;
+    38→  disputedAt?: string;
+    39→  disputeReason?: string;
+    40→  cancelledAt?: string;
+    41→  referenceCode: string;
+    42→}
+    43→
+    44→// Status config
+    45→const statusConfig: Record<EscrowStatus, { label: string; color: string; bgColor: string; icon: typeof Clock }> = {
+    46→  pending: { label: 'قيد الانتظار', color: '#F59E0B', bgColor: 'rgba(245,158,11,0.12)', icon: Clock },
+    47→  funded: { label: 'تم التمويل', color: '#3B82F6', bgColor: 'rgba(59,130,246,0.12)', icon: Wallet },
+    48→  buyer_confirmed: { label: 'المشتري أكد', color: '#8B5CF6', bgColor: 'rgba(139,92,246,0.12)', icon: CheckCircle2 },
+    49→  seller_confirmed: { label: 'البائع أكد', color: '#8B5CF6', bgColor: 'rgba(139,92,246,0.12)', icon: CheckCircle2 },
+    50→  completed: { label: 'مكتمل', color: '#10B981', bgColor: 'rgba(16,185,129,0.12)', icon: CheckCircle2 },
+    51→  disputed: { label: 'نزاع', color: '#EF4444', bgColor: 'rgba(239,68,68,0.12)', icon: AlertTriangle },
+    52→  cancelled: { label: 'ملغى', color: '#6B7280', bgColor: 'rgba(107,114,128,0.12)', icon: XCircle },
+    53→};
+    54→
+    55→type ScreenTab = 'active' | 'create' | 'history';
+    56→
+    57→export default function EscrowScreen() {
+    58→  const { theme } = useTheme();
+    59→  const isDark = theme === 'dark';
+    60→  const { user, setUser, setActiveScreen, addNotification } = useAppStore();
+    61→
+    62→  const [activeTab, setActiveTab] = useState<ScreenTab>('active');
+    63→  const [escrows, setEscrows] = useState<EscrowTransaction[]>([]);
+    64→  const [isLoading, setIsLoading] = useState(true);
+    65→
+    66→  // Create form state
+    67→  const [formTitle, setFormTitle] = useState('');
+    68→  const [formDescription, setFormDescription] = useState('');
+    69→  const [formAmount, setFormAmount] = useState('');
+    70→  const [formCurrency, setFormCurrency] = useState<'YER' | 'SAR' | 'USD'>('YER');
+    71→  const [formRole, setFormRole] = useState<'buyer' | 'seller'>('buyer');
+    72→  const [formOtherPartyId, setFormOtherPartyId] = useState('');
+    73→  const [isProcessing, setIsProcessing] = useState(false);
+    74→  const [showSuccess, setShowSuccess] = useState(false);
+    75→  const [createdEscrowId, setCreatedEscrowId] = useState('');
+    76→
+    77→  // Detail view state
+    78→  const [selectedEscrow, setSelectedEscrow] = useState<EscrowTransaction | null>(null);
+    79→  const [showDisputeModal, setShowDisputeModal] = useState(false);
+    80→  const [disputeReason, setDisputeReason] = useState('');
+    81→  const [copiedRef, setCopiedRef] = useState(false);
+    82→
+    83→  // Fetch user escrows from Firebase
+    84→  useEffect(() => {
+    85→    if (!user?.id) return;
+    86→    const escrowRef = ref(database, `users/${user.id}/escrows`);
+    87→    const listener = onValue(escrowRef, (snapshot) => {
+    88→      setIsLoading(false);
+    89→      if (snapshot.exists()) {
+    90→        const data = snapshot.val();
+    91→        const allEscrows = Object.entries(data).map(([id, val]: [string, any]) => ({ id, ...val })) as EscrowTransaction[];
+    92→        // Sort by creation date, newest first
+    93→        allEscrows.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    94→        setEscrows(allEscrows);
+    95→      } else {
+    96→        setEscrows([]);
+    97→      }
+    98→    });
+    99→    return () => off(escrowRef);
+   100→  }, [user?.id]);
+   101→
+   102→  const activeEscrows = escrows.filter(e => e.status !== 'completed' && e.status !== 'cancelled');
+   103→  const historyEscrows = escrows.filter(e => e.status === 'completed' || e.status === 'cancelled');
+   104→
+   105→  // Create escrow
+   106→  const handleCreateEscrow = async () => {
+   107→    if (!user?.id || !formTitle.trim() || !formAmount.trim() || !formOtherPartyId.trim()) return;
+   108→
+   109→    const amount = parseFloat(formAmount);
+   110→    if (isNaN(amount) || amount <= 0) return;
+   111→
+   112→    setIsProcessing(true);
+   113→
+   114→    try {
+   115→      const referenceCode = `ESC-${generateReference().slice(-8)}`;
+   116→      const escrowId = `escrow-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+   117→
+   118→      const newEscrow: EscrowTransaction = {
+   119→        id: escrowId,
+   120→        title: formTitle.trim(),
+   121→        description: formDescription.trim(),
+   122→        amount,
+   123→        currency: formCurrency,
+   124→        buyerId: formRole === 'buyer' ? user.id : formOtherPartyId.trim(),
+   125→        buyerName: formRole === 'buyer' ? (user.name || user.userId || '') : '',
+   126→        sellerId: formRole === 'seller' ? user.id : formOtherPartyId.trim(),
+   127→        sellerName: formRole === 'seller' ? (user.name || user.userId || '') : '',
+   128→        status: 'pending',
+   129→        buyerConfirmed: false,
+   130→        sellerConfirmed: false,
+   131→        createdBy: user.id,
+   132→        createdAt: new Date().toISOString(),
+   133→        referenceCode,
+   134→      };
+   135→
+   136→      // Save to current user's escrows
+   137→      const updates: Record<string, unknown> = {};
+   138→      updates[`users/${user.id}/escrows/${escrowId}`] = newEscrow;
+   139→
+   140→      // Try to save to other party's escrows too
+   141→      const otherPartyId = formOtherPartyId.trim();
+   142→      // Check if it's a userId format (starts with JN)
+   143→      if (otherPartyId.startsWith('JN')) {
+   144→        // Look up the Firebase UID for this userId
+   145→        const userIdSnapshot = await get(ref(database, `userIds/${otherPartyId}`));
+   146→        if (userIdSnapshot.exists()) {
+   147→          const otherUid = userIdSnapshot.val();
+   148→          updates[`users/${otherUid}/escrows/${escrowId}`] = newEscrow;
+   149→        }
+   150→      } else {
+   151→        // Might be a direct UID
+   152→        updates[`users/${otherPartyId}/escrows/${escrowId}`] = newEscrow;
+   153→      }
+   154→
+   155→      await update(ref(database), updates);
+   156→
+   157→      setCreatedEscrowId(referenceCode);
+   158→      setShowSuccess(true);
+   159→
+   160→      // Reset form
+   161→      setFormTitle('');
+   162→      setFormDescription('');
+   163→      setFormAmount('');
+   164→      setFormCurrency('YER');
+   165→      setFormRole('buyer');
+   166→      setFormOtherPartyId('');
+   167→
+   168→      addNotification({
+   169→        id: Date.now().toString(),
+   170→        title: 'تم إنشاء الحوالة الوسيطة',
+   171→        body: `تم إنشاء حوالة وسيطة بمبلغ ${amount.toLocaleString()} ${currencySymbols[formCurrency]}`,
+   172→        type: 'info',
+   173→        isRead: false,
+   174→        createdAt: new Date().toISOString(),
+   175→      });
+   176→
+   177→    } catch (error) {
+   178→      console.error('Error creating escrow:', error);
+   179→      addNotification({
+   180→        id: Date.now().toString(),
+   181→        title: 'خطأ',
+   182→        body: 'فشل في إنشاء الحوالة الوسيطة',
+   183→        type: 'error',
+   184→        isRead: false,
+   185→        createdAt: new Date().toISOString(),
+   186→      });
+   187→    } finally {
+   188→      setIsProcessing(false);
+   189→    }
+   190→  };
+   191→
+   192→  // Fund escrow (as buyer)
+   193→  const handleFundEscrow = async (escrow: EscrowTransaction) => {
+   194→    if (!user?.id) return;
+   195→    setIsProcessing(true);
+   196→
+   197→    try {
+   198→      const balanceField = escrow.currency === 'YER' ? 'balanceYER' : escrow.currency === 'SAR' ? 'balanceSAR' : 'balanceUSD';
+   199→      const currentBalance = user[balanceField] || 0;
+   200→
+   201→      if (currentBalance < escrow.amount) {
+   202→        addNotification({
+   203→          id: Date.now().toString(),
+   204→          title: 'رصيد غير كافي',
+   205→          body: `رصيدك غير كافي لتمويل هذه الحوالة`,
+   206→          type: 'error',
+   207→          isRead: false,
+   208→          createdAt: new Date().toISOString(),
+   209→        });
+   210→        setIsProcessing(false);
+   211→        return;
+   212→      }
+   213→
+   214→      // Deduct from buyer's balance
+   215→      const txResult = await runTransaction(ref(database, `users/${user.id}/${balanceField}`), (currentVal) => {
+   216→        return (currentVal || 0) - escrow.amount;
+   217→      });
+   218→
+   219→      if (!txResult.committed) {
+   220→        throw new Error('Transaction failed');
+   221→      }
+   222→
+   223→      // Update user balance in store
+   224→      const updatedBalance = txResult.snapshot.val();
+   225→      setUser({
+   226→        ...user,
+   227→        [balanceField]: updatedBalance,
+   228→      });
+   229→
+   230→      // Update escrow status
+   231→      const updates: Record<string, unknown> = {};
+   232→      updates[`users/${user.id}/escrows/${escrow.id}/status`] = 'funded';
+   233→      updates[`users/${user.id}/escrows/${escrow.id}/fundedAt`] = new Date().toISOString();
+   234→
+   235→      // Also update other party's escrow
+   236→      const otherPartyId = escrow.buyerId === user.id ? escrow.sellerId : escrow.buyerId;
+   237→      updates[`users/${otherPartyId}/escrows/${escrow.id}/status`] = 'funded';
+   238→      updates[`users/${otherPartyId}/escrows/${escrow.id}/fundedAt`] = new Date().toISOString();
+   239→
+   240→      // Create transaction record
+   241→      const txId = `tx-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+   242→      updates[`transactions/${txId}`] = {
+   243→        id: txId,
+   244→        fromUserId: user.id,
+   245→        toUserId: 'ESCROW',
+   246→        amount: escrow.amount,
+   247→        currency: escrow.currency,
+   248→        type: 'escrow',
+   249→        status: 'completed',
+   250→        description: `تمويل حوالة وسيطة: ${escrow.title}`,
+   251→        createdAt: new Date().toISOString(),
+   252→        escrowId: escrow.id,
+   253→      };
+   254→
+   255→      await update(ref(database), updates);
+   256→
+   257→      addNotification({
+   258→        id: Date.now().toString(),
+   259→        title: 'تم التمويل',
+   260→        body: `تم تمويل الحوالة الوسيطة بمبلغ ${escrow.amount.toLocaleString()} ${currencySymbols[escrow.currency]}`,
+   261→        type: 'info',
+   262→        isRead: false,
+   263→        createdAt: new Date().toISOString(),
+   264→      });
+   265→
+   266→    } catch (error) {
+   267→      console.error('Error funding escrow:', error);
+   268→      addNotification({
+   269→        id: Date.now().toString(),
+   270→        title: 'خطأ',
+   271→        body: 'فشل في تمويل الحوالة الوسيطة',
+   272→        type: 'error',
+   273→        isRead: false,
+   274→        createdAt: new Date().toISOString(),
+   275→      });
+   276→    } finally {
+   277→      setIsProcessing(false);
+   278→    }
+   279→  };
+   280→
+   281→  // Confirm delivery
+   282→  const handleConfirmDelivery = async (escrow: EscrowTransaction) => {
+   283→    if (!user?.id) return;
+   284→    setIsProcessing(true);
+   285→
+   286→    try {
+   287→      const isBuyer = escrow.buyerId === user.id;
+   288→      const updates: Record<string, unknown> = {};
+   289→
+   290→      if (isBuyer) {
+   291→        updates[`users/${user.id}/escrows/${escrow.id}/buyerConfirmed`] = true;
+   292→        // Also update other party
+   293→        const otherPartyId = escrow.sellerId;
+   294→        updates[`users/${otherPartyId}/escrows/${escrow.id}/buyerConfirmed`] = true;
+   295→
+   296→        // Check if both confirmed
+   297→        if (escrow.sellerConfirmed) {
+   298→          updates[`users/${user.id}/escrows/${escrow.id}/status`] = 'completed';
+   299→          updates[`users/${user.id}/escrows/${escrow.id}/completedAt`] = new Date().toISOString();
+   300→          updates[`users/${otherPartyId}/escrows/${escrow.id}/status`] = 'completed';
+   301→          updates[`users/${otherPartyId}/escrows/${escrow.id}/completedAt`] = new Date().toISOString();
+   302→
+   303→          // Release funds to seller
+   304→          const balanceField = escrow.currency === 'YER' ? 'balanceYER' : escrow.currency === 'SAR' ? 'balanceSAR' : 'balanceUSD';
+   305→          await runTransaction(ref(database, `users/${escrow.sellerId}/${balanceField}`), (currentVal) => {
+   306→            return (currentVal || 0) + escrow.amount;
+   307→          });
+   308→
+   309→          // Transaction record
+   310→          const txId = `tx-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+   311→          updates[`transactions/${txId}`] = {
+   312→            id: txId,
+   313→            fromUserId: 'ESCROW',
+   314→            toUserId: escrow.sellerId,
+   315→            amount: escrow.amount,
+   316→            currency: escrow.currency,
+   317→            type: 'escrow_release',
+   318→            status: 'completed',
+   319→            description: `تحرير حوالة وسيطة: ${escrow.title}`,
+   320→            createdAt: new Date().toISOString(),
+   321→            escrowId: escrow.id,
+   322→          };
+   323→        } else {
+   324→          updates[`users/${user.id}/escrows/${escrow.id}/status`] = 'buyer_confirmed';
+   325→          updates[`users/${otherPartyId}/escrows/${escrow.id}/status`] = 'buyer_confirmed';
+   326→        }
+   327→      } else {
+   328→        updates[`users/${user.id}/escrows/${escrow.id}/sellerConfirmed`] = true;
+   329→        const otherPartyId = escrow.buyerId;
+   330→        updates[`users/${otherPartyId}/escrows/${escrow.id}/sellerConfirmed`] = true;
+   331→
+   332→        if (escrow.buyerConfirmed) {
+   333→          updates[`users/${user.id}/escrows/${escrow.id}/status`] = 'completed';
+   334→          updates[`users/${user.id}/escrows/${escrow.id}/completedAt`] = new Date().toISOString();
+   335→          updates[`users/${otherPartyId}/escrows/${escrow.id}/status`] = 'completed';
+   336→          updates[`users/${otherPartyId}/escrows/${escrow.id}/completedAt`] = new Date().toISOString();
+   337→
+   338→          const balanceField = escrow.currency === 'YER' ? 'balanceYER' : escrow.currency === 'SAR' ? 'balanceSAR' : 'balanceUSD';
+   339→          await runTransaction(ref(database, `users/${escrow.sellerId}/${balanceField}`), (currentVal) => {
+   340→            return (currentVal || 0) + escrow.amount;
+   341→          });
+   342→
+   343→          const txId = `tx-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
+   344→          updates[`transactions/${txId}`] = {
+   345→            id: txId,
+   346→            fromUserId: 'ESCROW',
+   347→            toUserId: escrow.sellerId,
+   348→            amount: escrow.amount,
+   349→            currency: escrow.currency,
+   350→            type: 'escrow_release',
+   351→            status: 'completed',
+   352→            description: `تحرير حوالة وسيطة: ${escrow.title}`,
+   353→            createdAt: new Date().toISOString(),
+   354→            escrowId: escrow.id,
+   355→          };
+   356→        } else {
+   357→          updates[`users/${user.id}/escrows/${escrow.id}/status`] = 'seller_confirmed';
+   358→          updates[`users/${otherPartyId}/escrows/${escrow.id}/status`] = 'seller_confirmed';
+   359→        }
+   360→      }
+   361→
+   362→      await update(ref(database), updates);
+   363→
+   364→      addNotification({
+   365→        id: Date.now().toString(),
+   366→        title: 'تم التأكيد',
+   367→        body: isBuyer ? 'تم تأكيد استلام المشتري' : 'تم تأكيد تسليم البائع',
+   368→        type: 'info',
+   369→        isRead: false,
+   370→        createdAt: new Date().toISOString(),
+   371→      });
+   372→
+   373→    } catch (error) {
+   374→      console.error('Error confirming delivery:', error);
+   375→    } finally {
+   376→      setIsProcessing(false);
+   377→    }
+   378→  };
+   379→
+   380→  // Open dispute
+   381→  const handleOpenDispute = async (escrow: EscrowTransaction) => {
+   382→    if (!user?.id || !disputeReason.trim()) return;
+   383→    setIsProcessing(true);
+   384→
+   385→    try {
+   386→      const updates: Record<string, unknown> = {};
+   387→      updates[`users/${user.id}/escrows/${escrow.id}/status`] = 'disputed';
+   388→      updates[`users/${user.id}/escrows/${escrow.id}/disputedAt`] = new Date().toISOString();
+   389→      updates[`users/${user.id}/escrows/${escrow.id}/disputeReason`] = disputeReason.trim();
+   390→
+   391→      const otherPartyId = escrow.buyerId === user.id ? escrow.sellerId : escrow.buyerId;
+   392→      updates[`users/${otherPartyId}/escrows/${escrow.id}/status`] = 'disputed';
+   393→      updates[`users/${otherPartyId}/escrows/${escrow.id}/disputedAt`] = new Date().toISOString();
+   394→      updates[`users/${otherPartyId}/escrows/${escrow.id}/disputeReason`] = disputeReason.trim();
+   395→
+   396→      await update(ref(database), updates);
+   397→
+   398→      setShowDisputeModal(false);
+   399→      setDisputeReason('');
+   400→
+   401→      addNotification({
+   402→        id: Date.now().toString(),
+   403→        title: 'تم فتح نزاع',
+   404→        body: 'تم فتح نزاع على الحوالة الوسيطة وسيتم مراجعتها',
+   405→        type: 'warning',
+   406→        isRead: false,
+   407→        createdAt: new Date().toISOString(),
+   408→      });
+   409→
+   410→    } catch (error) {
+   411→      console.error('Error opening dispute:', error);
+   412→    } finally {
+   413→      setIsProcessing(false);
+   414→    }
+   415→  };
+   416→
+   417→  // Cancel escrow (only if pending)
+   418→  const handleCancelEscrow = async (escrow: EscrowTransaction) => {
+   419→    if (!user?.id || escrow.status !== 'pending') return;
+   420→    setIsProcessing(true);
+   421→
+   422→    try {
+   423→      const updates: Record<string, unknown> = {};
+   424→      updates[`users/${user.id}/escrows/${escrow.id}/status`] = 'cancelled';
+   425→      updates[`users/${user.id}/escrows/${escrow.id}/cancelledAt`] = new Date().toISOString();
+   426→
+   427→      const otherPartyId = escrow.buyerId === user.id ? escrow.sellerId : escrow.buyerId;
+   428→      updates[`users/${otherPartyId}/escrows/${escrow.id}/status`] = 'cancelled';
+   429→      updates[`users/${otherPartyId}/escrows/${escrow.id}/cancelledAt`] = new Date().toISOString();
+   430→
+   431→      await update(ref(database), updates);
+   432→
+   433→      addNotification({
+   434→        id: Date.now().toString(),
+   435→        title: 'تم الإلغاء',
+   436→        body: 'تم إلغاء الحوالة الوسيطة',
+   437→        type: 'info',
+   438→        isRead: false,
+   439→        createdAt: new Date().toISOString(),
+   440→      });
+   441→
+   442→    } catch (error) {
+   443→      console.error('Error cancelling escrow:', error);
+   444→    } finally {
+   445→      setIsProcessing(false);
+   446→    }
+   447→  };
+   448→
+   449→  // Copy reference code
+   450→  const handleCopyRef = (refCode: string) => {
+   451→    navigator.clipboard.writeText(refCode).catch(() => {});
+   452→    setCopiedRef(true);
+   453→    setTimeout(() => setCopiedRef(false), 2000);
+   454→  };
+   455→
+   456→  // Time ago helper
+   457→  const timeAgo = (dateStr: string) => {
+   458→    const now = new Date().getTime();
+   459→    const date = new Date(dateStr).getTime();
+   460→    const diff = now - date;
+   461→    const minutes = Math.floor(diff / 60000);
+   462→    const hours = Math.floor(diff / 3600000);
+   463→    const days = Math.floor(diff / 86400000);
+   464→    if (days > 0) return `منذ ${days} يوم`;
+   465→    if (hours > 0) return `منذ ${hours} ساعة`;
+   466→    if (minutes > 0) return `منذ ${minutes} دقيقة`;
+   467→    return 'الآن';
+   468→  };
+   469→
+   470→  // ═══════════════════════════════════════════════════════════════════════
+   471→  // DETAIL VIEW
+   472→  // ═══════════════════════════════════════════════════════════════════════
+   473→  if (selectedEscrow) {
+   474→    const escrow = selectedEscrow;
+   475→    const statusCfg = statusConfig[escrow.status];
+   476→    const StatusIcon = statusCfg.icon;
+   477→    const isBuyer = escrow.buyerId === user?.id;
+   478→    const isSeller = escrow.sellerId === user?.id;
+   479→    const canFund = isBuyer && escrow.status === 'pending';
+   480→    const canConfirm = (isBuyer && escrow.status === 'funded' && !escrow.buyerConfirmed) ||
+   481→                       (isBuyer && escrow.status === 'seller_confirmed' && !escrow.buyerConfirmed) ||
+   482→                       (isSeller && escrow.status === 'funded' && !escrow.sellerConfirmed) ||
+   483→                       (isSeller && escrow.status === 'buyer_confirmed' && !escrow.sellerConfirmed);
+   484→    const canDispute = escrow.status === 'funded' || escrow.status === 'buyer_confirmed' || escrow.status === 'seller_confirmed';
+   485→    const canCancel = escrow.status === 'pending';
+   486→
+   487→    return (
+   488→      <div className="min-h-screen" style={{ background: isDark ? '#0F0F0F' : '#F5F5F5' }}>
+   489→        {/* Header */}
+   490→        <div
+   491→          className="sticky top-0 z-10 px-4 py-3 flex items-center gap-3"
+   492→          style={{
+   493→            background: isDark ? '#1A0A0E' : '#5C1A1B',
+   494→            borderBottom: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.1)'}`,
+   495→          }}
+   496→        >
+   497→          <button onClick={() => setSelectedEscrow(null)} className="p-1">
+   498→            <ArrowRight size={22} color="#FFF" />
+   499→          </button>
+   500→          <div className="flex-1">
+   501→            <h1 className="text-white text-base font-bold">تفاصيل الحوالة الوسيطة</h1>
+   502→          </div>
+   503→        </div>
+   504→
+   505→        <div className="p-4 space-y-4">
+   506→          {/* Status card */}
+   507→          <motion.div
+   508→            initial={{ opacity: 0, y: 10 }}
+   509→            animate={{ opacity: 1, y: 0 }}
+   510→            className="rounded-2xl p-4"
+   511→            style={{
+   512→              background: isDark ? '#1A1A1A' : '#FFF',
+   513→              border: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'}`,
+   514→            }}
+   515→          >
+   516→            <div className="flex items-center gap-3 mb-4">
+   517→              <div className="w-12 h-12 rounded-xl flex items-center justify-center" style={{ background: statusCfg.bgColor }}>
+   518→                <StatusIcon size={22} color={statusCfg.color} />
+   519→              </div>
+   520→              <div className="flex-1">
+   521→                <p className="text-sm font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>{escrow.title}</p>
+   522→                <p className="text-xs mt-0.5" style={{ color: statusCfg.color }}>{statusCfg.label}</p>
+   523→              </div>
+   524→            </div>
+   525→
+   526→            {/* Amount */}
+   527→            <div className="flex items-center justify-between p-3 rounded-xl mb-3" style={{ background: isDark ? '#222' : '#F8F8F8' }}>
+   528→              <span className="text-xs" style={{ color: isDark ? '#888' : '#999' }}>المبلغ</span>
+   529→              <div className="flex items-baseline gap-1.5">
+   530→                <span className="text-lg font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>{formatBalance(escrow.amount, escrow.currency)}</span>
+   531→                <span className="text-xs" style={{ color: isDark ? '#666' : '#AAA' }}>{currencySymbols[escrow.currency]}</span>
+   532→              </div>
+   533→            </div>
+   534→
+   535→            {/* Reference code */}
+   536→            <div className="flex items-center justify-between p-3 rounded-xl" style={{ background: isDark ? '#222' : '#F8F8F8' }}>
+   537→              <span className="text-xs" style={{ color: isDark ? '#888' : '#999' }}>رمز المرجع</span>
+   538→              <div className="flex items-center gap-2">
+   539→                <span className="text-xs font-mono font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }} dir="ltr">{escrow.referenceCode}</span>
+   540→                <button onClick={() => handleCopyRef(escrow.referenceCode)} className="p-1">
+   541→                  {copiedRef ? <Check size={14} color="#10B981" /> : <Copy size={14} color={isDark ? '#888' : '#999'} />}
+   542→                </button>
+   543→              </div>
+   544→            </div>
+   545→          </motion.div>
+   546→
+   547→          {/* Parties info */}
+   548→          <motion.div
+   549→            initial={{ opacity: 0, y: 10 }}
+   550→            animate={{ opacity: 1, y: 0 }}
+   551→            transition={{ delay: 0.1 }}
+   552→            className="rounded-2xl p-4"
+   553→            style={{
+   554→              background: isDark ? '#1A1A1A' : '#FFF',
+   555→              border: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'}`,
+   556→            }}
+   557→          >
+   558→            <h3 className="text-sm font-bold mb-3" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>أطراف الحوالة</h3>
+   559→
+   560→            <div className="space-y-3">
+   561→              <div className="flex items-center gap-3">
+   562→                <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'rgba(16,185,129,0.12)' }}>
+   563→                  <Users size={14} color="#10B981" />
+   564→                </div>
+   565→                <div className="flex-1">
+   566→                  <p className="text-[10px]" style={{ color: isDark ? '#666' : '#999' }}>المشتري</p>
+   567→                  <p className="text-xs font-medium" style={{ color: isDark ? '#CCC' : '#333' }}>
+   568→                    {isBuyer ? 'أنت' : (escrow.buyerName || escrow.buyerId)}
+   569→                  </p>
+   570→                </div>
+   571→                {escrow.buyerConfirmed && <CheckCircle2 size={16} color="#10B981" />}
+   572→              </div>
+   573→
+   574→              <div className="flex items-center gap-3">
+   575→                <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: 'rgba(59,130,246,0.12)' }}>
+   576→                  <Wallet size={14} color="#3B82F6" />
+   577→                </div>
+   578→                <div className="flex-1">
+   579→                  <p className="text-[10px]" style={{ color: isDark ? '#666' : '#999' }}>البائع</p>
+   580→                  <p className="text-xs font-medium" style={{ color: isDark ? '#CCC' : '#333' }}>
+   581→                    {isSeller ? 'أنت' : (escrow.sellerName || escrow.sellerId)}
+   582→                  </p>
+   583→                </div>
+   584→                {escrow.sellerConfirmed && <CheckCircle2 size={16} color="#10B981" />}
+   585→              </div>
+   586→            </div>
+   587→          </motion.div>
+   588→
+   589→          {/* Description */}
+   590→          {escrow.description && (
+   591→            <motion.div
+   592→              initial={{ opacity: 0, y: 10 }}
+   593→              animate={{ opacity: 1, y: 0 }}
+   594→              transition={{ delay: 0.15 }}
+   595→              className="rounded-2xl p-4"
+   596→              style={{
+   597→                background: isDark ? '#1A1A1A' : '#FFF',
+   598→                border: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'}`,
+   599→              }}
+   600→            >
+   601→              <h3 className="text-sm font-bold mb-2" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>الوصف</h3>
+   602→              <p className="text-xs leading-relaxed" style={{ color: isDark ? '#AAA' : '#666' }}>{escrow.description}</p>
+   603→            </motion.div>
+   604→          )}
+   605→
+   606→          {/* Timeline */}
+   607→          <motion.div
+   608→            initial={{ opacity: 0, y: 10 }}
+   609→            animate={{ opacity: 1, y: 0 }}
+   610→            transition={{ delay: 0.2 }}
+   611→            className="rounded-2xl p-4"
+   612→            style={{
+   613→              background: isDark ? '#1A1A1A' : '#FFF',
+   614→              border: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'}`,
+   615→            }}
+   616→          >
+   617→            <h3 className="text-sm font-bold mb-3" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>السجل الزمني</h3>
+   618→            <div className="space-y-2">
+   619→              <div className="flex items-center gap-2">
+   620→                <div className="w-2 h-2 rounded-full" style={{ background: '#10B981' }} />
+   621→                <span className="text-[11px]" style={{ color: isDark ? '#AAA' : '#666' }}>تم الإنشاء - {timeAgo(escrow.createdAt)}</span>
+   622→              </div>
+   623→              {escrow.fundedAt && (
+   624→                <div className="flex items-center gap-2">
+   625→                  <div className="w-2 h-2 rounded-full" style={{ background: '#3B82F6' }} />
+   626→                  <span className="text-[11px]" style={{ color: isDark ? '#AAA' : '#666' }}>تم التمويل - {timeAgo(escrow.fundedAt)}</span>
+   627→                </div>
+   628→              )}
+   629→              {escrow.completedAt && (
+   630→                <div className="flex items-center gap-2">
+   631→                  <div className="w-2 h-2 rounded-full" style={{ background: '#10B981' }} />
+   632→                  <span className="text-[11px]" style={{ color: isDark ? '#AAA' : '#666' }}>مكتمل - {timeAgo(escrow.completedAt)}</span>
+   633→                </div>
+   634→              )}
+   635→              {escrow.disputedAt && (
+   636→                <div className="flex items-center gap-2">
+   637→                  <div className="w-2 h-2 rounded-full" style={{ background: '#EF4444' }} />
+   638→                  <span className="text-[11px]" style={{ color: isDark ? '#AAA' : '#666' }}>نزاع - {timeAgo(escrow.disputedAt)}</span>
+   639→                </div>
+   640→              )}
+   641→              {escrow.cancelledAt && (
+   642→                <div className="flex items-center gap-2">
+   643→                  <div className="w-2 h-2 rounded-full" style={{ background: '#6B7280' }} />
+   644→                  <span className="text-[11px]" style={{ color: isDark ? '#AAA' : '#666' }}>ملغى - {timeAgo(escrow.cancelledAt)}</span>
+   645→                </div>
+   646→              )}
+   647→            </div>
+   648→          </motion.div>
+   649→
+   650→          {/* Dispute reason */}
+   651→          {escrow.disputeReason && (
+   652→            <motion.div
+   653→              initial={{ opacity: 0, y: 10 }}
+   654→              animate={{ opacity: 1, y: 0 }}
+   655→              className="rounded-2xl p-4"
+   656→              style={{
+   657→                background: 'rgba(239,68,68,0.08)',
+   658→                border: '1px solid rgba(239,68,68,0.15)',
+   659→              }}
+   660→            >
+   661→              <div className="flex items-center gap-2 mb-2">
+   662→                <AlertTriangle size={14} color="#EF4444" />
+   663→                <h3 className="text-sm font-bold" style={{ color: '#EF4444' }}>سبب النزاع</h3>
+   664→              </div>
+   665→              <p className="text-xs" style={{ color: isDark ? '#CCC' : '#666' }}>{escrow.disputeReason}</p>
+   666→            </motion.div>
+   667→          )}
+   668→
+   669→          {/* Action buttons */}
+   670→          <div className="space-y-3 pb-8">
+   671→            {canFund && (
+   672→              <motion.button
+   673→                whileTap={{ scale: 0.97 }}
+   674→                onClick={() => handleFundEscrow(escrow)}
+   675→                disabled={isProcessing}
+   676→                className="w-full py-3.5 rounded-xl text-white font-bold text-sm flex items-center justify-center gap-2"
+   677→                style={{ background: 'linear-gradient(135deg, #5C1A1B 0%, #3D0F10 100%)' }}
+   678→              >
+   679→                {isProcessing ? (
+   680→                  <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+   681→                ) : (
+   682→                  <>
+   683→                    <Wallet size={18} />
+   684→                    تمويل الحوالة ({formatBalance(escrow.amount, escrow.currency)} {currencySymbols[escrow.currency]})
+   685→                  </>
+   686→                )}
+   687→              </motion.button>
+   688→            )}
+   689→
+   690→            {canConfirm && (
+   691→              <motion.button
+   692→                whileTap={{ scale: 0.97 }}
+   693→                onClick={() => handleConfirmDelivery(escrow)}
+   694→                disabled={isProcessing}
+   695→                className="w-full py-3.5 rounded-xl text-white font-bold text-sm flex items-center justify-center gap-2"
+   696→                style={{ background: 'linear-gradient(135deg, #10B981 0%, #059669 100%)' }}
+   697→              >
+   698→                {isProcessing ? (
+   699→                  <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+   700→                ) : (
+   701→                  <>
+   702→                    <CheckCircle2 size={18} />
+   703→                    {isBuyer ? 'تأكيد استلام المشتري' : 'تأكيد تسليم البائع'}
+   704→                  </>
+   705→                )}
+   706→              </motion.button>
+   707→            )}
+   708→
+   709→            {canDispute && (
+   710→              <motion.button
+   711→                whileTap={{ scale: 0.97 }}
+   712→                onClick={() => setShowDisputeModal(true)}
+   713→                className="w-full py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2"
+   714→                style={{
+   715→                  background: 'rgba(239,68,68,0.1)',
+   716→                  color: '#EF4444',
+   717→                  border: '1px solid rgba(239,68,68,0.2)',
+   718→                }}
+   719→              >
+   720→                <AlertTriangle size={16} />
+   721→                فتح نزاع
+   722→              </motion.button>
+   723→            )}
+   724→
+   725→            {canCancel && (
+   726→              <motion.button
+   727→                whileTap={{ scale: 0.97 }}
+   728→                onClick={() => handleCancelEscrow(escrow)}
+   729→                disabled={isProcessing}
+   730→                className="w-full py-3 rounded-xl font-bold text-sm flex items-center justify-center gap-2"
+   731→                style={{
+   732→                  background: isDark ? 'rgba(107,114,128,0.1)' : 'rgba(107,114,128,0.06)',
+   733→                  color: isDark ? '#999' : '#666',
+   734→                  border: `1px solid ${isDark ? 'rgba(107,114,128,0.2)' : 'rgba(107,114,128,0.15)'}`,
+   735→                }}
+   736→              >
+   737→                <XCircle size={16} />
+   738→                إلغاء الحوالة
+   739→              </motion.button>
+   740→            )}
+   741→          </div>
+   742→        </div>
+   743→
+   744→        {/* Dispute Modal */}
+   745→        <AnimatePresence>
+   746→          {showDisputeModal && (
+   747→            <motion.div
+   748→              initial={{ opacity: 0 }}
+   749→              animate={{ opacity: 1 }}
+   750→              exit={{ opacity: 0 }}
+   751→              className="fixed inset-0 z-50 flex items-end justify-center"
+   752→              style={{ background: 'rgba(0,0,0,0.5)' }}
+   753→              onClick={() => setShowDisputeModal(false)}
+   754→            >
+   755→              <motion.div
+   756→                initial={{ y: 300 }}
+   757→                animate={{ y: 0 }}
+   758→                exit={{ y: 300 }}
+   759→                onClick={(e) => e.stopPropagation()}
+   760→                className="w-full max-w-md rounded-t-3xl p-5"
+   761→                style={{ background: isDark ? '#1A1A1A' : '#FFF' }}
+   762→              >
+   763→                <div className="flex items-center gap-3 mb-4">
+   764→                  <div className="w-10 h-10 rounded-xl flex items-center justify-center" style={{ background: 'rgba(239,68,68,0.12)' }}>
+   765→                    <AlertTriangle size={20} color="#EF4444" />
+   766→                  </div>
+   767→                  <div>
+   768→                    <h3 className="text-base font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>فتح نزاع</h3>
+   769→                    <p className="text-[11px]" style={{ color: isDark ? '#888' : '#999' }}>سيتم مراجعة النزاع من قبل الإدارة</p>
+   770→                  </div>
+   771→                </div>
+   772→
+   773→                <textarea
+   774→                  value={disputeReason}
+   775→                  onChange={(e) => setDisputeReason(e.target.value)}
+   776→                  placeholder="اكتب سبب النزاع..."
+   777→                  rows={4}
+   778→                  className="w-full rounded-xl p-3 text-sm resize-none outline-none"
+   779→                  style={{
+   780→                    background: isDark ? '#222' : '#F8F8F8',
+   781→                    color: isDark ? '#FFF' : '#1a1a1a',
+   782→                    border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'}`,
+   783→                  }}
+   784→                />
+   785→
+   786→                <div className="flex gap-3 mt-4">
+   787→                  <button
+   788→                    onClick={() => setShowDisputeModal(false)}
+   789→                    className="flex-1 py-3 rounded-xl text-sm font-medium"
+   790→                    style={{
+   791→                      background: isDark ? '#222' : '#F0F0F0',
+   792→                      color: isDark ? '#CCC' : '#666',
+   793→                    }}
+   794→                  >
+   795→                    إلغاء
+   796→                  </button>
+   797→                  <button
+   798→                    onClick={() => handleOpenDispute(escrow)}
+   799→                    disabled={!disputeReason.trim() || isProcessing}
+   800→                    className="flex-1 py-3 rounded-xl text-white text-sm font-bold"
+   801→                    style={{ background: '#EF4444', opacity: !disputeReason.trim() ? 0.5 : 1 }}
+   802→                  >
+   803→                    إرسال النزاع
+   804→                  </button>
+   805→                </div>
+   806→              </motion.div>
+   807→            </motion.div>
+   808→          )}
+   809→        </AnimatePresence>
+   810→      </div>
+   811→    );
+   812→  }
+   813→
+   814→  // ═══════════════════════════════════════════════════════════════════════
+   815→  // SUCCESS MODAL
+   816→  // ═══════════════════════════════════════════════════════════════════════
+   817→  const renderSuccessModal = () => (
+   818→    <AnimatePresence>
+   819→      {showSuccess && (
+   820→        <motion.div
+   821→          initial={{ opacity: 0 }}
+   822→          animate={{ opacity: 1 }}
+   823→          exit={{ opacity: 0 }}
+   824→          className="fixed inset-0 z-50 flex items-center justify-center px-6"
+   825→          style={{ background: 'rgba(0,0,0,0.6)' }}
+   826→        >
+   827→          <motion.div
+   828→            initial={{ scale: 0.8, opacity: 0 }}
+   829→            animate={{ scale: 1, opacity: 1 }}
+   830→            exit={{ scale: 0.8, opacity: 0 }}
+   831→            className="w-full max-w-sm rounded-3xl p-6 text-center"
+   832→            style={{ background: isDark ? '#1A1A1A' : '#FFF' }}
+   833→          >
+   834→            <div className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4" style={{ background: 'rgba(16,185,129,0.12)' }}>
+   835→              <CheckCircle2 size={32} color="#10B981" />
+   836→            </div>
+   837→            <h3 className="text-lg font-bold mb-2" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>تم إنشاء الحوالة الوسيطة</h3>
+   838→            <p className="text-xs mb-4" style={{ color: isDark ? '#888' : '#999' }}>رمز المرجع</p>
+   839→            <div
+   840→              className="inline-flex items-center gap-2 px-4 py-2 rounded-xl mb-4"
+   841→              style={{ background: isDark ? '#222' : '#F0F0F0' }}
+   842→            >
+   843→              <span className="text-sm font-mono font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }} dir="ltr">{createdEscrowId}</span>
+   844→              <button onClick={() => handleCopyRef(createdEscrowId)}>
+   845→                {copiedRef ? <Check size={14} color="#10B981" /> : <Copy size={14} color={isDark ? '#888' : '#999'} />}
+   846→              </button>
+   847→            </div>
+   848→            <p className="text-[11px] leading-relaxed mb-4" style={{ color: isDark ? '#777' : '#999' }}>
+   849→              شارك رمز المرجع مع الطرف الآخر لتتبع الحوالة
+   850→            </p>
+   851→            <button
+   852→              onClick={() => { setShowSuccess(false); setActiveTab('active'); }}
+   853→              className="w-full py-3 rounded-xl text-white font-bold text-sm"
+   854→              style={{ background: '#5C1A1B' }}
+   855→            >
+   856→              عرض الحوالات النشطة
+   857→            </button>
+   858→          </motion.div>
+   859→        </motion.div>
+   860→      )}
+   861→    </AnimatePresence>
+   862→  );
+   863→
+   864→  // ═══════════════════════════════════════════════════════════════════════
+   865→  // MAIN VIEW
+   866→  // ═══════════════════════════════════════════════════════════════════════
+   867→  return (
+   868→    <div className="min-h-screen" style={{ background: isDark ? '#0F0F0F' : '#F5F5F5' }}>
+   869→      {/* Header */}
+   870→      <div
+   871→        className="sticky top-0 z-10 px-4 py-3 flex items-center gap-3"
+   872→        style={{
+   873→          background: isDark ? '#1A0A0E' : '#5C1A1B',
+   874→          borderBottom: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.1)'}`,
+   875→        }}
+   876→      >
+   877→        <button onClick={() => setActiveScreen('main')} className="p-1">
+   878→          <ArrowRight size={22} color="#FFF" />
+   879→        </button>
+   880→        <div className="flex-1 flex items-center gap-2">
+   881→          <Shield size={20} color="#FFF" />
+   882→          <h1 className="text-white text-base font-bold">خدمة الوسيط</h1>
+   883→        </div>
+   884→      </div>
+   885→
+   886→      {/* Tabs */}
+   887→      <div
+   888→        className="flex px-4 pt-3 gap-1"
+   889→      >
+   890→        {[
+   891→          { key: 'active' as ScreenTab, label: 'النشطة', icon: Clock },
+   892→          { key: 'create' as ScreenTab, label: 'إنشاء', icon: Plus },
+   893→          { key: 'history' as ScreenTab, label: 'السجل', icon: History },
+   894→        ].map(tab => {
+   895→          const isActive = activeTab === tab.key;
+   896→          return (
+   897→            <button
+   898→              key={tab.key}
+   899→              onClick={() => setActiveTab(tab.key)}
+   900→              className="flex-1 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all"
+   901→              style={{
+   902→                background: isActive ? (isDark ? '#5C1A1B' : '#5C1A1B') : (isDark ? '#1A1A1A' : '#F0F0F0'),
+   903→                color: isActive ? '#FFF' : (isDark ? '#888' : '#999'),
+   904→              }}
+   905→            >
+   906→              <tab.icon size={14} />
+   907→              {tab.label}
+   908→              {tab.key === 'active' && activeEscrows.length > 0 && (
+   909→                <span
+   910→                  className="w-4 h-4 rounded-full text-[9px] flex items-center justify-center font-bold"
+   911→                  style={{ background: 'rgba(255,255,255,0.2)', color: '#FFF' }}
+   912→                >
+   913→                  {activeEscrows.length}
+   914→                </span>
+   915→              )}
+   916→            </button>
+   917→          );
+   918→        })}
+   919→      </div>
+   920→
+   921→      <AnimatePresence mode="wait">
+   922→        {activeTab === 'active' && (
+   923→          <motion.div
+   924→            key="active"
+   925→            initial={{ opacity: 0, y: 10 }}
+   926→            animate={{ opacity: 1, y: 0 }}
+   927→            exit={{ opacity: 0, y: -10 }}
+   928→            className="p-4 space-y-3"
+   929→          >
+   930→            {/* Info card */}
+   931→            <div
+   932→              className="rounded-2xl p-4 flex items-start gap-3"
+   933→              style={{
+   934→                background: isDark ? 'rgba(92,26,27,0.1)' : 'rgba(92,26,27,0.05)',
+   935→                border: `1px solid ${isDark ? 'rgba(92,26,27,0.2)' : 'rgba(92,26,27,0.1)'}`,
+   936→              }}
+   937→            >
+   938→              <Info size={18} color="#5C1A1B" className="shrink-0 mt-0.5" />
+   939→              <p className="text-[11px] leading-relaxed" style={{ color: isDark ? '#CCC' : '#666' }}>
+   940→                خدمة الوسيط تضمن حقوق البائع والمشتري. يتم احتجاز المبلغ حتى يؤكد كلا الطرفين اكتمال الصفقة.
+   941→              </p>
+   942→            </div>
+   943→
+   944→            {isLoading ? (
+   945→              <div className="flex items-center justify-center py-12">
+   946→                <div className="w-8 h-8 border-2 border-[#5C1A1B]/30 border-t-[#5C1A1B] rounded-full animate-spin" />
+   947→              </div>
+   948→            ) : activeEscrows.length === 0 ? (
+   949→              <div className="flex flex-col items-center py-12">
+   950→                <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-3" style={{ background: isDark ? '#1A1A1A' : '#F0F0F0' }}>
+   951→                  <Shield size={28} color={isDark ? '#333' : '#DDD'} />
+   952→                </div>
+   953→                <p className="text-sm font-medium" style={{ color: isDark ? '#555' : '#AAA' }}>لا توجد حوالات وسيطة نشطة</p>
+   954→                <p className="text-[11px] mt-1" style={{ color: isDark ? '#444' : '#CCC' }}>قم بإنشاء حوالة وسيطة جديدة</p>
+   955→                <button
+   956→                  onClick={() => setActiveTab('create')}
+   957→                  className="mt-4 px-6 py-2.5 rounded-xl text-white text-xs font-bold flex items-center gap-1.5"
+   958→                  style={{ background: '#5C1A1B' }}
+   959→                >
+   960→                  <Plus size={14} />
+   961→                  إنشاء حوالة
+   962→                </button>
+   963→              </div>
+   964→            ) : (
+   965→              activeEscrows.map((escrow, index) => {
+   966→                const statusCfg = statusConfig[escrow.status];
+   967→                const StatusIcon = statusCfg.icon;
+   968→                const isBuyer = escrow.buyerId === user?.id;
+   969→                return (
+   970→                  <motion.button
+   971→                    key={escrow.id}
+   972→                    initial={{ opacity: 0, y: 10 }}
+   973→                    animate={{ opacity: 1, y: 0 }}
+   974→                    transition={{ delay: 0.05 * index }}
+   975→                    onClick={() => setSelectedEscrow(escrow)}
+   976→                    whileTap={{ scale: 0.98 }}
+   977→                    className="w-full rounded-2xl p-4 text-right"
+   978→                    style={{
+   979→                      background: isDark ? '#1A1A1A' : '#FFF',
+   980→                      border: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'}`,
+   981→                    }}
+   982→                  >
+   983→                    <div className="flex items-center gap-3">
+   984→                      <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: statusCfg.bgColor }}>
+   985→                        <StatusIcon size={18} color={statusCfg.color} />
+   986→                      </div>
+   987→                      <div className="flex-1 min-w-0">
+   988→                        <div className="flex items-center justify-between">
+   989→                          <p className="text-sm font-bold truncate" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>{escrow.title}</p>
+   990→                          <span
+   991→                            className="text-[9px] px-2 py-0.5 rounded-full font-bold shrink-0 mr-2"
+   992→                            style={{ background: statusCfg.bgColor, color: statusCfg.color }}
+   993→                          >
+   994→                            {statusCfg.label}
+   995→                          </span>
+   996→                        </div>
+   997→                        <div className="flex items-center justify-between mt-1">
+   998→                          <p className="text-xs" style={{ color: isDark ? '#888' : '#999' }}>
+   999→                            {isBuyer ? 'مشتري' : 'بائع'} • {timeAgo(escrow.createdAt)}
+  1000→                          </p>
+  1001→                          <p className="text-xs font-bold" style={{ color: isDark ? '#CCC' : '#333' }}>
+  1002→                            {formatBalance(escrow.amount, escrow.currency)} {currencySymbols[escrow.currency]}
+  1003→                          </p>
+  1004→                        </div>
+  1005→                      </div>
+  1006→                    </div>
+  1007→                  </motion.button>
+  1008→                );
+  1009→              })
+  1010→            )}
+  1011→          </motion.div>
+  1012→        )}
+  1013→
+  1014→        {activeTab === 'create' && (
+  1015→          <motion.div
+  1016→            key="create"
+  1017→            initial={{ opacity: 0, y: 10 }}
+  1018→            animate={{ opacity: 1, y: 0 }}
+  1019→            exit={{ opacity: 0, y: -10 }}
+  1020→            className="p-4 space-y-4"
+  1021→          >
+  1022→            {/* How it works */}
+  1023→            <div
+  1024→              className="rounded-2xl p-4"
+  1025→              style={{
+  1026→                background: isDark ? '#1A1A1A' : '#FFF',
+  1027→                border: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'}`,
+  1028→              }}
+  1029→            >
+  1030→              <h3 className="text-sm font-bold mb-3 flex items-center gap-2" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
+  1031→                <Shield size={16} color="#5C1A1B" />
+  1032→                كيف تعمل خدمة الوسيط؟
+  1033→              </h3>
+  1034→              <div className="space-y-2">
+  1035→                {[
+  1036→                  { step: '١', text: 'يتم إنشاء الحوالة وتحديد الطرفين' },
+  1037→                  { step: '٢', text: 'المشتري يقوم بتمويل الحوالة' },
+  1038→                  { step: '٣', text: 'البائع يسلم المنتج/الخدمة' },
+  1039→                  { step: '٤', text: 'كلا الطرفين يؤكد الإتمام' },
+  1040→                  { step: '٥', text: 'يتم تحرير المبلغ للبائع' },
+  1041→                ].map((item, i) => (
+  1042→                  <div key={i} className="flex items-center gap-2">
+  1043→                    <div className="w-6 h-6 rounded-full flex items-center justify-center shrink-0" style={{ background: 'rgba(92,26,27,0.12)' }}>
+  1044→                      <span className="text-[10px] font-bold" style={{ color: '#5C1A1B' }}>{item.step}</span>
+  1045→                    </div>
+  1046→                    <span className="text-[11px]" style={{ color: isDark ? '#AAA' : '#666' }}>{item.text}</span>
+  1047→                  </div>
+  1048→                ))}
+  1049→              </div>
+  1050→            </div>
+  1051→
+  1052→            {/* Create form */}
+  1053→            <div
+  1054→              className="rounded-2xl p-4 space-y-4"
+  1055→              style={{
+  1056→                background: isDark ? '#1A1A1A' : '#FFF',
+  1057→                border: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'}`,
+  1058→              }}
+  1059→            >
+  1060→              <h3 className="text-sm font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>إنشاء حوالة وسيطة</h3>
+  1061→
+  1062→              {/* Title */}
+  1063→              <div>
+  1064→                <label className="text-[11px] font-medium mb-1.5 block" style={{ color: isDark ? '#888' : '#999' }}>
+  1065→                  عنوان الحوالة *
+  1066→                </label>
+  1067→                <input
+  1068→                  value={formTitle}
+  1069→                  onChange={(e) => setFormTitle(e.target.value)}
+  1070→                  placeholder="مثال: شراء هاتف سامسونج"
+  1071→                  className="w-full rounded-xl px-3 py-2.5 text-sm outline-none"
+  1072→                  style={{
+  1073→                    background: isDark ? '#222' : '#F8F8F8',
+  1074→                    color: isDark ? '#FFF' : '#1a1a1a',
+  1075→                    border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'}`,
+  1076→                  }}
+  1077→                />
+  1078→              </div>
+  1079→
+  1080→              {/* Description */}
+  1081→              <div>
+  1082→                <label className="text-[11px] font-medium mb-1.5 block" style={{ color: isDark ? '#888' : '#999' }}>
+  1083→                  الوصف (اختياري)
+  1084→                </label>
+  1085→                <textarea
+  1086→                  value={formDescription}
+  1087→                  onChange={(e) => setFormDescription(e.target.value)}
+  1088→                  placeholder="وصف تفصيلي للصفقة..."
+  1089→                  rows={3}
+  1090→                  className="w-full rounded-xl px-3 py-2.5 text-sm resize-none outline-none"
+  1091→                  style={{
+  1092→                    background: isDark ? '#222' : '#F8F8F8',
+  1093→                    color: isDark ? '#FFF' : '#1a1a1a',
+  1094→                    border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'}`,
+  1095→                  }}
+  1096→                />
+  1097→              </div>
+  1098→
+  1099→              {/* Role */}
+  1100→              <div>
+  1101→                <label className="text-[11px] font-medium mb-1.5 block" style={{ color: isDark ? '#888' : '#999' }}>
+  1102→                  دورك في الصفقة *
+  1103→                </label>
+  1104→                <div className="flex gap-2">
+  1105→                  {[
+  1106→                    { key: 'buyer' as const, label: 'مشتري', color: '#10B981' },
+  1107→                    { key: 'seller' as const, label: 'بائع', color: '#3B82F6' },
+  1108→                  ].map(role => (
+  1109→                    <button
+  1110→                      key={role.key}
+  1111→                      onClick={() => setFormRole(role.key)}
+  1112→                      className="flex-1 py-2.5 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5"
+  1113→                      style={{
+  1114→                        background: formRole === role.key ? `${role.color}15` : (isDark ? '#222' : '#F8F8F8'),
+  1115→                        color: formRole === role.key ? role.color : (isDark ? '#888' : '#999'),
+  1116→                        border: `1px solid ${formRole === role.key ? role.color : (isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)')}`,
+  1117→                      }}
+  1118→                    >
+  1119→                      {role.key === 'buyer' ? <Users size={14} /> : <Wallet size={14} />}
+  1120→                      {role.label}
+  1121→                    </button>
+  1122→                  ))}
+  1123→                </div>
+  1124→              </div>
+  1125→
+  1126→              {/* Other party ID */}
+  1127→              <div>
+  1128→                <label className="text-[11px] font-medium mb-1.5 block" style={{ color: isDark ? '#888' : '#999' }}>
+  1129→                  معرف الطرف الآخر *
+  1130→                </label>
+  1131→                <input
+  1132→                  value={formOtherPartyId}
+  1133→                  onChange={(e) => setFormOtherPartyId(e.target.value)}
+  1134→                  placeholder={formRole === 'buyer' ? 'معرف البائع (مثال: JN-XXXX)' : 'معرف المشتري (مثال: JN-XXXX)'}
+  1135→                  className="w-full rounded-xl px-3 py-2.5 text-sm outline-none"
+  1136→                  dir="ltr"
+  1137→                  style={{
+  1138→                    background: isDark ? '#222' : '#F8F8F8',
+  1139→                    color: isDark ? '#FFF' : '#1a1a1a',
+  1140→                    border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'}`,
+  1141→                  }}
+  1142→                />
+  1143→              </div>
+  1144→
+  1145→              {/* Amount & Currency */}
+  1146→              <div className="flex gap-3">
+  1147→                <div className="flex-1">
+  1148→                  <label className="text-[11px] font-medium mb-1.5 block" style={{ color: isDark ? '#888' : '#999' }}>
+  1149→                    المبلغ *
+  1150→                  </label>
+  1151→                  <input
+  1152→                    value={formAmount}
+  1153→                    onChange={(e) => setFormAmount(e.target.value.replace(/[^0-9.]/g, ''))}
+  1154→                    placeholder="0"
+  1155→                    type="number"
+  1156→                    inputMode="decimal"
+  1157→                    className="w-full rounded-xl px-3 py-2.5 text-sm outline-none"
+  1158→                    dir="ltr"
+  1159→                    style={{
+  1160→                      background: isDark ? '#222' : '#F8F8F8',
+  1161→                      color: isDark ? '#FFF' : '#1a1a1a',
+  1162→                      border: `1px solid ${isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)'}`,
+  1163→                    }}
+  1164→                  />
+  1165→                </div>
+  1166→                <div className="w-28">
+  1167→                  <label className="text-[11px] font-medium mb-1.5 block" style={{ color: isDark ? '#888' : '#999' }}>
+  1168→                    العملة
+  1169→                  </label>
+  1170→                  <div className="flex gap-1">
+  1171→                    {(['YER', 'SAR', 'USD'] as const).map(curr => (
+  1172→                      <button
+  1173→                        key={curr}
+  1174→                        onClick={() => setFormCurrency(curr)}
+  1175→                        className="flex-1 py-2.5 rounded-lg text-[10px] font-bold"
+  1176→                        style={{
+  1177→                          background: formCurrency === curr ? '#5C1A1B' : (isDark ? '#222' : '#F8F8F8'),
+  1178→                          color: formCurrency === curr ? '#FFF' : (isDark ? '#888' : '#999'),
+  1179→                        }}
+  1180→                      >
+  1181→                        {curr}
+  1182→                      </button>
+  1183→                    ))}
+  1184→                  </div>
+  1185→                </div>
+  1186→              </div>
+  1187→
+  1188→              {/* Submit */}
+  1189→              <button
+  1190→                onClick={handleCreateEscrow}
+  1191→                disabled={!formTitle.trim() || !formAmount.trim() || !formOtherPartyId.trim() || isProcessing}
+  1192→                className="w-full py-3.5 rounded-xl text-white font-bold text-sm flex items-center justify-center gap-2"
+  1193→                style={{
+  1194→                  background: 'linear-gradient(135deg, #5C1A1B 0%, #3D0F10 100%)',
+  1195→                  opacity: (!formTitle.trim() || !formAmount.trim() || !formOtherPartyId.trim()) ? 0.5 : 1,
+  1196→                }}
+  1197→              >
+  1198→                {isProcessing ? (
+  1199→                  <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+  1200→                ) : (
+  1201→                  <>
+  1202→                    <Shield size={18} />
+  1203→                    إنشاء حوالة وسيطة
+  1204→                  </>
+  1205→                )}
+  1206→              </button>
+  1207→            </div>
+  1208→          </motion.div>
+  1209→        )}
+  1210→
+  1211→        {activeTab === 'history' && (
+  1212→          <motion.div
+  1213→            key="history"
+  1214→            initial={{ opacity: 0, y: 10 }}
+  1215→            animate={{ opacity: 1, y: 0 }}
+  1216→            exit={{ opacity: 0, y: -10 }}
+  1217→            className="p-4 space-y-3"
+  1218→          >
+  1219→            {historyEscrows.length === 0 ? (
+  1220→              <div className="flex flex-col items-center py-12">
+  1221→                <div className="w-16 h-16 rounded-2xl flex items-center justify-center mb-3" style={{ background: isDark ? '#1A1A1A' : '#F0F0F0' }}>
+  1222→                  <History size={28} color={isDark ? '#333' : '#DDD'} />
+  1223→                </div>
+  1224→                <p className="text-sm font-medium" style={{ color: isDark ? '#555' : '#AAA' }}>لا يوجد سجل</p>
+  1225→                <p className="text-[11px] mt-1" style={{ color: isDark ? '#444' : '#CCC' }}>الحوالات المكتملة والملغاة ستظهر هنا</p>
+  1226→              </div>
+  1227→            ) : (
+  1228→              historyEscrows.map((escrow, index) => {
+  1229→                const statusCfg = statusConfig[escrow.status];
+  1230→                const StatusIcon = statusCfg.icon;
+  1231→                const isBuyer = escrow.buyerId === user?.id;
+  1232→                return (
+  1233→                  <motion.button
+  1234→                    key={escrow.id}
+  1235→                    initial={{ opacity: 0, y: 10 }}
+  1236→                    animate={{ opacity: 1, y: 0 }}
+  1237→                    transition={{ delay: 0.05 * index }}
+  1238→                    onClick={() => setSelectedEscrow(escrow)}
+  1239→                    whileTap={{ scale: 0.98 }}
+  1240→                    className="w-full rounded-2xl p-4 text-right"
+  1241→                    style={{
+  1242→                      background: isDark ? '#1A1A1A' : '#FFF',
+  1243→                      border: `1px solid ${isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)'}`,
+  1244→                    }}
+  1245→                  >
+  1246→                    <div className="flex items-center gap-3">
+  1247→                      <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0" style={{ background: statusCfg.bgColor }}>
+  1248→                        <StatusIcon size={18} color={statusCfg.color} />
+  1249→                      </div>
+  1250→                      <div className="flex-1 min-w-0">
+  1251→                        <div className="flex items-center justify-between">
+  1252→                          <p className="text-sm font-bold truncate" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>{escrow.title}</p>
+  1253→                          <span
+  1254→                            className="text-[9px] px-2 py-0.5 rounded-full font-bold shrink-0 mr-2"
+  1255→                            style={{ background: statusCfg.bgColor, color: statusCfg.color }}
+  1256→                          >
+  1257→                            {statusCfg.label}
+  1258→                          </span>
+  1259→                        </div>
+  1260→                        <div className="flex items-center justify-between mt-1">
+  1261→                          <p className="text-xs" style={{ color: isDark ? '#888' : '#999' }}>
+  1262→                            {isBuyer ? 'مشتري' : 'بائع'} • {timeAgo(escrow.createdAt)}
+  1263→                          </p>
+  1264→                          <p className="text-xs font-bold" style={{ color: isDark ? '#CCC' : '#333' }}>
+  1265→                            {formatBalance(escrow.amount, escrow.currency)} {currencySymbols[escrow.currency]}
+  1266→                          </p>
+  1267→                        </div>
+  1268→                      </div>
+  1269→                    </div>
+  1270→                  </motion.button>
+  1271→                );
+  1272→              })
+  1273→            )}
+  1274→          </motion.div>
+  1275→        )}
+  1276→      </AnimatePresence>
+  1277→
+  1278→      {renderSuccessModal()}
+  1279→    </div>
+  1280→  );
+  1281→}
+  1282→
