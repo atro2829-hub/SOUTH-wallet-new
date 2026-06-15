@@ -1,0 +1,1232 @@
+     1→'use client';
+     2→
+     3→import { useState, useEffect, useCallback, useMemo } from 'react';
+     4→import { useTheme } from 'next-themes';
+     5→import { motion, AnimatePresence } from 'framer-motion';
+     6→import {
+     7→  Search,
+     8→  ChevronLeft,
+     9→  Wallet,
+    10→  Gamepad2,
+    11→  Package,
+    12→  Zap,
+    13→  Wifi,
+    14→  Landmark,
+    15→  ShieldCheck,
+    16→  Globe,
+    17→  type LucideIcon,
+    18→} from 'lucide-react';
+    19→import { useAppStore } from '@/lib/store';
+    20→import { productIcons } from '@/lib/product-icons';
+    21→import { serviceIcons } from '@/lib/service-icons';
+    22→import { database } from '@/lib/firebase';
+    23→import { ref, onValue } from 'firebase/database';
+    24→
+    25→// ═══════════════════════════════════════════════════════════════════════
+    26→// Firebase Data Types
+    27→// ═══════════════════════════════════════════════════════════════════════
+    28→
+    29→interface FirebaseSubSection {
+    30→  id: string;
+    31→  name: string;
+    32→  icon?: string;
+    33→  sortOrder?: number;
+    34→  isActive?: boolean;
+    35→  parentId?: string;
+    36→  providerIds?: string[];
+    37→}
+    38→
+    39→interface FirebaseSection {
+    40→  id: string;
+    41→  name: string;
+    42→  icon?: string;
+    43→  color?: string;
+    44→  sortOrder?: number;
+    45→  isActive?: boolean;
+    46→  type?: string;
+    47→  parentId?: string;
+    48→  providerIds?: string[];
+    49→  apiProviderId?: string;
+    50→  subSections?: Record<string, FirebaseSubSection>;
+    51→}
+    52→
+    53→interface FirebaseProvider {
+    54→  id: string;
+    55→  name: string;
+    56→  color?: string;
+    57→  icon?: string;
+    58→  categoryId?: string;
+    59→  sectionId?: string;
+    60→  subSectionId?: string;
+    61→  inputLabel?: string;
+    62→  inputType?: string;
+    63→  inputPrefix?: string;
+    64→  isActive?: boolean;
+    65→  sortOrder?: number;
+    66→  executionType?: string;
+    67→}
+    68→
+    69→interface FirebaseWalletServicePackage {
+    70→  id: string;
+    71→  name: string;
+    72→  price?: number;
+    73→  currency?: string;
+    74→  costPrice?: number;
+    75→  commission?: number;
+    76→  commissionType?: string;
+    77→  executionType?: string;
+    78→  isActive?: boolean;
+    79→  sortOrder?: number;
+    80→  description?: string;
+    81→}
+    82→
+    83→interface FirebaseWalletService {
+    84→  id: string;
+    85→  name: string;
+    86→  description?: string;
+    87→  icon?: string;
+    88→  color?: string;
+    89→  categoryId?: string;
+    90→  sectionId?: string;
+    91→  subSectionId?: string;
+    92→  inputLabel?: string;
+    93→  inputType?: string;
+    94→  inputPrefix?: string;
+    95→  isActive?: boolean;
+    96→  sortOrder?: number;
+    97→  packages?: Record<string, FirebaseWalletServicePackage>;
+    98→}
+    99→
+   100→interface ApiProviderCategory {
+   101→  id: number | string;
+   102→  title: string;
+   103→  icon?: string;
+   104→  slug?: string;
+   105→  sectionId?: string;
+   106→  products?: Record<string, ApiProviderProduct>;
+   107→}
+   108→
+   109→interface ApiProviderProduct {
+   110→  id: number | string;
+   111→  title: string;
+   112→  unit_price: number;
+   113→  stock?: number;
+   114→  icon?: string;
+   115→  description?: string;
+   116→  isActive?: boolean;
+   117→}
+   118→
+   119→interface FirebaseApiProvider {
+   120→  id: string;
+   121→  name: string;
+   122→  baseUrl?: string;
+   123→  apiKey?: string;
+   124→  authHeader?: string;
+   125→  isActive?: boolean;
+   126→  syncEnabled?: boolean;
+   127→  sectionId?: string;
+   128→  sectionName?: string;
+   129→  commission?: number;
+   130→  commissionType?: string;
+   131→  balance?: number;
+   132→  balanceCurrency?: string;
+   133→  lastBalanceCheck?: string;
+   134→  categories?: Record<string, ApiProviderCategory>;
+   135→}
+   136→
+   137→// ═══════════════════════════════════════════════════════════════════════
+   138→// Display Helper Types
+   139→// ═══════════════════════════════════════════════════════════════════════
+   140→
+   141→interface ApiCategoryItem {
+   142→  id: string;
+   143→  name: string;
+   144→  providerId: string;
+   145→  categoryId: string | number;
+   146→  icon?: string;
+   147→  productsCount?: number;
+   148→}
+   149→
+   150→interface SubSectionDisplay {
+   151→  id: string;
+   152→  name: string;
+   153→  providers: FirebaseProvider[];
+   154→  isApiCategory?: boolean;
+   155→  apiCategories?: ApiCategoryItem[];
+   156→}
+   157→
+   158→interface SectionDisplay {
+   159→  id: string;
+   160→  name: string;
+   161→  icon?: string;
+   162→  color?: string;
+   163→  type?: string;
+   164→  providers: FirebaseProvider[];
+   165→  subSections: SubSectionDisplay[];
+   166→  isApiSection?: boolean;
+   167→  isWalletServicesSection?: boolean;
+   168→}
+   169→
+   170→// ═══════════════════════════════════════════════════════════════════════
+   171→// Constants
+   172→// ═══════════════════════════════════════════════════════════════════════
+   173→
+   174→const TELECOM_PROVIDER_IDS = new Set(['yemen-mobile', 'yo', 'sabafon', 'y']);
+   175→const COMPACT_LIMIT = 8;
+   176→
+   177→const SECTION_TYPE_ICONS: Record<string, LucideIcon> = {
+   178→  'wallet-services': Wallet,
+   179→  'providers': Gamepad2,
+   180→  'telecom': Zap,
+   181→  'internet': Wifi,
+   182→  'government': Landmark,
+   183→  'crypto': Globe,
+   184→  'electricity': ShieldCheck,
+   185→};
+   186→
+   187→// ═══════════════════════════════════════════════════════════════════════
+   188→// Icon Helper
+   189→// ═══════════════════════════════════════════════════════════════════════
+   190→
+   191→function getIconForProvider(providerId: string): string {
+   192→  if (productIcons[providerId]) return productIcons[providerId];
+   193→  if (serviceIcons[providerId]) return serviceIcons[providerId];
+   194→  return serviceIcons['instant-pay'] || '';
+   195→}
+   196→
+   197→function getIconForApiCategory(cat: ApiCategoryItem): string | null {
+   198→  if (cat.icon) return cat.icon;
+   199→  const key = `apicat-${cat.providerId}-${cat.categoryId}`;
+   200→  if (productIcons[key]) return productIcons[key];
+   201→  if (serviceIcons[key]) return serviceIcons[key];
+   202→  return null;
+   203→}
+   204→
+   205→// ═══════════════════════════════════════════════════════════════════════
+   206→// Component
+   207→// ═══════════════════════════════════════════════════════════════════════
+   208→
+   209→export default function ServicesScreen() {
+   210→  const { theme } = useTheme();
+   211→  const isDark = theme === 'dark';
+   212→  const { setActiveScreen, setSelectedCategory } = useAppStore();
+   213→
+   214→  // ─── Firebase Real-Time State ─────────────────────────────────────
+   215→
+   216→  const [fbSections, setFbSections] = useState<Record<string, FirebaseSection>>({});
+   217→  const [fbProviders, setFbProviders] = useState<Record<string, FirebaseProvider>>({});
+   218→  const [fbWalletServices, setFbWalletServices] = useState<Record<string, FirebaseWalletService>>({});
+   219→  const [fbApiProviders, setFbApiProviders] = useState<Record<string, FirebaseApiProvider>>({});
+   220→  const [visibilitySections, setVisibilitySections] = useState<Record<string, boolean>>({});
+   221→  const [visibilityProviders, setVisibilityProviders] = useState<Record<string, boolean>>({});
+   222→
+   223→  // ─── UI State ─────────────────────────────────────────────────────
+   224→
+   225→  const [searchQuery, setSearchQuery] = useState('');
+   226→  const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set());
+   227→
+   228→  // ═══════════════════════════════════════════════════════════════════
+   229→  // Firebase Real-Time Listeners
+   230→  // ═══════════════════════════════════════════════════════════════════
+   231→
+   232→  useEffect(() => {
+   233→    const unsub = onValue(
+   234→      ref(database, 'sections'),
+   235→      (snap) => setFbSections(snap.exists() ? snap.val() : {}),
+   236→      (err) => console.error('[sections]', err)
+   237→    );
+   238→    return () => unsub();
+   239→  }, []);
+   240→
+   241→  useEffect(() => {
+   242→    const unsub = onValue(
+   243→      ref(database, 'providers'),
+   244→      (snap) => setFbProviders(snap.exists() ? snap.val() : {}),
+   245→      (err) => console.error('[providers]', err)
+   246→    );
+   247→    return () => unsub();
+   248→  }, []);
+   249→
+   250→  useEffect(() => {
+   251→    const unsub = onValue(
+   252→      ref(database, 'walletServices'),
+   253→      (snap) => setFbWalletServices(snap.exists() ? snap.val() : {}),
+   254→      (err) => console.error('[walletServices]', err)
+   255→    );
+   256→    return () => unsub();
+   257→  }, []);
+   258→
+   259→  useEffect(() => {
+   260→    const unsub = onValue(
+   261→      ref(database, 'adminSettings/apiProviders'),
+   262→      (snap) => setFbApiProviders(snap.exists() ? snap.val() : {}),
+   263→      (err) => console.error('[apiProviders]', err)
+   264→    );
+   265→    return () => unsub();
+   266→  }, []);
+   267→
+   268→  useEffect(() => {
+   269→    const unsub = onValue(
+   270→      ref(database, 'adminSettings/visibility'),
+   271→      (snap) => {
+   272→        if (!snap.exists()) return;
+   273→        const data = snap.val();
+   274→        if (data.sections) setVisibilitySections(data.sections);
+   275→        if (data.providers) setVisibilityProviders(data.providers);
+   276→      },
+   277→      (err) => console.error('[visibility]', err)
+   278→    );
+   279→    return () => unsub();
+   280→  }, []);
+   281→
+   282→  // ═══════════════════════════════════════════════════════════════════
+   283→  // Helpers
+   284→  // ═══════════════════════════════════════════════════════════════════
+   285→
+   286→  const isProviderVisible = useCallback(
+   287→    (id: string, isActive?: boolean): boolean =>
+   288→      isActive !== false && visibilityProviders[id] !== false,
+   289→    [visibilityProviders]
+   290→  );
+   291→
+   292→  const isSectionVisible = useCallback(
+   293→    (id: string, isActive?: boolean): boolean =>
+   294→      isActive !== false && visibilitySections[id] !== false,
+   295→    [visibilitySections]
+   296→  );
+   297→
+   298→  const isSubSectionVisible = useCallback(
+   299→    (sectionId: string, subId: string, isActive?: boolean): boolean => {
+   300→      if (isActive === false) return false;
+   301→      // Check parent section visibility
+   302→      if (visibilitySections[sectionId] === false) return false;
+   303→      // Check sub-section specific visibility (stored as "sectionId/subId")
+   304→      const key = `${sectionId}/${subId}`;
+   305→      return visibilitySections[key] !== false;
+   306→    },
+   307→    [visibilitySections]
+   308→  );
+   309→
+   310→  /** Convert a wallet service into a provider-like shape for rendering */
+   311→  const walletServiceToProvider = useCallback(
+   312→    (ws: FirebaseWalletService): FirebaseProvider => ({
+   313→      id: ws.id,
+   314→      name: ws.name,
+   315→      color: ws.color,
+   316→      icon: ws.icon,
+   317→      categoryId: ws.categoryId,
+   318→      sectionId: ws.sectionId,
+   319→      subSectionId: ws.subSectionId,
+   320→      inputLabel: ws.inputLabel,
+   321→      inputType: ws.inputType,
+   322→      inputPrefix: ws.inputPrefix,
+   323→      isActive: ws.isActive,
+   324→      sortOrder: ws.sortOrder,
+   325→    }),
+   326→    []
+   327→  );
+   328→
+   329→  const toggleExpand = useCallback((sectionId: string) => {
+   330→    setExpandedSections((prev) => {
+   331→      const next = new Set(prev);
+   332→      if (next.has(sectionId)) next.delete(sectionId);
+   333→      else next.add(sectionId);
+   334→      return next;
+   335→    });
+   336→  }, []);
+   337→
+   338→  // ═══════════════════════════════════════════════════════════════════
+   339→  // Navigation Handlers
+   340→  // ═══════════════════════════════════════════════════════════════════
+   341→
+   342→  const handleProviderClick = useCallback(
+   343→    (providerId: string) => {
+   344→      if (TELECOM_PROVIDER_IDS.has(providerId)) {
+   345→        setActiveScreen('recharge');
+   346→        return;
+   347→      }
+   348→      setSelectedCategory(providerId);
+   349→      setActiveScreen('category-detail');
+   350→    },
+   351→    [setActiveScreen, setSelectedCategory]
+   352→  );
+   353→
+   354→  const handleApiCategoryClick = useCallback(
+   355→    (providerId: string, categoryId: string | number) => {
+   356→      setSelectedCategory(`apicat-${providerId}-${categoryId}`);
+   357→      setActiveScreen('category-detail');
+   358→    },
+   359→    [setActiveScreen, setSelectedCategory]
+   360→  );
+   361→
+   362→  const handleSectionHeaderClick = useCallback(
+   363→    (sectionId: string) => {
+   364→      setSelectedCategory(sectionId);
+   365→      setActiveScreen('category-detail');
+   366→    },
+   367→    [setActiveScreen, setSelectedCategory]
+   368→  );
+   369→
+   370→  // ═══════════════════════════════════════════════════════════════════
+   371→  // Build API Category Items (flat list from all active API providers)
+   372→  // ═══════════════════════════════════════════════════════════════════
+   373→
+   374→  const apiCategoryItems = useMemo<ApiCategoryItem[]>(() => {
+   375→    const items: ApiCategoryItem[] = [];
+   376→
+   377→    for (const ap of Object.values(fbApiProviders)) {
+   378→      if (ap.isActive === false) continue;
+   379→      if (!ap.categories) continue;
+   380→
+   381→      for (const cat of Object.values(ap.categories)) {
+   382→        if (cat == null) continue;
+   383→        const productsCount = cat.products
+   384→          ? Object.values(cat.products).filter((p) => p != null).length
+   385→          : 0;
+   386→
+   387→        items.push({
+   388→          id: `apicat-${ap.id}-${cat.id}`,
+   389→          name: cat.title || 'خدمة',
+   390→          providerId: ap.id,
+   391→          categoryId: cat.id,
+   392→          icon: cat.icon,
+   393→          productsCount,
+   394→        });
+   395→      }
+   396→    }
+   397→
+   398→    return items;
+   399→  }, [fbApiProviders]);
+   400→
+   401→  // ═══════════════════════════════════════════════════════════════════
+   402→  // Build Sections from Firebase Data
+   403→  // ═══════════════════════════════════════════════════════════════════
+   404→
+   405→  const allSections = useMemo<SectionDisplay[]>(() => {
+   406→    const sorted = Object.values(fbSections)
+   407→      .filter((s) => isSectionVisible(s.id, s.isActive))
+   408→      .sort((a, b) => (a.sortOrder ?? 999) - (b.sortOrder ?? 999));
+   409→
+   410→    const result: SectionDisplay[] = [];
+   411→
+   412→    for (const section of sorted) {
+   413→      const isApiSection = !!section.apiProviderId; // any apiProviderId, not just '__all__'
+   414→      const isWalletSection =
+   415→        section.type === 'wallet-services' || section.id === 'wallet-services';
+   416→
+   417→      // ── API Providers Section ──────────────────────────────────
+   418→      if (isApiSection) {
+   419→        result.push(buildApiSection(section));
+   420→        continue;
+   421→      }
+   422→
+   423→      // ── Wallet Services Section ────────────────────────────────
+   424→      if (isWalletSection) {
+   425→        const built = buildWalletServicesSection(section);
+   426→        if (built) result.push(built);
+   427→        continue;
+   428→      }
+   429→
+   430→      // ── Regular Section ────────────────────────────────────────
+   431→      const built = buildRegularSection(section);
+   432→      if (built) result.push(built);
+   433→    }
+   434→
+   435→    return result;
+   436→
+   437→    // ─── Inner builders (close over outer scope) ────────────────
+   438→
+   439→    function buildApiSection(section: FirebaseSection): SectionDisplay {
+   440→      // If apiProviderId is '__all__', show all API providers' categories
+   441→      // If apiProviderId is a specific ID (e.g., 'g2bulk'), show only that provider's categories
+   442→      const targetProviderId = section.apiProviderId === '__all__' ? null : section.apiProviderId;
+   443→
+   444→      // Group API categories by provider (or use single provider)
+   445→      const grouped: Record<string, ApiCategoryItem[]> = {};
+   446→      for (const item of apiCategoryItems) {
+   447→        if (targetProviderId && item.providerId !== targetProviderId) continue;
+   448→        (grouped[item.providerId] ??= []).push(item);
+   449→      }
+   450→
+   451→      const apiSubSections: SubSectionDisplay[] = Object.entries(grouped).map(
+   452→        ([provId, items]) => ({
+   453→          id: `api-${provId}`,
+   454→          name: fbApiProviders[provId]?.name || 'مزود خدمات',
+   455→          providers: [],
+   456→          isApiCategory: true,
+   457→          apiCategories: items,
+   458→        })
+   459→      );
+   460→
+   461→      // Also include regular providers linked to this section
+   462→      const providers = collectSectionProviders(section);
+   463→
+   464→      return {
+   465→        id: section.id,
+   466→        name: section.name,
+   467→        icon: section.icon,
+   468→        color: section.color,
+   469→        type: section.type,
+   470→        providers,
+   471→        subSections: apiSubSections,
+   472→        isApiSection: true,
+   473→        isWalletServicesSection: false,
+   474→      };
+   475→    }
+   476→
+   477→    function buildWalletServicesSection(
+   478→      section: FirebaseSection
+   479→    ): SectionDisplay | null {
+   480→      const wsProviders: FirebaseProvider[] = [];
+   481→      const walletSubSections: SubSectionDisplay[] = [];
+   482→
+   483→      if (hasActiveSubSections(section.subSections)) {
+   484→        // Distribute wallet services into sub-sections
+   485→        const subEntries = sortSubSections(section.subSections!);
+   486→        const assignedIds = new Set<string>();
+   487→
+   488→        for (const sub of subEntries) {
+   489→          // Check sub-section visibility
+   490→          if (!isSubSectionVisible(section.id, sub.id, sub.isActive)) continue;
+   491→
+   492→          const subProviders = resolveSubSectionProviders(
+   493→            sub,
+   494→            /* preferWalletServices */ true
+   495→          );
+   496→          subProviders.forEach((p) => assignedIds.add(p.id));
+   497→
+   498→          if (subProviders.length > 0) {
+   499→            walletSubSections.push({
+   500→              id: sub.id,
+   501→              name: sub.name,
+   502→              providers: subProviders,
+   503→            });
+   504→          }
+   505→        }
+   506→
+   507→        // Collect unassigned wallet services for this section
+   508→        const unassigned = Object.values(fbWalletServices)
+   509→          .filter(
+   510→            (ws) =>
+   511→              ws.sectionId === section.id &&
+   512→              isProviderVisible(ws.id, ws.isActive) &&
+   513→              !assignedIds.has(ws.id)
+   514→          )
+   515→          .map(walletServiceToProvider)
+   516→          .sort(bySortOrder);
+   517→
+   518→        wsProviders.push(...unassigned);
+   519→      } else {
+   520→        // No sub-sections: flat list of wallet services
+   521→        const flat = Object.values(fbWalletServices)
+   522→          .filter(
+   523→            (ws) =>
+   524→              ws.sectionId === section.id && isProviderVisible(ws.id, ws.isActive)
+   525→          )
+   526→          .map(walletServiceToProvider)
+   527→          .sort(bySortOrder);
+   528→
+   529→        wsProviders.push(...flat);
+   530→      }
+   531→
+   532→      if (wsProviders.length === 0 && walletSubSections.length === 0) return null;
+   533→
+   534→      return {
+   535→        id: section.id,
+   536→        name: section.name,
+   537→        icon: section.icon,
+   538→        color: section.color,
+   539→        type: section.type,
+   540→        providers: wsProviders,
+   541→        subSections: walletSubSections,
+   542→        isApiSection: false,
+   543→        isWalletServicesSection: true,
+   544→      };
+   545→    }
+   546→
+   547→    function buildRegularSection(
+   548→      section: FirebaseSection
+   549→    ): SectionDisplay | null {
+   550→      const providers = collectSectionProviders(section);
+   551→      const sectionSubSections: SubSectionDisplay[] = [];
+   552→
+   553→      if (hasActiveSubSections(section.subSections)) {
+   554→        const subEntries = sortSubSections(section.subSections!);
+   555→
+   556→        for (const sub of subEntries) {
+   557→          // Check sub-section visibility
+   558→          if (!isSubSectionVisible(section.id, sub.id, sub.isActive)) continue;
+   559→
+   560→          const subProviders = resolveSubSectionProviders(
+   561→            sub,
+   562→            /* preferWalletServices */ false
+   563→          );
+   564→          if (subProviders.length > 0) {
+   565→            sectionSubSections.push({
+   566→              id: sub.id,
+   567→              name: sub.name,
+   568→              providers: subProviders,
+   569→            });
+   570→          }
+   571→        }
+   572→      }
+   573→
+   574→      if (providers.length === 0 && sectionSubSections.length === 0) return null;
+   575→
+   576→      return {
+   577→        id: section.id,
+   578→        name: section.name,
+   579→        icon: section.icon,
+   580→        color: section.color,
+   581→        type: section.type,
+   582→        providers,
+   583→        subSections: sectionSubSections,
+   584→        isApiSection: false,
+   585→        isWalletServicesSection: false,
+   586→      };
+   587→    }
+   588→
+   589→    /** Collect top-level providers for a section */
+   590→    function collectSectionProviders(section: FirebaseSection): FirebaseProvider[] {
+   591→      if (section.providerIds?.length) {
+   592→        return section.providerIds
+   593→          .map((pid) => fbProviders[pid])
+   594→          .filter((p): p is FirebaseProvider => !!p && isProviderVisible(p.id, p.isActive))
+   595→          .sort(bySortOrder);
+   596→      }
+   597→
+   598→      return Object.values(fbProviders)
+   599→        .filter(
+   600→          (p) =>
+   601→            p.sectionId === section.id && isProviderVisible(p.id, p.isActive)
+   602→        )
+   603→        .sort(bySortOrder);
+   604→    }
+   605→
+   606→    /** Resolve providers for a sub-section, optionally preferring wallet services */
+   607→    function resolveSubSectionProviders(
+   608→      sub: FirebaseSubSection,
+   609→      preferWalletServices: boolean
+   610→    ): FirebaseProvider[] {
+   611→      const result: FirebaseProvider[] = [];
+   612→
+   613→      if (sub.providerIds?.length) {
+   614→        for (const pid of sub.providerIds) {
+   615→          if (preferWalletServices) {
+   616→            const ws = fbWalletServices[pid];
+   617→            if (ws && isProviderVisible(ws.id, ws.isActive)) {
+   618→              result.push(walletServiceToProvider(ws));
+   619→              continue;
+   620→            }
+   621→          }
+   622→          const prov = fbProviders[pid];
+   623→          if (prov && isProviderVisible(prov.id, prov.isActive)) {
+   624→            result.push(prov);
+   625→          }
+   626→        }
+   627→      } else {
+   628→        // Resolve by subSectionId
+   629→        if (preferWalletServices) {
+   630→          for (const ws of Object.values(fbWalletServices)) {
+   631→            if (
+   632→              ws.subSectionId === sub.id &&
+   633→              isProviderVisible(ws.id, ws.isActive)
+   634→            ) {
+   635→              result.push(walletServiceToProvider(ws));
+   636→            }
+   637→          }
+   638→        }
+   639→        for (const prov of Object.values(fbProviders)) {
+   640→          if (
+   641→            prov.subSectionId === sub.id &&
+   642→            isProviderVisible(prov.id, prov.isActive) &&
+   643→            !result.find((r) => r.id === prov.id)
+   644→          ) {
+   645→            result.push(prov);
+   646→          }
+   647→        }
+   648→      }
+   649→
+   650→      return result.sort(bySortOrder);
+   651→    }
+   652→
+   653→    function hasActiveSubSections(
+   654→      subs?: Record<string, FirebaseSubSection>
+   655→    ): boolean {
+   656→      return !!subs && Object.values(subs).some((s) => s.isActive !== false);
+   657→    }
+   658→
+   659→    function sortSubSections(subs: Record<string, FirebaseSubSection>) {
+   660→      return Object.values(subs)
+   661→        .filter((s) => s.isActive !== false)
+   662→        .sort((a, b) => (a.sortOrder ?? 999) - (b.sortOrder ?? 999));
+   663→    }
+   664→
+   665→    function bySortOrder(a: { sortOrder?: number }, b: { sortOrder?: number }) {
+   666→      return (a.sortOrder ?? 999) - (b.sortOrder ?? 999);
+   667→    }
+   668→  }, [
+   669→    fbSections,
+   670→    fbProviders,
+   671→    fbWalletServices,
+   672→    fbApiProviders,
+   673→    apiCategoryItems,
+   674→    visibilitySections,
+   675→    visibilityProviders,
+   676→    isSectionVisible,
+   677→    isSubSectionVisible,
+   678→    isProviderVisible,
+   679→    walletServiceToProvider,
+   680→  ]);
+   681→
+   682→  // ═══════════════════════════════════════════════════════════════════
+   683→  // Search Filtering
+   684→  // ═══════════════════════════════════════════════════════════════════
+   685→
+   686→  const filteredSections = useMemo(() => {
+   687→    const q = searchQuery.trim();
+   688→    if (!q) return allSections;
+   689→
+   690→    return allSections
+   691→      .map((section) => {
+   692→        const matchingProviders = section.providers.filter((p) =>
+   693→          p.name.includes(q)
+   694→        );
+   695→        const matchingSubSections = section.subSections
+   696→          .map((sub) => ({
+   697→            ...sub,
+   698→            providers: sub.providers.filter((p) => p.name.includes(q)),
+   699→            apiCategories: sub.apiCategories?.filter((c) => c.name.includes(q)),
+   700→          }))
+   701→          .filter(
+   702→            (sub) =>
+   703→              sub.providers.length > 0 ||
+   704→              (sub.apiCategories && sub.apiCategories.length > 0)
+   705→          );
+   706→
+   707→        return { ...section, providers: matchingProviders, subSections: matchingSubSections };
+   708→      })
+   709→      .filter(
+   710→        (section) =>
+   711→          section.providers.length > 0 || section.subSections.length > 0
+   712→      );
+   713→  }, [allSections, searchQuery]);
+   714→
+   715→  // ═══════════════════════════════════════════════════════════════════
+   716→  // Counting
+   717→  // ═══════════════════════════════════════════════════════════════════
+   718→
+   719→  const countSectionItems = (section: SectionDisplay): number => {
+   720→    let count = section.providers.length;
+   721→    for (const sub of section.subSections) {
+   722→      count += sub.isApiCategory
+   723→        ? (sub.apiCategories?.length ?? 0)
+   724→        : sub.providers.length;
+   725→    }
+   726→    return count;
+   727→  };
+   728→
+   729→  // ═══════════════════════════════════════════════════════════════════
+   730→  // Theme Styles
+   731→  // ═══════════════════════════════════════════════════════════════════
+   732→
+   733→  const cardStyle = {
+   734→    background: isDark ? '#1A1A1A' : '#FFFFFF',
+   735→    border: `1px solid ${isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)'}`,
+   736→    boxShadow: isDark ? 'none' : '0 1px 4px rgba(0,0,0,0.04)',
+   737→  };
+   738→
+   739→  const dividerColor = isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.06)';
+   740→
+   741→  // ═══════════════════════════════════════════════════════════════════
+   742→  // Render: Provider Item
+   743→  // ═══════════════════════════════════════════════════════════════════
+   744→
+   745→  const renderProviderItem = (provider: FirebaseProvider, index: number) => {
+   746→    const iconSrc = provider.icon || getIconForProvider(provider.id);
+   747→
+   748→    return (
+   749→      <motion.button
+   750→        key={provider.id}
+   751→        layout
+   752→        initial={{ opacity: 0, scale: 0.8 }}
+   753→        animate={{ opacity: 1, scale: 1 }}
+   754→        exit={{ opacity: 0, scale: 0.8 }}
+   755→        transition={{ delay: 0.02 * index, duration: 0.25 }}
+   756→        onClick={() => handleProviderClick(provider.id)}
+   757→        whileTap={{ scale: 0.92 }}
+   758→        className="flex flex-col items-center justify-center gap-1.5 py-2"
+   759→      >
+   760→        <div
+   761→          className="w-14 h-14 rounded-2xl overflow-hidden flex items-center justify-center shrink-0"
+   762→          style={{
+   763→            background: isDark
+   764→              ? 'rgba(255,255,255,0.05)'
+   765→              : 'rgba(0,0,0,0.03)',
+   766→          }}
+   767→        >
+   768→          <img
+   769→            src={iconSrc}
+   770→            alt={provider.name}
+   771→            className="w-10 h-10 object-contain"
+   772→            draggable={false}
+   773→            onError={(e) => {
+   774→              const target = e.target as HTMLImageElement;
+   775→              target.style.display = 'none';
+   776→              const parent = target.parentElement;
+   777→              if (parent) {
+   778→                parent.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="${isDark ? '#888' : '#666'}" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M12 8v8M8 12h8"/></svg>`;
+   779→              }
+   780→            }}
+   781→          />
+   782→        </div>
+   783→        <span
+   784→          className="text-[10px] font-medium text-center leading-tight max-w-[72px]"
+   785→          style={{
+   786→            color: isDark ? '#BBB' : '#555',
+   787→            display: '-webkit-box',
+   788→            WebkitLineClamp: 2,
+   789→            WebkitBoxOrient: 'vertical',
+   790→            overflow: 'hidden',
+   791→          }}
+   792→        >
+   793→          {provider.name}
+   794→        </span>
+   795→      </motion.button>
+   796→    );
+   797→  };
+   798→
+   799→  // ═══════════════════════════════════════════════════════════════════
+   800→  // Render: API Category Item
+   801→  // ═══════════════════════════════════════════════════════════════════
+   802→
+   803→  const renderApiCategoryItem = (cat: ApiCategoryItem, index: number) => {
+   804→    const iconSrc = getIconForApiCategory(cat);
+   805→
+   806→    return (
+   807→      <motion.button
+   808→        key={cat.id}
+   809→        layout
+   810→        initial={{ opacity: 0, scale: 0.8 }}
+   811→        animate={{ opacity: 1, scale: 1 }}
+   812→        exit={{ opacity: 0, scale: 0.8 }}
+   813→        transition={{ delay: 0.02 * index, duration: 0.25 }}
+   814→        onClick={() => handleApiCategoryClick(cat.providerId, cat.categoryId)}
+   815→        whileTap={{ scale: 0.92 }}
+   816→        className="flex flex-col items-center justify-center gap-1.5 py-2"
+   817→      >
+   818→        <div
+   819→          className="w-14 h-14 rounded-2xl overflow-hidden flex items-center justify-center shrink-0"
+   820→          style={{
+   821→            background: isDark
+   822→              ? 'rgba(255,255,255,0.05)'
+   823→              : 'rgba(0,0,0,0.03)',
+   824→          }}
+   825→        >
+   826→          {iconSrc ? (
+   827→            <img
+   828→              src={iconSrc}
+   829→              alt={cat.name}
+   830→              className="w-10 h-10 object-contain"
+   831→              draggable={false}
+   832→              onError={(e) => {
+   833→                const target = e.target as HTMLImageElement;
+   834→                target.style.display = 'none';
+   835→                const parent = target.parentElement;
+   836→                if (parent) {
+   837→                  parent.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="${isDark ? '#888' : '#666'}" stroke-width="1.5"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>`;
+   838→                }
+   839→              }}
+   840→            />
+   841→          ) : (
+   842→            <Package size={24} strokeWidth={1.5} color={isDark ? '#888' : '#666'} />
+   843→          )}
+   844→        </div>
+   845→        <span
+   846→          className="text-[10px] font-medium text-center leading-tight max-w-[72px]"
+   847→          style={{
+   848→            color: isDark ? '#BBB' : '#555',
+   849→            display: '-webkit-box',
+   850→            WebkitLineClamp: 2,
+   851→            WebkitBoxOrient: 'vertical',
+   852→            overflow: 'hidden',
+   853→          }}
+   854→        >
+   855→          {cat.name}
+   856→        </span>
+   857→        {cat.productsCount !== undefined && cat.productsCount > 0 && (
+   858→          <span className="text-[8px] font-medium" style={{ color: isDark ? '#666' : '#999' }}>
+   859→            {cat.productsCount} منتج
+   860→          </span>
+   861→        )}
+   862→      </motion.button>
+   863→    );
+   864→  };
+   865→
+   866→  // ═══════════════════════════════════════════════════════════════════
+   867→  // Render: Sub-Sections
+   868→  // ═══════════════════════════════════════════════════════════════════
+   869→
+   870→  const renderSubSections = (
+   871→    subSections: SubSectionDisplay[],
+   872→    isExpanded: boolean
+   873→  ) => {
+   874→    // Apply compact limit when collapsed
+   875→    const displaySubSections = isExpanded
+   876→      ? subSections
+   877→      : applyCompactLimit(subSections);
+   878→
+   879→    return (
+   880→      <AnimatePresence mode="popLayout">
+   881→        {displaySubSections.map((sub, subIndex) => (
+   882→          <div key={sub.id}>
+   883→            {/* Sub-section header with red right border */}
+   884→            <div
+   885→              className={`mb-2 pr-2 ${subIndex === 0 ? '' : 'mt-3'}`}
+   886→              style={{ borderRight: '2px solid #5C1A1B' }}
+   887→            >
+   888→              <span
+   889→                className="text-xs font-semibold"
+   890→                style={{ color: isDark ? '#AAA' : '#666' }}
+   891→              >
+   892→                {sub.name}
+   893→              </span>
+   894→            </div>
+   895→
+   896→            {/* Grid: API categories or providers */}
+   897→            {sub.isApiCategory && sub.apiCategories ? (
+   898→              <div className="grid grid-cols-4 gap-x-2 gap-y-4">
+   899→                {sub.apiCategories.map((cat, pIdx) =>
+   900→                  renderApiCategoryItem(cat, pIdx)
+   901→                )}
+   902→              </div>
+   903→            ) : (
+   904→              <div className="grid grid-cols-4 gap-x-2 gap-y-4">
+   905→                {sub.providers.map((provider, pIdx) =>
+   906→                  renderProviderItem(provider, pIdx)
+   907→                )}
+   908→              </div>
+   909→            )}
+   910→
+   911→            {/* Divider between sub-sections */}
+   912→            {subIndex < displaySubSections.length - 1 && (
+   913→              <div
+   914→                className="my-3"
+   915→                style={{ height: '1px', background: dividerColor }}
+   916→              />
+   917→            )}
+   918→          </div>
+   919→        ))}
+   920→      </AnimatePresence>
+   921→    );
+   922→  };
+   923→
+   924→  /** Trim items across sub-sections to respect COMPACT_LIMIT */
+   925→  function applyCompactLimit(subs: SubSectionDisplay[]): SubSectionDisplay[] {
+   926→    let remaining = COMPACT_LIMIT;
+   927→    return subs
+   928→      .map((sub) => {
+   929→        if (sub.isApiCategory && sub.apiCategories) {
+   930→          const take = Math.min(sub.apiCategories.length, remaining);
+   931→          remaining -= take;
+   932→          return { ...sub, apiCategories: sub.apiCategories.slice(0, take) };
+   933→        }
+   934→        const take = Math.min(sub.providers.length, remaining);
+   935→        remaining -= take;
+   936→        return { ...sub, providers: sub.providers.slice(0, take) };
+   937→      })
+   938→      .filter((sub) =>
+   939→        sub.isApiCategory
+   940→          ? (sub.apiCategories?.length ?? 0) > 0
+   941→          : sub.providers.length > 0
+   942→      );
+   943→  }
+   944→
+   945→  // ═══════════════════════════════════════════════════════════════════
+   946→  // Render: Section Header Icon
+   947→  // ═══════════════════════════════════════════════════════════════════
+   948→
+   949→  const getSectionIcon = (section: SectionDisplay): LucideIcon | null => {
+   950→    if (section.isWalletServicesSection) return Wallet;
+   951→    if (section.isApiSection) return Gamepad2;
+   952→    if (section.type && SECTION_TYPE_ICONS[section.type]) {
+   953→      return SECTION_TYPE_ICONS[section.type];
+   954→    }
+   955→    return null;
+   956→  };
+   957→
+   958→  // ═══════════════════════════════════════════════════════════════════
+   959→  // Main Render
+   960→  // ═══════════════════════════════════════════════════════════════════
+   961→
+   962→  return (
+   963→    <div className="pb-6" dir="rtl">
+   964→      {/* ─── Header ──────────────────────────────────────────────── */}
+   965→      <motion.div
+   966→        initial={{ opacity: 0, y: -10 }}
+   967→        animate={{ opacity: 1, y: 0 }}
+   968→        transition={{ duration: 0.4 }}
+   969→        className="px-4 pt-4 pb-3"
+   970→      >
+   971→        <div className="flex items-center justify-between mb-4">
+   972→          <h1
+   973→            className="text-xl font-bold"
+   974→            style={{ color: isDark ? '#FFF' : '#1a1a1a' }}
+   975→          >
+   976→            القائمة
+   977→          </h1>
+   978→        </div>
+   979→
+   980→        {/* Search Bar */}
+   981→        <div
+   982→          className="flex items-center gap-2 px-4 py-3 rounded-2xl"
+   983→          style={{
+   984→            background: isDark ? '#1A1A1A' : '#F0F0F0',
+   985→            border: `1px solid ${isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)'}`,
+   986→          }}
+   987→        >
+   988→          <Search size={18} strokeWidth={1.5} color={isDark ? '#555' : '#AAA'} />
+   989→          <input
+   990→            type="text"
+   991→            placeholder="ابحث عن خدمة..."
+   992→            value={searchQuery}
+   993→            onChange={(e) => setSearchQuery(e.target.value)}
+   994→            className="flex-1 bg-transparent outline-none text-sm"
+   995→            style={{ color: isDark ? '#FFF' : '#1a1a1a' }}
+   996→          />
+   997→          {searchQuery && (
+   998→            <button
+   999→              onClick={() => setSearchQuery('')}
+  1000→              className="text-xs px-2 py-0.5 rounded-full"
+  1001→              style={{
+  1002→                background: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)',
+  1003→                color: isDark ? '#888' : '#999',
+  1004→              }}
+  1005→            >
+  1006→              ✕
+  1007→            </button>
+  1008→          )}
+  1009→        </div>
+  1010→      </motion.div>
+  1011→
+  1012→      {/* Recently Used Services */}
+  1013→      {!searchQuery.trim() && recentServices && recentServices.length > 0 && (
+  1014→        <motion.div
+  1015→          initial={{ opacity: 0, y: 10 }}
+  1016→          animate={{ opacity: 1, y: 0 }}
+  1017→          className="px-4 mt-4"
+  1018→        >
+  1019→          <h3 className="text-xs font-bold mb-2" style={{ color: isDark ? '#888' : '#999' }}>الأخيرة</h3>
+  1020→          <div className="flex gap-3 overflow-x-auto pb-1" style={{ scrollbarWidth: 'none' }}>
+  1021→            {recentServices.slice(0, 6).map((service: any, index: number) => {
+  1022→              const iconSrc = service.icon ? (service.icon.startsWith('data:') || service.icon.startsWith('http') ? service.icon : undefined) : undefined;
+  1023→              return (
+  1024→                <motion.button
+  1025→                  key={service.id || index}
+  1026→                  initial={{ opacity: 0, scale: 0.9 }}
+  1027→                  animate={{ opacity: 1, scale: 1 }}
+  1028→                  transition={{ delay: 0.03 * index }}
+  1029→                  whileTap={{ scale: 0.95 }}
+  1030→                  onClick={() => {
+  1031→                    if (service.id) {
+  1032→                      useAppStore.getState().setSelectedCategory(service.id);
+  1033→                      useAppStore.getState().setActiveScreen('category-detail');
+  1034→                    }
+  1035→                  }}
+  1036→                  className="flex flex-col items-center gap-1.5 min-w-[60px]"
+  1037→                >
+  1038→                  <div
+  1039→                    className="w-12 h-12 rounded-2xl overflow-hidden flex items-center justify-center"
+  1040→                    style={{
+  1041→                      background: iconSrc ? 'transparent' : `${service.color || '#5C1A1B'}15`,
+  1042→                      border: `1px solid ${isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)'}`,
+  1043→                    }}
+  1044→                  >
+  1045→                    {iconSrc ? (
+  1046→                      <img src={iconSrc} alt={service.name || ''} className="w-full h-full object-contain" />
+  1047→                    ) : (
+  1048→                      <Zap size={18} strokeWidth={1.5} color={service.color || '#5C1A1B'} />
+  1049→                    )}
+  1050→                  </div>
+  1051→                  <span className="text-[9px] font-medium truncate max-w-[60px]" style={{ color: isDark ? '#999' : '#666' }}>
+  1052→                    {service.name || 'خدمة'}
+  1053→                  </span>
+  1054→                </motion.button>
+  1055→              );
+  1056→            })}
+  1057→          </div>
+  1058→        </motion.div>
+  1059→      )}
+  1060→
+  1061→      {/* ─── Section Cards ───────────────────────────────────────── */}
+  1062→      {filteredSections.map((section, sectionIndex) => {
+  1063→        const isExpanded =
+  1064→          expandedSections.has(section.id) || !!searchQuery.trim();
+  1065→        const totalItems = countSectionItems(section);
+  1066→        const hasMore = totalItems > COMPACT_LIMIT;
+  1067→        const hasSubSections = section.subSections.length > 0;
+  1068→
+  1069→        // Flat providers when no sub-sections
+  1070→        const displayFlatProviders: FirebaseProvider[] | null =
+  1071→          hasSubSections
+  1072→            ? null
+  1073→            : isExpanded
+  1074→            ? section.providers
+  1075→            : section.providers.slice(0, COMPACT_LIMIT);
+  1076→
+  1077→        const SectionIcon = getSectionIcon(section);
+  1078→
+  1079→        return (
+  1080→          <motion.div
+  1081→            key={section.id}
+  1082→            initial={{ opacity: 0, y: 15 }}
+  1083→            animate={{ opacity: 1, y: 0 }}
+  1084→            transition={{ delay: 0.05 * sectionIndex, duration: 0.4 }}
+  1085→            className="px-4 mt-4"
+  1086→          >
+  1087→            {/* Section Header */}
+  1088→            <div className="flex items-center justify-between mb-3">
+  1089→              <button
+  1090→                onClick={() => handleSectionHeaderClick(section.id)}
+  1091→                className="active:scale-95 transition-transform"
+  1092→              >
+  1093→                <h3
+  1094→                  className="text-sm font-bold flex items-center gap-1.5"
+  1095→                  style={{ color: isDark ? '#FFF' : '#1a1a1a' }}
+  1096→                >
+  1097→                  {SectionIcon && (
+  1098→                    <SectionIcon
+  1099→                      size={14}
+  1100→                      strokeWidth={2}
+  1101→                      color="#5C1A1B"
+  1102→                    />
+  1103→                  )}
+  1104→                  {section.name}
+  1105→                </h3>
+  1106→              </button>
+  1107→
+  1108→              {hasMore && !searchQuery.trim() && (
+  1109→                <button
+  1110→                  onClick={() => toggleExpand(section.id)}
+  1111→                  className="text-xs font-medium flex items-center gap-0.5 active:scale-95 transition-transform"
+  1112→                  style={{ color: '#5C1A1B' }}
+  1113→                >
+  1114→                  {isExpanded ? 'إخفاء' : 'الكل'}
+  1115→                  <ChevronLeft
+  1116→                    size={14}
+  1117→                    strokeWidth={1.5}
+  1118→                    style={{
+  1119→                      transform: isExpanded
+  1120→                        ? 'rotate(90deg)'
+  1121→                        : 'rotate(0deg)',
+  1122→                      transition: 'transform 0.2s ease',
+  1123→                    }}
+  1124→                  />
+  1125→                </button>
+  1126→              )}
+  1127→            </div>
+  1128→
+  1129→            {/* Provider Content Card */}
+  1130→            <div className="rounded-2xl p-4" style={cardStyle}>
+  1131→              {hasSubSections ? (
+  1132→                renderSubSections(section.subSections, isExpanded)
+  1133→              ) : displayFlatProviders && displayFlatProviders.length > 0 ? (
+  1134→                <div className="grid grid-cols-4 gap-x-2 gap-y-4">
+  1135→                  <AnimatePresence mode="popLayout">
+  1136→                    {displayFlatProviders.map((provider, index) =>
+  1137→                      renderProviderItem(provider, index)
+  1138→                    )}
+  1139→                  </AnimatePresence>
+  1140→                </div>
+  1141→              ) : (
+  1142→                <div className="flex items-center justify-center py-6">
+  1143→                  <p
+  1144→                    className="text-xs"
+  1145→                    style={{ color: isDark ? '#555' : '#AAA' }}
+  1146→                  >
+  1147→                    لا توجد خدمات متاحة
+  1148→                  </p>
+  1149→                </div>
+  1150→              )}
+  1151→            </div>
+  1152→          </motion.div>
+  1153→        );
+  1154→      })}
+  1155→
+  1156→      {/* ─── Empty: No Search Results ────────────────────────────── */}
+  1157→      {filteredSections.length === 0 && searchQuery.trim() && (
+  1158→        <motion.div
+  1159→          initial={{ opacity: 0 }}
+  1160→          animate={{ opacity: 1 }}
+  1161→          className="px-4 mt-8"
+  1162→        >
+  1163→          <div
+  1164→            className="rounded-2xl p-8 flex flex-col items-center"
+  1165→            style={cardStyle}
+  1166→          >
+  1167→            <div
+  1168→              className="w-14 h-14 rounded-2xl flex items-center justify-center mb-3"
+  1169→              style={{ background: isDark ? '#222' : '#F5F5F5' }}
+  1170→            >
+  1171→              <Search
+  1172→                size={24}
+  1173→                strokeWidth={1.5}
+  1174→                color={isDark ? '#333' : '#DDD'}
+  1175→              />
+  1176→            </div>
+  1177→            <p
+  1178→              className="text-sm font-medium"
+  1179→              style={{ color: isDark ? '#555' : '#AAA' }}
+  1180→            >
+  1181→              لا توجد نتائج
+  1182→            </p>
+  1183→            <p
+  1184→              className="text-[11px] mt-1"
+  1185→              style={{ color: isDark ? '#444' : '#CCC' }}
+  1186→            >
+  1187→              جرب البحث بكلمات مختلفة
+  1188→            </p>
+  1189→          </div>
+  1190→        </motion.div>
+  1191→      )}
+  1192→
+  1193→      {/* ─── Empty: No Sections Loaded Yet ───────────────────────── */}
+  1194→      {filteredSections.length === 0 && !searchQuery.trim() && (
+  1195→        <motion.div
+  1196→          initial={{ opacity: 0 }}
+  1197→          animate={{ opacity: 1 }}
+  1198→          className="px-4 mt-8"
+  1199→        >
+  1200→          <div
+  1201→            className="rounded-2xl p-8 flex flex-col items-center"
+  1202→            style={cardStyle}
+  1203→          >
+  1204→            <div
+  1205→              className="w-14 h-14 rounded-2xl flex items-center justify-center mb-3"
+  1206→              style={{ background: isDark ? '#222' : '#F5F5F5' }}
+  1207→            >
+  1208→              <Package
+  1209→                size={24}
+  1210→                strokeWidth={1.5}
+  1211→                color={isDark ? '#333' : '#DDD'}
+  1212→              />
+  1213→            </div>
+  1214→            <p
+  1215→              className="text-sm font-medium"
+  1216→              style={{ color: isDark ? '#555' : '#AAA' }}
+  1217→            >
+  1218→              جاري تحميل الخدمات...
+  1219→            </p>
+  1220→            <p
+  1221→              className="text-[11px] mt-1"
+  1222→              style={{ color: isDark ? '#444' : '#CCC' }}
+  1223→            >
+  1224→              يرجى الانتظار أو تحديث الصفحة
+  1225→            </p>
+  1226→          </div>
+  1227→        </motion.div>
+  1228→      )}
+  1229→    </div>
+  1230→  );
+  1231→}
+  1232→
