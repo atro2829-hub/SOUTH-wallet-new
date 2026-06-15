@@ -100,14 +100,14 @@ export default function SupportScreen() {
 
     // Subscribe to changes
     const channel = supabase
-      .channel('social-links-changes')
+      .channel(`social-links-changes-${Date.now()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'app_config', filter: 'key=eq.socialLinks' }, () => {
         fetchSocialLinks();
       })
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      try { supabase.removeChannel(channel); } catch {}
     };
   }, []);
 
@@ -197,7 +197,7 @@ export default function SupportScreen() {
 
     // Subscribe to ticket changes
     const ticketsChannel = supabase
-      .channel('user-support-tickets')
+      .channel(`user-support-tickets-${user.id}-${Date.now()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'support_tickets', filter: `user_id=eq.${user.id}` }, () => {
         loadTickets();
       })
@@ -205,7 +205,7 @@ export default function SupportScreen() {
 
     // Subscribe to new messages for user's tickets
     const messagesChannel = supabase
-      .channel('user-support-messages')
+      .channel(`user-support-messages-${user.id}-${Date.now()}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'support_messages' }, (payload) => {
         // Reload tickets when a new message arrives
         loadTickets();
@@ -224,8 +224,8 @@ export default function SupportScreen() {
       .subscribe();
 
     return () => {
-      supabase.removeChannel(ticketsChannel);
-      supabase.removeChannel(messagesChannel);
+      try { supabase.removeChannel(ticketsChannel); } catch {}
+      try { supabase.removeChannel(messagesChannel); } catch {}
     };
   }, [user?.id]);
 
@@ -287,7 +287,7 @@ export default function SupportScreen() {
 
     // Subscribe to livechat changes
     const livechatChannel = supabase
-      .channel('user-livechat')
+      .channel(`user-livechat-${user.id}-${Date.now()}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'support_livechat', filter: `user_id=eq.${user.id}` }, () => {
         loadLiveChat();
       })
@@ -295,7 +295,7 @@ export default function SupportScreen() {
 
     // Subscribe to livechat messages
     const livechatMessagesChannel = supabase
-      .channel('user-livechat-messages')
+      .channel(`user-livechat-messages-${user.id}-${Date.now()}`)
       .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'livechat_messages' }, (payload) => {
         if (activeChatId && payload.new.chat_id === activeChatId) {
           const newMsg = {
@@ -314,8 +314,8 @@ export default function SupportScreen() {
       .subscribe();
 
     return () => {
-      supabase.removeChannel(livechatChannel);
-      supabase.removeChannel(livechatMessagesChannel);
+      try { supabase.removeChannel(livechatChannel); } catch {}
+      try { supabase.removeChannel(livechatMessagesChannel); } catch {}
     };
   }, [user?.id, activeChatId]);
 

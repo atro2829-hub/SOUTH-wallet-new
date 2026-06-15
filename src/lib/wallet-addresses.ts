@@ -110,16 +110,17 @@ export function subscribeToWalletAddresses(
   // Initial fetch
   getWalletAddresses().then(callback);
 
-  // Subscribe to realtime changes
+  // Subscribe to realtime changes with unique channel name
+  const channelName = `wallet-addresses-changes-${Date.now()}`;
   const channel = supabase
-    .channel('wallet-addresses-changes')
+    .channel(channelName)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'wallet_addresses' }, () => {
       getWalletAddresses().then(callback);
     })
     .subscribe();
 
   return () => {
-    supabase.removeChannel(channel);
+    try { supabase.removeChannel(channel); } catch {}
   };
 }
 

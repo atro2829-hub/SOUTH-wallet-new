@@ -469,7 +469,9 @@ export function useSupabaseSync() {
   useEffect(() => {
     if (!user?.id || !isAuthenticated) {
       // Clean up user-specific channels when not authenticated
-      channelsRef.current.forEach((ch) => supabase.removeChannel(ch));
+      channelsRef.current.forEach((ch) => {
+        try { supabase.removeChannel(ch); } catch {}
+      });
       channelsRef.current = [];
       supabaseUuidRef.current = null;
       return;
@@ -477,6 +479,12 @@ export function useSupabaseSync() {
 
     const firebaseUid = user.id;
     let cancelled = false;
+
+    // Clean up previous user channels before creating new ones
+    channelsRef.current.forEach((ch) => {
+      try { supabase.removeChannel(ch); } catch {}
+    });
+    channelsRef.current = [];
 
     // First resolve the Supabase UUID, then set up subscriptions
     resolveSupabaseUuid(firebaseUid).then((supabaseUuid) => {
@@ -644,8 +652,19 @@ export function useSupabaseSync() {
   // ─────────────────────────────────────────────────────────
 
   const globalChannelsRef = useRef<ReturnType<typeof supabase.channel>[]>([]);
+  const globalSubscribedRef = useRef(false);
 
   useEffect(() => {
+    // Prevent duplicate subscriptions in StrictMode or re-renders
+    if (globalSubscribedRef.current) return;
+    globalSubscribedRef.current = true;
+
+    // Clean up any leftover channels from a previous mount
+    globalChannelsRef.current.forEach((ch) => {
+      try { supabase.removeChannel(ch); } catch {}
+    });
+    globalChannelsRef.current = [];
+
     // ── Sections ──
     const sectionsChannel = supabase
       .channel('sections-public')
@@ -842,7 +861,10 @@ export function useSupabaseSync() {
     ];
 
     return () => {
-      globalChannelsRef.current.forEach((ch) => supabase.removeChannel(ch));
+      globalSubscribedRef.current = false;
+      globalChannelsRef.current.forEach((ch) => {
+        try { supabase.removeChannel(ch); } catch {}
+      });
       globalChannelsRef.current = [];
     };
   }, []); // Run once on mount

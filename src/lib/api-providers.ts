@@ -685,16 +685,16 @@ export function subscribeToProviderCache(
   // Initial load
   getCachedProviderData(providerId).then(callback);
 
-  // Subscribe to realtime changes
+  // Subscribe to realtime changes with unique channel name
   const channel = supabase
-    .channel(`provider-cache-${providerId}`)
+    .channel(`provider-cache-${providerId}-${Date.now()}`)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'api_categories', filter: `api_provider_id=eq.${providerId}` }, () => {
       getCachedProviderData(providerId).then(callback);
     })
     .subscribe();
 
   return () => {
-    supabase.removeChannel(channel);
+    try { supabase.removeChannel(channel); } catch {}
   };
 }
 

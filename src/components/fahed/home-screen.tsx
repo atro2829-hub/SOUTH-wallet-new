@@ -358,16 +358,17 @@ export default function HomeScreen() {
 
     fetchBanners();
 
-    // Subscribe to realtime changes
+    // Subscribe to realtime changes with unique channel name per component instance
+    const channelName = `banners-changes-${Date.now()}`;
     const channel = supabase
-      .channel('banners-changes')
+      .channel(channelName)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'banners' }, () => {
         fetchBanners();
       })
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      try { supabase.removeChannel(channel); } catch {}
     };
   }, []);
 

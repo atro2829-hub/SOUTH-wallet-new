@@ -188,7 +188,7 @@ export function subscribeToEscrowChat(
   callback: (message: EscrowChatMessage) => void
 ): () => void {
   const channel = supabase
-    .channel(`escrow-chat-${chatId}`)
+    .channel(`escrow-chat-${chatId}-${Date.now()}`)
     .on('postgres_changes', {
       event: 'INSERT',
       schema: 'public',
@@ -201,7 +201,7 @@ export function subscribeToEscrowChat(
     .subscribe();
 
   return () => {
-    supabase.removeChannel(channel);
+    try { supabase.removeChannel(channel); } catch {}
   };
 }
 
@@ -213,7 +213,7 @@ export function subscribeToAllEscrowChats(
   callback: (message: EscrowChatMessage) => void
 ): () => void {
   const channel = supabase
-    .channel('escrow-chat-all')
+    .channel(`escrow-chat-all-${Date.now()}`)
     .on('postgres_changes', {
       event: 'INSERT',
       schema: 'public',
@@ -225,7 +225,7 @@ export function subscribeToAllEscrowChats(
     .subscribe();
 
   return () => {
-    supabase.removeChannel(channel);
+    try { supabase.removeChannel(channel); } catch {}
   };
 }
 

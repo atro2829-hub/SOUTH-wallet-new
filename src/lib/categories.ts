@@ -111,16 +111,17 @@ export function subscribeToCategories(
   // Initial fetch
   getCategories().then(callback);
 
-  // Subscribe to realtime changes
+  // Subscribe to realtime changes with unique channel name
+  const channelName = `categories-changes-${Date.now()}`;
   const channel = supabase
-    .channel('categories-changes')
+    .channel(channelName)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'sections' }, () => {
       getCategories().then(callback);
     })
     .subscribe();
 
   return () => {
-    supabase.removeChannel(channel);
+    try { supabase.removeChannel(channel); } catch {}
   };
 }
 

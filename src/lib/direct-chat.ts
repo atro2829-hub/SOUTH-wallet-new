@@ -192,7 +192,7 @@ export function subscribeToDirectChat(
   callback: (message: DirectChatMessage) => void
 ): () => void {
   const channel = supabase
-    .channel(`direct-chat-${chatId}`)
+    .channel(`direct-chat-${chatId}-${Date.now()}`)
     .on('postgres_changes', {
       event: 'INSERT',
       schema: 'public',
@@ -204,7 +204,7 @@ export function subscribeToDirectChat(
     .subscribe();
 
   return () => {
-    supabase.removeChannel(channel);
+    try { supabase.removeChannel(channel); } catch {}
   };
 }
 
@@ -218,7 +218,7 @@ export function subscribeToDirectChatList(
   callback: () => void
 ): () => void {
   const channel = supabase
-    .channel(`direct-chat-list-${userId}`)
+    .channel(`direct-chat-list-${userId}-${Date.now()}`)
     .on('postgres_changes', {
       event: '*',
       schema: 'public',
@@ -236,7 +236,7 @@ export function subscribeToDirectChatList(
     .subscribe();
 
   return () => {
-    supabase.removeChannel(channel);
+    try { supabase.removeChannel(channel); } catch {}
   };
 }
 
