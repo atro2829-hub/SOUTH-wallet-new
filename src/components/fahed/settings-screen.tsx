@@ -124,6 +124,7 @@ const settingsSections: SettingsSection[] = [
     items: [
       { id: 'biometric', label: 'تفعيل البصمة', icon: Fingerprint, color: '#8B5CF6', toggle: true },
       { id: 'pin-code', label: 'رقم التعريف الشخصي', icon: Lock, color: '#F59E0B', screen: 'pin-setup' },
+      { id: 'auto-lock', label: 'القفل التلقائي', icon: Clock, color: '#10B981' },
       { id: 'change-password', label: 'تغيير كلمة المرور', icon: Shield, color: '#5C1A1B' },
       { id: 'notif-alerts', label: 'الإشعارات والتنبيهات', icon: Bell, color: '#2563EB', screen: 'notifications' },
     ],
@@ -807,6 +808,12 @@ export default function SettingsScreen() {
   // ── Account History ───────────────────────────────────────────────
   const [accountHistory, setAccountHistory] = useState<string>('');
   const [showAccountHistory, setShowAccountHistory] = useState(false);
+  const [showAutoLock, setShowAutoLock] = useState(false);
+  const [autoLockTimeout, setAutoLockTimeout] = useState(() => {
+    if (typeof window === 'undefined') return 5;
+    const saved = localStorage.getItem('auto-lock-timeout');
+    return saved ? parseInt(saved, 10) : 5;
+  });
 
   useEffect(() => {
     if (user?.id) {
@@ -845,6 +852,8 @@ export default function SettingsScreen() {
       handleExportData();
     } else if (item.id === 'clear-cache') {
       handleClearCache();
+    } else if (item.id === 'auto-lock') {
+      setShowAutoLock(true);
     } else if (item.id === 'account-history') {
       setShowAccountHistory(true);
     } else if (item.id === 'activity-log') {
@@ -1130,6 +1139,61 @@ export default function SettingsScreen() {
                     </div>
                   </div>
                 )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+        
+        {/* Auto-Lock Timeout Modal */}
+        {showAutoLock && (
+          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-50 flex items-end justify-center" onClick={() => setShowAutoLock(false)}>
+            <div className="absolute inset-0 bg-black/50" />
+            <motion.div
+              initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
+              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+              className="relative w-full max-w-md rounded-t-3xl overflow-hidden p-6 pb-8"
+              style={{ background: isDark ? '#0F0F0F' : '#F5F5F5' }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-lg font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>القفل التلقائي</h2>
+                <button onClick={() => setShowAutoLock(false)} className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
+                  <X size={16} strokeWidth={1.5} color={isDark ? '#FFF' : '#666'} />
+                </button>
+              </div>
+              <p className="text-xs mb-4" style={{ color: isDark ? '#888' : '#666' }}>سيتم قفل التطبيق تلقائياً بعد فترة عدم النشاط</p>
+              <div className="space-y-2">
+                {[
+                  { value: 1, label: 'دقيقة واحدة' },
+                  { value: 3, label: '3 دقائق' },
+                  { value: 5, label: '5 دقائق' },
+                  { value: 10, label: '10 دقائق' },
+                  { value: 15, label: '15 دقيقة' },
+                  { value: 30, label: '30 دقيقة' },
+                  { value: 0, label: 'إلغاء القفل التلقائي' },
+                ].map((option) => (
+                  <button
+                    key={option.value}
+                    onClick={() => {
+                      setAutoLockTimeout(option.value);
+                      localStorage.setItem('auto-lock-timeout', String(option.value));
+                      showToast('تم تحديث إعدادات القفل التلقائي', 'success');
+                      setTimeout(() => setShowAutoLock(false), 500);
+                    }}
+                    className="w-full flex items-center justify-between p-3 rounded-2xl transition-all"
+                    style={{
+                      background: autoLockTimeout === option.value ? 'rgba(92,26,27,0.12)' : (isDark ? '#1A1A1A' : '#FFF'),
+                      border: `1px solid ${autoLockTimeout === option.value ? 'rgba(92,26,27,0.3)' : (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)')}`,
+                    }}
+                  >
+                    <span className="text-sm font-medium" style={{ color: autoLockTimeout === option.value ? '#5C1A1B' : (isDark ? '#DDD' : '#444') }}>
+                      {option.label}
+                    </span>
+                    {autoLockTimeout === option.value && (
+                      <Check size={16} color="#5C1A1B" strokeWidth={2.5} />
+                    )}
+                  </button>
+                ))}
               </div>
             </motion.div>
           </motion.div>

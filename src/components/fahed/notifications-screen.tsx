@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useTheme } from 'next-themes';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -63,6 +63,14 @@ export default function NotificationsScreen() {
   const { user, notifications, setNotifications, markNotificationRead, removeNotification, clearNotifications, setActiveScreen } = useAppStore();
 
   const unreadCount = notifications.filter(n => !n.isRead).length;
+  
+  // Filter by type
+  const [activeFilter, setActiveFilter] = useState<'all' | 'info' | 'transaction' | 'security' | 'promo'>('all');
+  
+  const filteredNotifications = useMemo(() => {
+    if (activeFilter === 'all') return notifications;
+    return notifications.filter(n => n.type === activeFilter);
+  }, [notifications, activeFilter]);
 
   // Notification sound/vibration settings — initialize from localStorage
   const [soundEnabled, setSoundEnabled] = useState(() => {
@@ -251,8 +259,40 @@ export default function NotificationsScreen() {
         </div>
       </motion.div>
 
+      {/* Filter Tabs */}
+      <div className="px-4 mt-3">
+        <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth: 'none' }}>
+          {[
+            { id: 'all' as const, label: 'الكل' },
+            { id: 'transaction' as const, label: 'المعاملات' },
+            { id: 'security' as const, label: 'الأمان' },
+            { id: 'promo' as const, label: 'العروض' },
+            { id: 'info' as const, label: 'عامة' },
+          ].map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveFilter(tab.id)}
+              className="px-3 py-1.5 rounded-full text-[11px] font-bold whitespace-nowrap transition-all"
+              style={{
+                background: activeFilter === tab.id
+                  ? 'linear-gradient(135deg, #5C1A1B, #3D0F10)'
+                  : (isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)'),
+                color: activeFilter === tab.id ? '#FFF' : (isDark ? '#888' : '#666'),
+              }}
+            >
+              {tab.label}
+              {tab.id !== 'all' && (
+                <span className="mr-1 text-[9px]">
+                  ({notifications.filter(n => n.type === tab.id).length})
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {/* Notifications List */}
-      {notifications.length === 0 ? (
+      {filteredNotifications.length === 0 ? (
         <motion.div
           initial={{ opacity: 0, y: 15 }}
           animate={{ opacity: 1, y: 0 }}
@@ -275,7 +315,7 @@ export default function NotificationsScreen() {
       ) : (
         <div className="px-4 space-y-2">
           <AnimatePresence>
-            {notifications.map((notif, index) => {
+            {filteredNotifications.map((notif, index) => {
               const NotifIcon = getNotifIcon(notif.type);
               const notifColor = getNotifColor(notif.type);
               const hasNavTarget = !!notif.navigationTarget;

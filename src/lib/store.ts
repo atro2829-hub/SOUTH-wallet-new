@@ -571,6 +571,14 @@ interface AppState {
   // Transaction limits (from admin)
   transactionLimits: TransactionLimits;
   setTransactionLimits: (limits: Partial<TransactionLimits>) => void;
+
+  // Auto lock timeout (minutes)
+  autoLockTimeout: number;
+  setAutoLockTimeout: (timeout: number) => void;
+
+  // Escrow transactions
+  escrowTransactions: any[];
+  setEscrowTransactions: (data: any[]) => void;
 }
 
 // Default service categories
@@ -1041,6 +1049,14 @@ export const useAppStore = create<AppState>()(
       setTransactionLimits: (limits) => set((state) => ({
         transactionLimits: { ...state.transactionLimits, ...limits },
       })),
+
+      // Auto lock timeout
+      autoLockTimeout: 5, // default 5 minutes
+      setAutoLockTimeout: (autoLockTimeout) => set({ autoLockTimeout }),
+
+      // Escrow transactions
+      escrowTransactions: [],
+      setEscrowTransactions: (escrowTransactions) => set({ escrowTransactions }),
     }),
     {
       name: 'fahed-net-store',

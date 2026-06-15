@@ -1054,8 +1054,29 @@ export default function AccountScreen() {
           <LogOut size={18} strokeWidth={1.5} />
           <span className="text-sm font-bold">الخروج من التطبيق</span>
         </button>
+        
+        {/* Delete Account */}
+        <button
+          onClick={() => {
+            if (confirm('هل أنت متأكد من حذف حسابك؟ لا يمكن التراجع عن هذا الإجراء.')) {
+              if (confirm('سيتم حذف جميع بياناتك ورصيدك نهائياً. هل تريد المتابعة؟')) {
+                logout();
+              }
+            }
+          }}
+          className="w-full flex items-center justify-center gap-2 py-3 rounded-2xl mt-2"
+          style={{
+            background: 'rgba(239,68,68,0.08)',
+            border: '1px solid rgba(239,68,68,0.15)',
+            color: '#EF4444',
+          }}
+        >
+          <Trash2 size={16} strokeWidth={1.5} />
+          <span className="text-xs font-bold">حذف الحساب</span>
+        </button>
+        
         <p className="text-center text-[10px] mt-2" style={{ color: isDark ? '#444' : '#CCC' }}>
-          v 0.4.6.5
+          v 0.5.0
         </p>
       </motion.div>
     </div>

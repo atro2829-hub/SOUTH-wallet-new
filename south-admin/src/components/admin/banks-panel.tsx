@@ -1,146 +1,272 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { ref, onValue, push, update, remove } from 'firebase/database';
+import { useState, useEffect, useMemo } from 'react';
+import { ref, onValue, update, remove, push } from 'firebase/database';
 import { database } from '@/lib/firebase';
 import { useAdminStore } from '@/lib/store';
-import { formatNumber } from '@/lib/utils';
+import { formatNumber, currencySymbols, cn, generateId, formatDateAr } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Switch } from '@/components/ui/switch';
-import { Plus, Trash2, Edit, Building2, Upload } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { Textarea } from '@/components/ui/textarea';
+import { Search, Plus, Edit, Trash2, Landmark, Copy, Check, Loader2, Building2, Phone, User } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+
+interface Bank {
+  id?: string;
+  name: string;
+  accountName: string;
+  accountNumber: string;
+  iban?: string;
+  swiftCode?: string;
+  branch?: string;
+  isActive: boolean;
+  createdAt: string;
+}
 
 export default function BanksPanel() {
-  const { showToast } = useAdminStore();
-  const [banks, setBanks] = useState<any[]>([]);
+  const { adminUser, showToast } = useAdminStore();
+  const [banks, setBanks] = useState<Bank[]>([]);
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
   const [dialog, setDialog] = useState(false);
-  const [editing, setEditing] = useState<any>(null);
-  const [bankName, setBankName] = useState('');
-  const [accountHolder, setAccountHolder] = useState('');
-  const [accountNumber, setAccountNumber] = useState('');
-  const [color, setColor] = useState('#6C3CE1');
-  const [isActive, setIsActive] = useState(true);
-  const [iconBase64, setIconBase64] = useState('');
+  const [editing, setEditing] = useState<Bank | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+
+  // Form
+  const [formName, setFormName] = useState('');
+  const [formAccountName, setFormAccountName] = useState('');
+  const [formAccountNumber, setFormAccountNumber] = useState('');
+  const [formIban, setFormIban] = useState('');
+  const [formSwift, setFormSwift] = useState('');
+  const [formBranch, setFormBranch] = useState('');
+  const [formActive, setFormActive] = useState(true);
 
   useEffect(() => {
-    const ref_ = ref(database, 'adminSettings/banks');
-    const unsub = onValue(ref_, (snapshot) => {
+    const banksRef = ref(database, 'adminSettings/banks');
+    const unsub = onValue(banksRef, (snapshot) => {
       const data = snapshot.val() || {};
-      const list = Object.entries(data).map(([id, val]: [string, any]) => ({ id, ...val }));
+      const list: Bank[] = Object.entries(data).map(([key, val]: [string, any]) => ({
+        id: key,
+        name: val.name || '',
+        accountName: val.accountName || '',
+        accountNumber: val.accountNumber || '',
+        iban: val.iban || '',
+        swiftCode: val.swiftCode || '',
+        branch: val.branch || '',
+        isActive: val.isActive !== false,
+        createdAt: val.createdAt || new Date().toISOString(),
+      }));
       setBanks(list);
       setLoading(false);
     });
     return () => unsub();
   }, []);
 
-  const handleIconUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => setIconBase64(reader.result as string);
-    reader.readAsDataURL(file);
+  const filtered = useMemo(() => {
+    return banks.filter(b => !search || b.name.includes(search) || b.accountName.includes(search) || b.accountNumber.includes(search));
+  }, [banks, search]);
+
+  const stats = useMemo(() => ({
+    total: banks.length,
+    active: banks.filter(b => b.isActive).length,
+    inactive: banks.filter(b => !b.isActive).length,
+  }), [banks]);
+
+  const openDialog = (bank?: Bank) => {
+    if (bank) {
+      setEditing(bank);
+      setFormName(bank.name);
+      setFormAccountName(bank.accountName);
+      setFormAccountNumber(bank.accountNumber);
+      setFormIban(bank.iban || '');
+      setFormSwift(bank.swiftCode || '');
+      setFormBranch(bank.branch || '');
+      setFormActive(bank.isActive);
+    } else {
+      setEditing(null);
+      setFormName('');
+      setFormAccountName('');
+      setFormAccountNumber('');
+      setFormIban('');
+      setFormSwift('');
+      setFormBranch('');
+      setFormActive(true);
+    }
+    setDialog(true);
   };
 
-  const handleSave = async () => {
-    if (!bankName) return;
+  const save = async () => {
+    if (!formName.trim() || !formAccountName.trim() || !formAccountNumber.trim()) {
+      showToast('أدخل البيانات المطلوبة', 'error'); return;
+    }
+    setSaving(true);
     try {
-      const data = { name: bankName, accountHolder, accountNumber, color, isActive, icon: iconBase64 };
-      if (editing) {
+      const data = {
+        name: formName.trim(), accountName: formAccountName.trim(),
+        accountNumber: formAccountNumber.trim(), iban: formIban.trim(),
+        swiftCode: formSwift.trim(), branch: formBranch.trim(),
+        isActive: formActive,
+        updatedAt: new Date().toISOString(),
+      };
+      if (editing?.id) {
         await update(ref(database, `adminSettings/banks/${editing.id}`), data);
-        showToast('تم تحديث الحساب', 'success');
       } else {
-        await push(ref(database, 'adminSettings/banks'), data);
-        showToast('تم إضافة الحساب', 'success');
+        await push(ref(database, 'adminSettings/banks'), { ...data, createdAt: new Date().toISOString() });
       }
+      showToast(editing ? 'تم تحديث البنك' : 'تم إضافة البنك', 'success');
       setDialog(false);
-      setBankName(''); setAccountHolder(''); setAccountNumber(''); setColor('#6C3CE1'); setIsActive(true); setIconBase64(''); setEditing(null);
-    } catch (e) { showToast('حدث خطأ', 'error'); }
+    } catch { showToast('حدث خطأ', 'error'); }
+    finally { setSaving(false); }
   };
 
-  const handleDelete = async (id: string) => {
-    try { await remove(ref(database, `adminSettings/banks/${id}`)); showToast('تم حذف الحساب', 'success'); }
-    catch (e) { showToast('حدث خطأ', 'error'); }
+  const deleteBank = async (id: string) => {
+    try {
+      await remove(ref(database, `adminSettings/banks/${id}`));
+      showToast('تم حذف البنك', 'success');
+    } catch { showToast('حدث خطأ', 'error'); }
   };
 
-  if (loading) return <div className="flex items-center justify-center min-h-[400px]"><div className="w-8 h-8 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" /></div>;
+  const toggleActive = async (bank: Bank) => {
+    try {
+      await update(ref(database, `adminSettings/banks/${bank.id}`), { isActive: !bank.isActive });
+    } catch { showToast('حدث خطأ', 'error'); }
+  };
+
+  const copyToClipboard = (text: string, id: string) => {
+    navigator.clipboard.writeText(text);
+    setCopiedId(id);
+    setTimeout(() => setCopiedId(null), 2000);
+    showToast('تم النسخ', 'success');
+  };
+
+  if (loading) return <div className="flex items-center justify-center min-h-[400px]"><div className="w-8 h-8 border-2 border-[#5C1A1B] border-t-transparent rounded-full animate-spin" /></div>;
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div><h1 className="text-2xl font-bold">الحسابات البنكية</h1><p className="text-muted-foreground text-sm mt-1">{formatNumber(banks.length)} حساب</p></div>
-        <Button onClick={() => { setEditing(null); setBankName(''); setAccountHolder(''); setAccountNumber(''); setColor('#6C3CE1'); setIsActive(true); setIconBase64(''); setDialog(true); }} size="sm"><Plus className="w-4 h-4 ml-1" /> حساب جديد</Button>
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-2xl font-bold flex items-center gap-2"><Landmark className="w-7 h-7 text-[#5C1A1B]" />الحسابات البنكية</h1>
+          <p className="text-muted-foreground text-sm mt-1">إدارة الحسابات البنكية للإيداع</p>
+        </div>
+        <Button onClick={() => openDialog()} className="bg-[#5C1A1B] hover:bg-[#3D0F10]">
+          <Plus className="w-4 h-4 ml-2" />إضافة بنك
+        </Button>
       </div>
 
-      <div className="space-y-3">
-        {banks.map((b, i) => (
-          <motion.div key={b.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: i * 0.05 }}>
-            <Card className="admin-card border-0 shadow-none">
+      {/* Stats */}
+      <div className="grid grid-cols-3 gap-3">
+        {[
+          { label: 'الإجمالي', value: stats.total, icon: Landmark, color: 'from-[#5C1A1B] to-[#3D0F10]' },
+          { label: 'نشط', value: stats.active, icon: Check, color: 'from-green-600 to-green-800' },
+          { label: 'معطّل', value: stats.inactive, icon: Building2, color: 'from-gray-600 to-gray-800' },
+        ].map((s, i) => (
+          <motion.div key={i} initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05 }}>
+            <Card className="border-0 shadow-sm">
               <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    {b.icon ? (
-                      <img src={b.icon} alt={b.name} className="w-10 h-10 rounded-lg object-cover" />
-                    ) : (
-                      <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: (b.color || '#6C3CE1') + '20' }}>
-                        <Building2 className="w-5 h-5" style={{ color: b.color || '#6C3CE1' }} />
-                      </div>
-                    )}
-                    <div>
-                      <p className="font-medium text-sm">{b.name}</p>
-                      <p className="text-xs text-muted-foreground">{b.accountHolder} - {b.accountNumber}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Badge className={b.isActive ? 'bg-green-500/20 text-green-600 dark:text-green-400' : 'bg-red-500/20 text-red-600 dark:text-red-400'}>{b.isActive ? 'نشط' : 'معطل'}</Badge>
-                    <Button variant="ghost" size="sm" onClick={() => {
-                      setEditing(b); setBankName(b.name || ''); setAccountHolder(b.accountHolder || '');
-                      setAccountNumber(b.accountNumber || ''); setColor(b.color || '#6C3CE1');
-                      setIsActive(b.isActive !== false); setIconBase64(b.icon || ''); setDialog(true);
-                    }}><Edit className="w-4 h-4" /></Button>
-                    <Button variant="ghost" size="sm" onClick={() => handleDelete(b.id)}><Trash2 className="w-4 h-4 text-red-500" /></Button>
-                  </div>
+                <div className="flex items-center gap-3">
+                  <div className={cn('w-9 h-9 rounded-xl bg-gradient-to-br flex items-center justify-center text-white', s.color)}><s.icon className="w-4 h-4" /></div>
+                  <div><p className="text-xs text-muted-foreground">{s.label}</p><p className="text-lg font-bold">{s.value}</p></div>
                 </div>
               </CardContent>
             </Card>
           </motion.div>
         ))}
-        {banks.length === 0 && <p className="text-center text-muted-foreground py-8">لا توجد حسابات بنكية</p>}
       </div>
 
+      {/* Search */}
+      <div className="relative"><Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" /><Input placeholder="بحث..." value={search} onChange={e => setSearch(e.target.value)} className="pr-9" /></div>
+
+      {/* Banks List */}
+      <div className="space-y-3">
+        <AnimatePresence>
+          {filtered.length === 0 ? (
+            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+              <Card className="border-0 shadow-sm"><CardContent className="p-12 text-center"><Landmark className="w-12 h-12 mx-auto mb-3 text-muted-foreground/30" /><p className="text-muted-foreground">لا توجد بنوك</p></CardContent></Card>
+            </motion.div>
+          ) : (
+            filtered.map((bank, i) => (
+              <motion.div key={bank.id} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.02 }}>
+                <Card className={cn('border-0 shadow-sm hover:shadow-md transition-shadow', !bank.isActive && 'opacity-50')}>
+                  <CardContent className="p-4">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex items-start gap-3 flex-1 min-w-0">
+                        <div className="w-12 h-12 rounded-xl bg-[#5C1A1B]/10 flex items-center justify-center shrink-0">
+                          <Landmark className="w-6 h-6 text-[#5C1A1B]" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <p className="font-bold text-sm">{bank.name}</p>
+                            <Badge className={cn('text-[9px]', bank.isActive ? 'bg-green-500/15 text-green-600' : 'bg-red-500/15 text-red-600')}>
+                              {bank.isActive ? 'نشط' : 'معطّل'}
+                            </Badge>
+                          </div>
+                          <div className="mt-2 space-y-1">
+                            <div className="flex items-center gap-2 text-sm">
+                              <User className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                              <span className="text-muted-foreground">اسم الحساب:</span>
+                              <span className="font-medium">{bank.accountName}</span>
+                            </div>
+                            <div className="flex items-center gap-2 text-sm">
+                              <Phone className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
+                              <span className="text-muted-foreground">رقم الحساب:</span>
+                              <span className="font-mono font-medium" dir="ltr">{bank.accountNumber}</span>
+                              <button onClick={() => copyToClipboard(bank.accountNumber, bank.id || '')} className="p-1 rounded hover:bg-muted/50">
+                                {copiedId === bank.id ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5 text-muted-foreground" />}
+                              </button>
+                            </div>
+                            {bank.iban && (
+                              <div className="flex items-center gap-2 text-sm">
+                                <span className="text-muted-foreground">IBAN:</span>
+                                <span className="font-mono text-xs" dir="ltr">{bank.iban}</span>
+                              </div>
+                            )}
+                            {bank.branch && <p className="text-xs text-muted-foreground">الفرع: {bank.branch}</p>}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex gap-1 shrink-0">
+                        <Button size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={() => toggleActive(bank)}>
+                          {bank.isActive ? <Check className="w-4 h-4 text-green-500" /> : <Building2 className="w-4 h-4 text-red-500" />}
+                        </Button>
+                        <Button size="sm" variant="ghost" className="h-8 w-8 p-0" onClick={() => openDialog(bank)}><Edit className="w-4 h-4" /></Button>
+                        <Button size="sm" variant="ghost" className="h-8 w-8 p-0 text-red-500" onClick={() => bank.id && deleteBank(bank.id)}><Trash2 className="w-4 h-4" /></Button>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              </motion.div>
+            ))
+          )}
+        </AnimatePresence>
+      </div>
+
+      {/* Dialog */}
       <Dialog open={dialog} onOpenChange={setDialog}>
-        <DialogContent>
-          <DialogHeader><DialogTitle>{editing ? 'تعديل حساب' : 'إضافة حساب'}</DialogTitle></DialogHeader>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>{editing ? 'تعديل البنك' : 'إضافة بنك'}</DialogTitle></DialogHeader>
           <div className="space-y-4">
-            <div><Label>اسم البنك</Label><Input value={bankName} onChange={(e) => setBankName(e.target.value)} /></div>
-            <div><Label>اسم صاحب الحساب</Label><Input value={accountHolder} onChange={(e) => setAccountHolder(e.target.value)} /></div>
-            <div><Label>رقم الحساب</Label><Input value={accountNumber} onChange={(e) => setAccountNumber(e.target.value)} dir="ltr" /></div>
-            <div>
-              <Label>أيقونة البنك</Label>
-              <div className="flex items-center gap-3 mt-1">
-                <input type="file" accept="image/*" onChange={handleIconUpload} className="flex-1 text-sm" />
-                {iconBase64 && (
-                  <div className="relative">
-                    <img src={iconBase64} alt="icon preview" className="w-12 h-12 rounded-lg object-cover border" />
-                    <button
-                      onClick={() => setIconBase64('')}
-                      className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 text-white rounded-full flex items-center justify-center text-xs"
-                    >x</button>
-                  </div>
-                )}
-              </div>
+            <div><Label>اسم البنك *</Label><Input value={formName} onChange={e => setFormName(e.target.value)} placeholder="بنك اليمن والكويت..." /></div>
+            <div><Label>اسم صاحب الحساب *</Label><Input value={formAccountName} onChange={e => setFormAccountName(e.target.value)} placeholder="محمد أحمد..." /></div>
+            <div><Label>رقم الحساب *</Label><Input value={formAccountNumber} onChange={e => setFormAccountNumber(e.target.value)} placeholder="0123456789" dir="ltr" /></div>
+            <div><Label>IBAN</Label><Input value={formIban} onChange={e => setFormIban(e.target.value)} placeholder="YE00..." dir="ltr" /></div>
+            <div className="grid grid-cols-2 gap-3">
+              <div><Label>SWIFT Code</Label><Input value={formSwift} onChange={e => setFormSwift(e.target.value)} placeholder="YOABYESC" dir="ltr" /></div>
+              <div><Label>الفرع</Label><Input value={formBranch} onChange={e => setFormBranch(e.target.value)} placeholder="الفرع الرئيسي" /></div>
             </div>
-            <div><Label>اللون</Label><Input type="color" value={color} onChange={(e) => setColor(e.target.value)} /></div>
-            <div className="flex items-center gap-2"><Switch checked={isActive} onCheckedChange={setIsActive} /><Label>نشط</Label></div>
+            <div className="flex items-center gap-2"><Switch checked={formActive} onCheckedChange={setFormActive} /><Label>نشط</Label></div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDialog(false)}>إلغاء</Button>
-            <Button onClick={handleSave}>{editing ? 'تحديث' : 'إضافة'}</Button>
+            <Button onClick={save} disabled={saving} className="bg-[#5C1A1B] hover:bg-[#3D0F10]">
+              {saving ? <Loader2 className="w-4 h-4 ml-2 animate-spin" /> : <Plus className="w-4 h-4 ml-2" />}
+              {editing ? 'تحديث' : 'إضافة'}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

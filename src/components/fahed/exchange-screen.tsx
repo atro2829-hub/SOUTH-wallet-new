@@ -835,6 +835,27 @@ export default function ExchangeScreen() {
                         <option value="USD">$ USD</option>
                       </select>
                     </div>
+                    
+                    {/* Quick Amount Buttons */}
+                    <div className="flex gap-2 mt-2 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
+                      {(fromCurrency === 'YER' ? [1000, 5000, 10000, 50000, 100000] :
+                        fromCurrency === 'SAR' ? [10, 50, 100, 500, 1000] :
+                        [5, 10, 50, 100, 500]
+                      ).map((amount) => (
+                        <button
+                          key={amount}
+                          onClick={() => setFromAmount(String(amount))}
+                          className="px-3 py-1.5 rounded-lg text-[11px] font-bold whitespace-nowrap transition-all"
+                          style={{
+                            background: fromAmount === String(amount) ? 'rgba(92,26,27,0.15)' : (isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)'),
+                            color: fromAmount === String(amount) ? '#5C1A1B' : (isDark ? '#888' : '#666'),
+                            border: fromAmount === String(amount) ? '1px solid rgba(92,26,27,0.3)' : '1px solid transparent',
+                          }}
+                        >
+                          {formatNumber(amount)}
+                        </button>
+                      ))}
+                    </div>
                   </div>
 
                   {/* Swap button */}

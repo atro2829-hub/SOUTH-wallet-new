@@ -1,355 +1,225 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { ref, onValue, update } from 'firebase/database';
 import { database } from '@/lib/firebase';
 import { useAdminStore } from '@/lib/store';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { cn } from '@/lib/utils';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
-import { Save, Loader2, Eye, EyeOff, Layers, Server, Zap, Folder, FolderPlus } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Search, Eye, EyeOff, Save, Loader2, Layers, Globe, CreditCard, Wallet, Shield, Gift, ArrowLeftRight, Check, X, Filter } from 'lucide-react';
 import { motion } from 'framer-motion';
 
-interface SectionMeta {
+interface VisibilityItem {
   id: string;
   name: string;
-  icon?: string;
-  color?: string;
-  subSections?: Record<string, SubSectionMeta>;
-}
-
-interface SubSectionMeta {
-  id: string;
-  name: string;
-  icon?: string;
-  parentId?: string;
-}
-
-interface ProviderMeta {
-  id: string;
-  name: string;
-  icon?: string;
-  color?: string;
-  categoryId?: string;
-  sectionId?: string;
-  subSectionId?: string;
+  type: 'section' | 'provider' | 'feature';
+  isVisible: boolean;
+  parentName?: string;
 }
 
 export default function VisibilityPanel() {
-  const { showToast } = useAdminStore();
-
-  // Visibility state — mirrors adminSettings/visibility/{sections,providers,features}
-  const [sections, setSections] = useState<Record<string, boolean>>({});
-  const [providers, setProviders] = useState<Record<string, boolean>>({});
-  const [features, setFeatures] = useState<Record<string, boolean>>({
-    transfer: true,
-    exchange: true,
-    deposit: true,
-    withdraw: true,
-    kyc: true,
-    support: true,
-    giftCodes: true,
-    promoCodes: true,
-    savings: true,
-    investments: true,
-  });
-
-  // Metadata for display names (from sections and providers)
-  const [sectionMeta, setSectionMeta] = useState<SectionMeta[]>([]);
-  const [providerMeta, setProviderMeta] = useState<ProviderMeta[]>([]);
-
+  const { adminUser, showToast } = useAdminStore();
+  const [items, setItems] = useState<VisibilityItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [search, setSearch] = useState('');
+  const [typeFilter, setTypeFilter] = useState('all');
+  const [bulkAction, setBulkAction] = useState<'show' | 'hide'>('show');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
-  // Read visibility settings from adminSettings/visibility
   useEffect(() => {
-    const visRef = ref(database, 'adminSettings/visibility');
-    const unsub = onValue(visRef, (snapshot) => {
+    // Load sections
+    const sectionsRef = ref(database, 'sections');
+    const unsub1 = onValue(sectionsRef, (snapshot) => {
       const data = snapshot.val() || {};
-      const secData = data.sections || {};
-      const provData = data.providers || {};
-      const featData = data.features || {};
+      const sectionItems: VisibilityItem[] = Object.entries(data).map(([key, val]: [string, any]) => ({
+        id: `section_${key}`, name: val.name || key, type: 'section' as const,
+        isVisible: val.isActive !== false,
+      }));
 
-      setSections(secData);
-      setProviders(provData);
-      setFeatures({
-        transfer: featData.transfer !== false,
-        exchange: featData.exchange !== false,
-        deposit: featData.deposit !== false,
-        withdraw: featData.withdraw !== false,
-        kyc: featData.kyc !== false,
-        support: featData.support !== false,
-        giftCodes: featData.giftCodes !== false,
-        promoCodes: featData.promoCodes !== false,
-        savings: featData.savings !== false,
-        investments: featData.investments !== false,
+      // Load providers
+      const providersRef = ref(database, 'providers');
+      const unsub2 = onValue(providersRef, (snapshot2) => {
+        const provData = snapshot2.val() || {};
+        const providerItems: VisibilityItem[] = Object.entries(provData).map(([key, val]: [string, any]) => ({
+          id: `provider_${key}`, name: val.name || key, type: 'provider' as const,
+          isVisible: val.isActive !== false,
+        }));
+
+        // Load feature flags
+        const featRef = ref(database, 'adminSettings/featureFlags');
+        const unsub3 = onValue(featRef, (snapshot3) => {
+          const featData = snapshot3.val() || {};
+          const featureItems: VisibilityItem[] = Object.entries(featData).map(([key, val]: [string, any]) => ({
+            id: `feature_${key}`, name: key, type: 'feature' as const,
+            isVisible: val !== false,
+          }));
+
+          setItems([...sectionItems, ...providerItems, ...featureItems]);
+          setLoading(false);
+        });
+        return () => unsub3();
       });
-      setLoading(false);
+      return () => unsub2();
     });
-    return () => unsub();
+    return () => unsub1();
   }, []);
 
-  // Read section metadata from sections/ (same path as user app)
-  useEffect(() => {
-    const secRef = ref(database, 'sections');
-    const unsub = onValue(secRef, (snapshot) => {
-      const data = snapshot.val() || {};
-      const list: SectionMeta[] = Object.entries(data).map(([id, val]: [string, any]) => ({
-        id,
-        name: val.name || id,
-        icon: val.icon || '',
-        color: val.color || '',
-        subSections: val.subSections || undefined,
-      }));
-      setSectionMeta(list);
+  const filtered = useMemo(() => {
+    return items.filter(item => {
+      const ms = !search || item.name.toLowerCase().includes(search.toLowerCase());
+      const mt = typeFilter === 'all' || item.type === typeFilter;
+      return ms && mt;
     });
-    return () => unsub();
-  }, []);
+  }, [items, search, typeFilter]);
 
-  // Read provider metadata from providers/
-  useEffect(() => {
-    const provRef = ref(database, 'providers');
-    const unsub = onValue(provRef, (snapshot) => {
-      const data = snapshot.val() || {};
-      const list: ProviderMeta[] = Object.entries(data).map(([id, val]: [string, any]) => ({
-        id,
-        name: val.name || id,
-        icon: val.icon || '',
-        color: val.color || '',
-        categoryId: val.categoryId || '',
-        sectionId: val.sectionId || '',
-        subSectionId: val.subSectionId || '',
-      }));
-      setProviderMeta(list);
-    });
-    return () => unsub();
-  }, []);
+  const stats = useMemo(() => ({
+    total: items.length,
+    visible: items.filter(i => i.isVisible).length,
+    hidden: items.filter(i => !i.isVisible).length,
+    sections: items.filter(i => i.type === 'section').length,
+    providers: items.filter(i => i.type === 'provider').length,
+    features: items.filter(i => i.type === 'feature').length,
+  }), [items]);
 
-  const handleSave = async () => {
-    setSaving(true);
+  const toggleItem = async (item: VisibilityItem) => {
     try {
-      const updates: Record<string, any> = {};
-
-      // Write sections visibility
-      Object.entries(sections).forEach(([key, val]) => {
-        updates[`adminSettings/visibility/sections/${key}`] = val;
-      });
-
-      // Write providers visibility
-      Object.entries(providers).forEach(([key, val]) => {
-        updates[`adminSettings/visibility/providers/${key}`] = val;
-      });
-
-      // Write features visibility
-      Object.entries(features).forEach(([key, val]) => {
-        updates[`adminSettings/visibility/features/${key}`] = val;
-      });
-
-      await update(ref(database), updates);
-      showToast('تم حفظ إعدادات الظهور', 'success');
-    } catch (e) {
-      showToast('حدث خطأ', 'error');
-    } finally {
-      setSaving(false);
-    }
+      const [type, key] = item.id.split('_');
+      const path = type === 'section' ? `sections/${key}/isActive` :
+        type === 'provider' ? `providers/${key}/isActive` :
+        `adminSettings/featureFlags/${key}`;
+      await update(ref(database), { [path]: !item.isVisible });
+      showToast(`تم ${!item.isVisible ? 'إظهار' : 'إخفاء'} ${item.name}`, 'success');
+    } catch { showToast('حدث خطأ', 'error'); }
   };
 
-  const featureItems = [
-    { key: 'transfer', label: 'التحويل', desc: 'إظهار أو إخفاء ميزة التحويل' },
-    { key: 'exchange', label: 'الصرف', desc: 'إظهار أو إخفاء ميزة الصرف' },
-    { key: 'deposit', label: 'الإيداع', desc: 'إظهار أو إخفاء ميزة الإيداع' },
-    { key: 'withdraw', label: 'السحب', desc: 'إظهار أو إخفاء ميزة السحب' },
-    { key: 'kyc', label: 'التحقق', desc: 'إظهار أو إخفاء ميزة التحقق' },
-    { key: 'support', label: 'الدعم', desc: 'إظهار أو إخفاء الدعم المباشر' },
-    { key: 'giftCodes', label: 'أكواد الهدايا', desc: 'إظهار أو إخفاء أكواد الهدايا' },
-    { key: 'promoCodes', label: 'أكواد الخصم', desc: 'إظهار أو إخفاء أكواد الخصم' },
-    { key: 'savings', label: 'التوفير', desc: 'إظهار أو إخفاء ميزة التوفير' },
-    { key: 'investments', label: 'الاستثمار', desc: 'إظهار أو إخفاء ميزة الاستثمار' },
-  ];
+  const handleBulkUpdate = async () => {
+    if (selectedIds.size === 0) { showToast('اختر عناصر أولاً', 'error'); return; }
+    setSaving(true);
+    try {
+      const updates: Record<string, boolean> = {};
+      selectedIds.forEach(id => {
+        const item = items.find(i => i.id === id);
+        if (item) {
+          const [type, key] = id.split('_');
+          const path = type === 'section' ? `sections/${key}/isActive` :
+            type === 'provider' ? `providers/${key}/isActive` :
+            `adminSettings/featureFlags/${key}`;
+          updates[path] = bulkAction === 'show';
+        }
+      });
+      await update(ref(database), updates);
+      setSelectedIds(new Set());
+      showToast(`تم ${bulkAction === 'show' ? 'إظهار' : 'إخفاء'} ${selectedIds.size} عنصر`, 'success');
+    } catch { showToast('حدث خطأ', 'error'); }
+    finally { setSaving(false); }
+  };
 
-  if (loading) return <div className="flex items-center justify-center min-h-[400px]"><div className="w-8 h-8 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" /></div>;
+  const toggleSelect = (id: string) => {
+    setSelectedIds(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(id)) newSet.delete(id); else newSet.add(id);
+      return newSet;
+    });
+  };
+
+  const typeIcon: Record<string, React.ElementType> = { section: Layers, provider: Globe, feature: Shield };
+  const typeLabel: Record<string, string> = { section: 'قسم', provider: 'مزود', feature: 'ميزة' };
+  const typeColor: Record<string, string> = { section: 'bg-[#5C1A1B]/10 text-[#5C1A1B]', provider: 'bg-blue-500/10 text-blue-500', feature: 'bg-green-500/10 text-green-500' };
+
+  if (loading) return <div className="flex items-center justify-center min-h-[400px]"><div className="w-8 h-8 border-2 border-[#5C1A1B] border-t-transparent rounded-full animate-spin" /></div>;
 
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">إعدادات الظهور</h1>
-        <p className="text-muted-foreground text-sm mt-1">التحكم بإظهار وإخفاء الأقسام والمزودين والميزات</p>
+        <h1 className="text-2xl font-bold flex items-center gap-2"><Eye className="w-7 h-7 text-[#5C1A1B]" />الرؤية والإخفاء</h1>
+        <p className="text-muted-foreground text-sm mt-1">التحكم في ظهور الأقسام والمزودين والميزات</p>
       </div>
 
-      {/* Sections Visibility */}
-      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
-        <Card className="admin-card border-0 shadow-none">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base flex items-center gap-2">
-              <Layers className="w-5 h-5 text-purple-500" />
-              ظهور الأقسام
-            </CardTitle>
-            <p className="text-xs text-muted-foreground">إظهار أو إخفاء الأقسام والأقسام الفرعية للمستخدمين</p>
-          </CardHeader>
-          <CardContent className="p-6 pt-0 space-y-3">
-            {sectionMeta.length === 0 && (
-              <p className="text-sm text-muted-foreground text-center py-4">لا توجد أقسام. أضف أقسام من لوحة إدارة الأقسام.</p>
-            )}
-            {sectionMeta.map((sec) => {
-              const isVisible = sections[sec.id] !== false;
-              const subSections = sec.subSections || {};
-              const subKeys = Object.keys(subSections);
-              return (
-                <div key={sec.id} className="rounded-xl bg-muted/30 overflow-hidden">
-                  {/* Main section toggle */}
-                  <div className="flex items-center justify-between p-3">
-                    <div className="flex items-center gap-3">
-                      {sec.icon ? (
-                        <img src={sec.icon} alt="" className="w-5 h-5 object-contain rounded" />
-                      ) : (
-                        <Folder className="w-5 h-5" style={{ color: sec.color || '#9333EA' }} />
-                      )}
-                      <div>
-                        <p className="text-sm font-medium">{sec.name}</p>
-                        <p className="text-xs text-muted-foreground">المعرف: {sec.id}</p>
+      {/* Stats */}
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
+        {[
+          { label: 'الإجمالي', value: stats.total },
+          { label: 'مرئي', value: stats.visible },
+          { label: 'مخفي', value: stats.hidden },
+          { label: 'أقسام', value: stats.sections },
+          { label: 'مزودين', value: stats.providers },
+          { label: 'ميزات', value: stats.features },
+        ].map((s, i) => (
+          <motion.div key={i} initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.03 }}>
+            <Card className="border-0 shadow-sm"><CardContent className="p-3 text-center"><p className="text-lg font-bold">{s.value}</p><p className="text-[10px] text-muted-foreground">{s.label}</p></CardContent></Card>
+          </motion.div>
+        ))}
+      </div>
+
+      {/* Bulk Actions */}
+      <Card className="border-0 shadow-sm">
+        <CardContent className="p-4">
+          <div className="flex flex-wrap gap-3 items-center">
+            <div className="flex-1 min-w-[200px]"><div className="relative"><Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" /><Input placeholder="بحث..." value={search} onChange={e => setSearch(e.target.value)} className="pr-9" /></div></div>
+            <Select value={typeFilter} onValueChange={setTypeFilter}>
+              <SelectTrigger className="w-[120px]"><SelectValue /></SelectTrigger>
+              <SelectContent><SelectItem value="all">الكل</SelectItem><SelectItem value="section">أقسام</SelectItem><SelectItem value="provider">مزودين</SelectItem><SelectItem value="feature">ميزات</SelectItem></SelectContent>
+            </Select>
+            <Separator className="h-8 w-px bg-border" />
+            <Label className="text-xs text-muted-foreground">محدد: {selectedIds.size}</Label>
+            <Select value={bulkAction} onValueChange={(v: any) => setBulkAction(v)}>
+              <SelectTrigger className="w-[100px] h-8 text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent><SelectItem value="show">إظهار</SelectItem><SelectItem value="hide">إخفاء</SelectItem></SelectContent>
+            </Select>
+            <Button size="sm" onClick={handleBulkUpdate} disabled={saving || selectedIds.size === 0} className="bg-[#5C1A1B] hover:bg-[#3D0F10]">
+              {saving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Save className="w-3 h-3 ml-1" />}
+              تطبيق
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Items List */}
+      <div className="space-y-2 max-h-[calc(100vh-400px)] overflow-y-auto scrollbar-thin">
+        {filtered.length === 0 ? (
+          <Card className="border-0 shadow-sm"><CardContent className="p-12 text-center"><Eye className="w-12 h-12 mx-auto mb-3 text-muted-foreground/30" /><p className="text-muted-foreground">لا توجد عناصر</p></CardContent></Card>
+        ) : (
+          filtered.map((item, i) => {
+            const Icon = typeIcon[item.type] || Shield;
+            return (
+              <motion.div key={item.id} initial={{ opacity: 0, y: 5 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.01 }}>
+                <Card className={cn('border-0 shadow-sm transition-shadow hover:shadow-md', !item.isVisible && 'opacity-50')}>
+                  <CardContent className="p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3 flex-1 min-w-0">
+                        <button onClick={() => toggleSelect(item.id)} className={cn('w-6 h-6 rounded-md border-2 flex items-center justify-center shrink-0 transition-colors', selectedIds.has(item.id) ? 'bg-[#5C1A1B] border-[#5C1A1B]' : 'border-border')}>
+                          {selectedIds.has(item.id) && <Check className="w-3 h-3 text-white" />}
+                        </button>
+                        <div className={cn('w-8 h-8 rounded-lg flex items-center justify-center shrink-0', typeColor[item.type])}>
+                          <Icon className="w-4 h-4" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">{item.name}</p>
+                          <Badge className={cn('text-[9px]', typeColor[item.type])}>{typeLabel[item.type]}</Badge>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <Badge className={cn('text-[9px]', item.isVisible ? 'bg-green-500/15 text-green-600' : 'bg-red-500/15 text-red-600')}>
+                          {item.isVisible ? 'مرئي' : 'مخفي'}
+                        </Badge>
+                        <Switch checked={item.isVisible} onCheckedChange={() => toggleItem(item)} />
                       </div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      {isVisible ? (
-                        <Eye className="w-4 h-4 text-green-500" />
-                      ) : (
-                        <EyeOff className="w-4 h-4 text-red-500" />
-                      )}
-                      <Switch
-                        checked={isVisible}
-                        onCheckedChange={(checked) => setSections({ ...sections, [sec.id]: checked })}
-                      />
-                    </div>
-                  </div>
-                  {/* Sub-sections toggles */}
-                  {subKeys.length > 0 && (
-                    <div className="border-t border-border/30 px-3 pb-2 pt-1 space-y-1.5">
-                      {subKeys.map((subKey) => {
-                        const sub = subSections[subKey];
-                        const subVisKey = `${sec.id}/${subKey}`;
-                        const isSubVisible = sections[subVisKey] !== false && sections[sec.id] !== false;
-                        return (
-                          <div key={subKey} className="flex items-center justify-between p-2 rounded-lg bg-muted/40">
-                            <div className="flex items-center gap-2">
-                              {sub.icon ? (
-                                <img src={sub.icon} alt="" className="w-4 h-4 object-contain rounded" />
-                              ) : (
-                                <FolderPlus className="w-4 h-4 text-muted-foreground" />
-                              )}
-                              <div>
-                                <p className="text-xs font-medium">{sub.name}</p>
-                                <p className="text-[10px] text-muted-foreground">{subKey}</p>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              {isSubVisible ? (
-                                <Eye className="w-3.5 h-3.5 text-green-500" />
-                              ) : (
-                                <EyeOff className="w-3.5 h-3.5 text-red-500" />
-                              )}
-                              <Switch
-                                checked={isSubVisible}
-                                onCheckedChange={(checked) => setSections({ ...sections, [subVisKey]: checked })}
-                              />
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </CardContent>
-        </Card>
-      </motion.div>
-
-      {/* Providers Visibility */}
-      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}>
-        <Card className="admin-card border-0 shadow-none">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base flex items-center gap-2">
-              <Server className="w-5 h-5 text-blue-500" />
-              ظهور المزودين
-            </CardTitle>
-            <p className="text-xs text-muted-foreground">إظهار أو إخفاء المزودين للمستخدمين</p>
-          </CardHeader>
-          <CardContent className="p-6 pt-0 space-y-3 max-h-96 overflow-y-auto scrollbar-thin">
-            {providerMeta.length === 0 && (
-              <p className="text-sm text-muted-foreground text-center py-4">لا يوجد مزودون. أضف مزودين من لوحة إدارة المزودين.</p>
-            )}
-            {providerMeta.map((prov) => {
-              const isVisible = providers[prov.id] !== false;
-              return (
-                <div key={prov.id} className="flex items-center justify-between p-3 rounded-xl bg-muted/30">
-                  <div className="flex items-center gap-3">
-                    {prov.icon ? (
-                      <img src={prov.icon} alt="" className="w-5 h-5 object-contain rounded" />
-                    ) : (
-                      <Server className="w-5 h-5 text-muted-foreground" />
-                    )}
-                    <div>
-                      <p className="text-sm font-medium">{prov.name}</p>
-                      <p className="text-xs text-muted-foreground">المعرف: {prov.id}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {isVisible ? (
-                      <Eye className="w-4 h-4 text-green-500" />
-                    ) : (
-                      <EyeOff className="w-4 h-4 text-red-500" />
-                    )}
-                    <Switch
-                      checked={isVisible}
-                      onCheckedChange={(checked) => setProviders({ ...providers, [prov.id]: checked })}
-                    />
-                  </div>
-                </div>
-              );
-            })}
-          </CardContent>
-        </Card>
-      </motion.div>
-
-      {/* Features Visibility */}
-      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
-        <Card className="admin-card border-0 shadow-none">
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base flex items-center gap-2">
-              <Zap className="w-5 h-5 text-amber-500" />
-              ظهور الميزات
-            </CardTitle>
-            <p className="text-xs text-muted-foreground">إظهار أو إخفاء الميزات للمستخدمين</p>
-          </CardHeader>
-          <CardContent className="p-6 pt-0 space-y-3">
-            {featureItems.map((item) => (
-              <div key={item.key} className="flex items-center justify-between p-3 rounded-xl bg-muted/30">
-                <div className="flex items-center gap-3">
-                  {features[item.key] ? (
-                    <Eye className="w-5 h-5 text-green-500" />
-                  ) : (
-                    <EyeOff className="w-5 h-5 text-red-500" />
-                  )}
-                  <div>
-                    <p className="text-sm font-medium">{item.label}</p>
-                    <p className="text-xs text-muted-foreground">{item.desc}</p>
-                  </div>
-                </div>
-                <Switch
-                  checked={features[item.key]}
-                  onCheckedChange={(checked) => setFeatures({ ...features, [item.key]: checked })}
-                />
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      </motion.div>
-
-      {/* Save Button */}
-      <Button onClick={handleSave} disabled={saving} className="w-full bg-purple-600 hover:bg-purple-700">
-        {saving ? <Loader2 className="w-4 h-4 ml-2 animate-spin" /> : <Save className="w-4 h-4 ml-2" />}
-        حفظ الإعدادات
-      </Button>
+                  </CardContent>
+                </Card>
+              </motion.div>
+            );
+          })
+        )}
+      </div>
     </div>
   );
 }

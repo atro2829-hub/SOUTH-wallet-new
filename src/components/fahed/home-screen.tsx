@@ -86,19 +86,28 @@ function hexToRgb(hex: string): string {
   return result ? `${parseInt(result[1], 16)},${parseInt(result[2], 16)},${parseInt(result[3], 16)}` : '255,255,255';
 }
 
+// Quick action buttons for the home screen
+const quickActions = [
+  { id: 'send', label: 'إرسال', icon: Send, color: '#5C1A1B', gradient: 'linear-gradient(135deg, #5C1A1B, #3D0F10)' },
+  { id: 'receive', label: 'استقبال', icon: Download, color: '#10B981', gradient: 'linear-gradient(135deg, #10B981, #059669)' },
+  { id: 'qr-scan', label: 'مسح QR', icon: QrCode, color: '#3B82F6', gradient: 'linear-gradient(135deg, #3B82F6, #2563EB)' },
+  { id: 'deposit', label: 'إيداع', icon: HandCoins, color: '#F59E0B', gradient: 'linear-gradient(135deg, #F59E0B, #D97706)' },
+];
+
 // Services with custom SVG icons - each maps to a category-detail screen
 const homeServices = [
-  { id: 'service-providers', label: 'مزودين الخدمات', iconKey: 'providers-category' },
-  { id: 'wallet-services', label: 'خدمات المحفظة', iconKey: 'wallet-services-category' },
   { id: 'telecom', label: 'الاتصالات', iconKey: 'telecom-category' },
+  { id: 'entertainment', label: 'الترفيه', iconKey: 'entertainment-category' },
+  { id: 'games', label: 'الألعاب', iconKey: 'games-category' },
+  { id: 'gift-cards', label: 'بطاقات الهدايا', iconKey: 'gift-cards-category' },
+  { id: 'digital-wallets', label: 'المحافظ الرقمية', iconKey: 'digital-wallets-category' },
+  { id: 'escrow', label: 'الضمان', iconKey: 'escrow-category' },
+  { id: 'usdt', label: 'USDT', iconKey: 'usdt-category' },
+  { id: 'exchange', label: 'تبديل العملات', iconKey: 'currency-exchange' },
   { id: 'transfer', label: 'تحويل الأموال', iconKey: 'transfer' },
   { id: 'recharge', label: 'شحن رصيد', iconKey: 'recharge' },
-  { id: 'electricity', label: 'الكهرباء والماء', iconKey: 'electricity-category' },
-  { id: 'internet', label: 'الإنترنت', iconKey: 'internet-category' },
-  { id: 'digital-wallet', label: 'المحفظة الرقمية', iconKey: 'digital-wallet' },
-  { id: 'crypto', label: '\u0627\u0644\u0643\u0631\u064A\u0628\u062A\u0648', iconKey: 'crypto-category' },
-  { id: 'crypto-invest', label: '\u0627\u0633\u062A\u062B\u0645\u0627\u0631 \u0627\u0644\u0643\u0631\u064A\u0628\u062A\u0648', iconKey: 'crypto-invest-category' },
-  { id: 'currency-exchange', label: '\u062A\u0628\u062F\u064A\u0644 \u0627\u0644\u0639\u0645\u0644\u0627\u062A', iconKey: 'currency-exchange' },
+  { id: 'service-providers', label: 'مزودين الخدمات', iconKey: 'providers-category' },
+  { id: 'wallet-services', label: 'خدمات المحفظة', iconKey: 'wallet-services-category' },
 ];
 
 const promoItems = [
@@ -498,11 +507,41 @@ export default function HomeScreen() {
     prevTranslate.current = 0;
   }, []);
 
+  const handleQuickAction = (actionId: string) => {
+    const isVerified = user?.kycStatus === 'verified';
+    switch (actionId) {
+      case 'send':
+        if (!isVerified) {
+          useAppStore.getState().addNotification({
+            id: Date.now().toString(),
+            title: 'يرجى توثيق حسابك أولاً',
+            body: 'لا يمكنك التحويل إلا بعد توثيق حسابك',
+            type: 'security',
+            isRead: false,
+            createdAt: new Date().toISOString(),
+          });
+          setActiveScreen('kyc');
+          return;
+        }
+        setTransferOpen(true);
+        break;
+      case 'receive':
+        setActiveScreen('qr');
+        break;
+      case 'qr-scan':
+        setActiveScreen('qr');
+        break;
+      case 'deposit':
+        setActiveScreen('deposit');
+        break;
+    }
+  };
+
   const handleServiceClick = (serviceId: string) => {
     const isVerified = user?.kycStatus === 'verified';
 
     // Block certain actions for unverified users
-    const blockedActions = ['transfer', 'currency-exchange'];
+    const blockedActions = ['transfer', 'exchange', 'escrow'];
     if (blockedActions.includes(serviceId) && !isVerified) {
       useAppStore.getState().addNotification({
         id: Date.now().toString(),
@@ -524,6 +563,7 @@ export default function HomeScreen() {
         setActiveScreen('recharge');
         break;
       case 'digital-wallet':
+      case 'digital-wallets':
         useAppStore.getState().setActiveTab('wallet');
         break;
       case 'crypto':
@@ -531,10 +571,23 @@ export default function HomeScreen() {
         useAppStore.getState().setActiveScreen('category-detail');
         break;
       case 'crypto-invest':
+      case 'investment':
         useAppStore.getState().setActiveScreen('investment');
         break;
       case 'currency-exchange':
+      case 'exchange':
         setActiveScreen('exchange');
+        break;
+      case 'escrow':
+        setActiveScreen('escrow');
+        break;
+      case 'entertainment':
+      case 'games':
+      case 'gift-cards':
+      case 'usdt':
+      case 'telecom':
+        useAppStore.getState().setSelectedCategory(serviceId);
+        useAppStore.getState().setActiveScreen('category-detail');
         break;
       default:
         // Firebase sections and other categories navigate to category-detail
@@ -927,6 +980,47 @@ export default function HomeScreen() {
           </div>
         </div>
       </div>
+
+      {/* ========================================
+          QUICK ACTIONS - Circular Buttons
+          Send, Receive, QR Scan, Deposit
+          ======================================== */}
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.1, duration: 0.4 }}
+        className="px-4 mt-4"
+      >
+        <div className="flex items-center justify-around">
+          {quickActions.map((action, index) => (
+            <motion.button
+              key={action.id}
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.05 * index }}
+              whileTap={{ scale: 0.92 }}
+              onClick={() => handleQuickAction(action.id)}
+              className="flex flex-col items-center gap-2"
+            >
+              <div
+                className="w-14 h-14 rounded-full flex items-center justify-center"
+                style={{
+                  background: action.gradient,
+                  boxShadow: `0 4px 16px ${action.color}40`,
+                }}
+              >
+                <action.icon size={22} color="#FFF" strokeWidth={1.8} />
+              </div>
+              <span
+                className="text-[11px] font-medium"
+                style={{ color: isDark ? '#CCC' : '#444' }}
+              >
+                {action.label}
+              </span>
+            </motion.button>
+          ))}
+        </div>
+      </motion.div>
 
       {/* ========================================
           BANNER CAROUSEL / PROMO BANNER

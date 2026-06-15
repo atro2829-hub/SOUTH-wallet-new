@@ -175,6 +175,7 @@ export default function WalletScreen() {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<FilterTab>('all');
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [selectedTransaction, setSelectedTransaction] = useState<typeof transactions[0] | null>(null);
 
   // Carousel refs
   const containerRef = useRef<HTMLDivElement>(null);
@@ -882,7 +883,8 @@ export default function WalletScreen() {
                   initial={{ opacity: 0, x: -15 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: 0.03 * index }}
-                  className="flex items-center gap-3 p-3 px-4 active:scale-[0.98] transition-transform"
+                  className="flex items-center gap-3 p-3 px-4 active:scale-[0.98] transition-transform cursor-pointer"
+                  onClick={() => setSelectedTransaction(tx)}
                   style={{
                     borderBottom: index < filteredTransactions.length - 1
                       ? `1px solid ${dividerColor}`
@@ -962,6 +964,101 @@ export default function WalletScreen() {
           </div>
         </div>
       </motion.div>
+
+      {/* Transaction Detail Overlay */}
+      <AnimatePresence>
+        {selectedTransaction && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-end justify-center"
+            onClick={() => setSelectedTransaction(null)}
+          >
+            <div className="absolute inset-0 bg-black/40" />
+            <motion.div
+              initial={{ y: 300 }}
+              animate={{ y: 0 }}
+              exit={{ y: 300 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+              className="relative w-full max-w-lg rounded-t-3xl p-6 pb-8"
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                background: isDark ? '#1A1A1A' : '#FFFFFF',
+                maxHeight: '70vh',
+                overflowY: 'auto',
+              }}
+            >
+              {/* Handle bar */}
+              <div className="w-10 h-1 rounded-full mx-auto mb-4" style={{ background: isDark ? '#333' : '#DDD' }} />
+              
+              {/* Header */}
+              <div className="flex items-center justify-between mb-6">
+                <h3 className="text-base font-bold" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>تفاصيل المعاملة</h3>
+                <button onClick={() => setSelectedTransaction(null)} className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.04)' }}>
+                  <span className="text-lg" style={{ color: isDark ? '#888' : '#666' }}>✕</span>
+                </button>
+              </div>
+
+              {/* Amount */}
+              <div className="text-center mb-6">
+                <div className="w-16 h-16 rounded-2xl mx-auto flex items-center justify-center mb-3" style={{ background: `${transactionTypeColors[selectedTransaction.type] || '#5C1A1B'}15` }}>
+                  {selectedTransaction.toUserId === user?.id ? (
+                    <ArrowDownLeft size={28} strokeWidth={1.5} color="#10B981" />
+                  ) : (
+                    <ArrowUpRight size={28} strokeWidth={1.5} color="#5C1A1B" />
+                  )}
+                </div>
+                <p className="text-2xl font-bold" style={{ color: selectedTransaction.toUserId === user?.id ? '#10B981' : '#5C1A1B' }}>
+                  {selectedTransaction.toUserId === user?.id ? '+' : '-'}{selectedTransaction.amount.toLocaleString()} {currencySymbols[selectedTransaction.currency]}
+                </p>
+                <span className="inline-block text-[10px] px-2 py-0.5 rounded font-bold text-white mt-2" style={{ background: currencyBadgeColors[selectedTransaction.currency] }}>
+                  {selectedTransaction.currency}
+                </span>
+              </div>
+
+              {/* Details */}
+              <div className="space-y-3">
+                <div className="flex items-center justify-between py-2" style={{ borderBottom: `1px solid ${dividerColor}` }}>
+                  <span className="text-xs" style={{ color: isDark ? '#888' : '#999' }}>النوع</span>
+                  <span className="text-xs font-medium" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
+                    {transactionTypeLabels[selectedTransaction.type] || 'معاملة'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between py-2" style={{ borderBottom: `1px solid ${dividerColor}` }}>
+                  <span className="text-xs" style={{ color: isDark ? '#888' : '#999' }}>الحالة</span>
+                  <span className="text-[10px] px-2 py-1 rounded-full font-medium" style={{ 
+                    background: selectedTransaction.status === 'completed' ? 'rgba(16,185,129,0.12)' : 'rgba(245,158,11,0.12)',
+                    color: selectedTransaction.status === 'completed' ? '#10B981' : '#F59E0B',
+                  }}>
+                    {selectedTransaction.status === 'completed' ? 'مكتمل' : selectedTransaction.status === 'pending' ? 'قيد الانتظار' : 'فشل'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between py-2" style={{ borderBottom: `1px solid ${dividerColor}` }}>
+                  <span className="text-xs" style={{ color: isDark ? '#888' : '#999' }}>التاريخ</span>
+                  <span className="text-xs font-medium" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
+                    {new Date(selectedTransaction.createdAt).toLocaleDateString('ar-SA', { year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between py-2" style={{ borderBottom: `1px solid ${dividerColor}` }}>
+                  <span className="text-xs" style={{ color: isDark ? '#888' : '#999' }}>رقم المرجع</span>
+                  <span className="text-xs font-mono" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
+                    {selectedTransaction.id?.slice(0, 12) || '—'}
+                  </span>
+                </div>
+                {selectedTransaction.description && (
+                  <div className="flex items-center justify-between py-2" style={{ borderBottom: `1px solid ${dividerColor}` }}>
+                    <span className="text-xs" style={{ color: isDark ? '#888' : '#999' }}>الوصف</span>
+                    <span className="text-xs font-medium" style={{ color: isDark ? '#FFF' : '#1a1a1a' }}>
+                      {selectedTransaction.description}
+                    </span>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

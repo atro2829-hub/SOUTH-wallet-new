@@ -1,771 +1,474 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { ref, onValue, update, remove, push, set, get } from 'firebase/database';
+import { useState, useEffect, useMemo, useCallback } from 'react';
+import { ref, onValue, update, get, push } from 'firebase/database';
 import { database } from '@/lib/firebase';
 import { useAdminStore } from '@/lib/store';
-import { formatBalance, formatNumber, currencySymbols, timeAgo, generateId, formatDateAr } from '@/lib/utils';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { formatBalance, formatNumber, currencySymbols, timeAgo, generateId, formatDateAr, cn } from '@/lib/utils';
+import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import {
   Search, UserCheck, UserX, DollarSign, Shield, Eye, Loader2,
-  Edit, Lock, Key, CreditCard, FileDown, Bell, Activity,
+  Edit, Lock, CreditCard, FileDown, Bell, Activity,
   ArrowDownCircle, ArrowUpCircle, ShoppingCart, TrendingUp,
+  Users, ChevronUp, ChevronDown, Filter, X, Plus, Minus,
 } from 'lucide-react';
-import { motion } from 'framer-motion';
-import { notifyAccountStatus, notifyKycStatus, sendNotificationToUser } from '@/lib/notifications';
+import { motion, AnimatePresence } from 'framer-motion';
+import { sendNotificationToUser } from '@/lib/notifications';
+
+type SortField = 'name' | 'balanceYER' | 'balanceSAR' | 'balanceUSD' | 'createdAt';
+type SortDir = 'asc' | 'desc';
 
 export default function UsersPanel() {
   const { adminUser, showToast } = useAdminStore();
   const [users, setUsers] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState('all');
+  const [kycFilter, setKycFilter] = useState('all');
+  const [roleFilter, setRoleFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [sortField, setSortField] = useState<SortField>('createdAt');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
   const [selectedUser, setSelectedUser] = useState<any>(null);
   const [detailOpen, setDetailOpen] = useState(false);
-  const [loading, setLoading] = useState(true);
-
-  // Balance dialog
   const [balanceDialog, setBalanceDialog] = useState(false);
-  const [balanceAction, setBalanceAction] = useState<'add' | 'subtract'>('add');
-  const [balanceAmount, setBalanceAmount] = useState('');
   const [balanceCurrency, setBalanceCurrency] = useState('YER');
-
-  // Role dialog
-  const [roleDialog, setRoleDialog] = useState(false);
-  const [newRole, setNewRole] = useState('');
-
-  // Edit info dialog
-  const [editInfoDialog, setEditInfoDialog] = useState(false);
-  const [editName, setEditName] = useState('');
-  const [editPhone, setEditPhone] = useState('');
-  const [editEmail, setEditEmail] = useState('');
-  const [editGovernorate, setEditGovernorate] = useState('');
-
-  // Block dialog
-  const [blockDialog, setBlockDialog] = useState(false);
-  const [blockReason, setBlockReason] = useState('');
-
-  // KYC dialog
-  const [kycDialog, setKycDialog] = useState(false);
-  const [newKycStatus, setNewKycStatus] = useState('');
-
-  // Card dialog
-  const [cardDialog, setCardDialog] = useState(false);
-  const [cardType, setCardType] = useState('');
-  const [cardNumber, setCardNumber] = useState('');
-
-  // Password dialog
-  const [passwordDialog, setPasswordDialog] = useState(false);
-  const [newPassword, setNewPassword] = useState('');
-
-  // PIN reset dialog
-  const [pinDialog, setPinDialog] = useState(false);
-
-  // Send notification dialog
-  const [notifDialog, setNotifDialog] = useState(false);
-  const [notifTitle, setNotifTitle] = useState('');
-  const [notifBody, setNotifBody] = useState('');
-
-  // User details tabs
-  const [userTab, setUserTab] = useState('info');
+  const [balanceAmount, setBalanceAmount] = useState(0);
+  const [balanceAction, setBalanceAction] = useState<'add' | 'subtract'>('add');
+  const [balanceNote, setBalanceNote] = useState('');
+  const [saving, setSaving] = useState(false);
   const [userTransactions, setUserTransactions] = useState<any[]>([]);
-  const [userInvestments, setUserInvestments] = useState<any[]>([]);
-  const [userActivityLog, setUserActivityLog] = useState<any[]>([]);
+  const [activeDetailTab, setActiveDetailTab] = useState('info');
 
   useEffect(() => {
     const usersRef = ref(database, 'users');
     const unsub = onValue(usersRef, (snapshot) => {
       const data = snapshot.val() || {};
-      const list = Object.entries(data).map(([uid, val]: [string, any]) => ({ uid, ...val }));
+      const list = Object.entries(data).map(([key, val]: [string, any]) => ({
+        id: key, ...val,
+        balanceYER: val.balanceYER || 0,
+        balanceSAR: val.balanceSAR || 0,
+        balanceUSD: val.balanceUSD || 0,
+      }));
       setUsers(list);
       setLoading(false);
     });
     return () => unsub();
   }, []);
 
-  const loadUserDetails = async (user: any) => {
-    try {
-      // Load transactions
-      const txSnapshot = await get(ref(database, `users/${user.uid}/transactions`));
-      const txData = txSnapshot.val() || {};
-      const txList = Object.entries(txData).map(([id, val]: [string, any]) => ({ id, ...val }));
-      txList.sort((a: any, b: any) => new Date(b.createdAt || b.timestamp).getTime() - new Date(a.createdAt || a.timestamp).getTime());
-      setUserTransactions(txList.slice(0, 50));
+  const filtered = useMemo(() => {
+    let result = users.filter(u => {
+      const matchSearch = !search ||
+        (u.name || u.firstName || '').toLowerCase().includes(search.toLowerCase()) ||
+        (u.phone || '').includes(search) ||
+        (u.email || '').toLowerCase().includes(search.toLowerCase()) ||
+        (u.id || '').includes(search);
+      const matchKyc = kycFilter === 'all' || u.kycStatus === kycFilter;
+      const matchRole = roleFilter === 'all' || u.role === roleFilter;
+      const matchStatus = statusFilter === 'all' ||
+        (statusFilter === 'active' && !u.isBlocked) ||
+        (statusFilter === 'blocked' && u.isBlocked);
+      return matchSearch && matchKyc && matchRole && matchStatus;
+    });
 
-      // Load investments
-      const invSnapshot = await get(ref(database, `users/${user.uid}/investments`));
-      const invData = invSnapshot.val() || {};
-      const invList = Object.entries(invData).map(([id, val]: [string, any]) => ({ id, ...val }));
-      setUserInvestments(invList);
-
-      // Load activity log
-      const logSnapshot = await get(ref(database, `users/${user.uid}/activityLog`));
-      const logData = logSnapshot.val() || {};
-      const logList = Object.entries(logData).map(([id, val]: [string, any]) => ({ id, ...val }));
-      logList.sort((a: any, b: any) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
-      setUserActivityLog(logList.slice(0, 50));
-    } catch (e) {
-      console.error('Error loading user details:', e);
-    }
-  };
-
-  const filteredUsers = users.filter((u) => {
-    const matchesSearch =
-      !search ||
-      (u.name && u.name.includes(search)) ||
-      (u.firstName && u.firstName.includes(search)) ||
-      (u.email && u.email.includes(search)) ||
-      (u.phone && u.phone.includes(search)) ||
-      (u.userId && u.userId.includes(search));
-    const matchesFilter =
-      filter === 'all' ||
-      (filter === 'blocked' && u.isBlocked) ||
-      (filter === 'kyc-submitted' && u.kycStatus === 'submitted') ||
-      (filter === 'admin' && (u.role === 'admin' || u.role === 'owner'));
-    return matchesSearch && matchesFilter;
-  });
-
-  const handleBlockUser = async (block: boolean) => {
-    if (!selectedUser) return;
-    try {
-      await update(ref(database, `users/${selectedUser.uid}`), {
-        isBlocked: block,
-        blockReason: block ? blockReason : '',
-        blockedAt: block ? new Date().toISOString() : '',
-      });
-
-      // Send push notification to the user about account status change
-      try {
-        await notifyAccountStatus(selectedUser.uid, block);
-      } catch (notifError) {
-        console.warn('Failed to send account status notification:', notifError);
+    result.sort((a, b) => {
+      let aVal: any, bVal: any;
+      switch (sortField) {
+        case 'name': aVal = (a.name || a.firstName || '').toLowerCase(); bVal = (b.name || b.firstName || '').toLowerCase(); break;
+        case 'balanceYER': aVal = a.balanceYER || 0; bVal = b.balanceYER || 0; break;
+        case 'balanceSAR': aVal = a.balanceSAR || 0; bVal = b.balanceSAR || 0; break;
+        case 'balanceUSD': aVal = a.balanceUSD || 0; bVal = b.balanceUSD || 0; break;
+        case 'createdAt': aVal = a.createdAt || ''; bVal = b.createdAt || ''; break;
+        default: aVal = 0; bVal = 0;
       }
+      if (aVal < bVal) return sortDir === 'asc' ? -1 : 1;
+      if (aVal > bVal) return sortDir === 'asc' ? 1 : -1;
+      return 0;
+    });
+    return result;
+  }, [users, search, kycFilter, roleFilter, statusFilter, sortField, sortDir]);
 
-      showToast(block ? 'تم حظر المستخدم' : 'تم إلغاء حظر المستخدم', 'success');
-      setBlockDialog(false);
-      setBlockReason('');
-    } catch (e) {
-      showToast('حدث خطأ', 'error');
-    }
+  const stats = useMemo(() => ({
+    total: users.length,
+    active: users.filter(u => !u.isBlocked).length,
+    blocked: users.filter(u => u.isBlocked).length,
+    verified: users.filter(u => u.kycStatus === 'verified' || u.kycStatus === 'approved').length,
+    pendingKyc: users.filter(u => u.kycStatus === 'submitted').length,
+    totalBalanceYER: users.reduce((s, u) => s + (u.balanceYER || 0), 0),
+    totalBalanceSAR: users.reduce((s, u) => s + (u.balanceSAR || 0), 0),
+    totalBalanceUSD: users.reduce((s, u) => s + (u.balanceUSD || 0), 0),
+  }), [users]);
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setSortField(field); setSortDir('desc'); }
   };
 
-  const handleBalanceAdjust = async () => {
-    if (!selectedUser || !balanceAmount) return;
-    const amount = parseFloat(balanceAmount);
-    if (isNaN(amount) || amount <= 0) return;
+  const SortIcon = ({ field }: { field: SortField }) => (
+    <span className="inline-flex flex-col mr-1">
+      <ChevronUp className={cn('w-3 h-3', sortField === field && sortDir === 'asc' ? 'text-foreground' : 'text-muted-foreground/40')} />
+      <ChevronDown className={cn('w-3 h-3 -mt-1', sortField === field && sortDir === 'desc' ? 'text-foreground' : 'text-muted-foreground/40')} />
+    </span>
+  );
 
+  const openDetail = async (user: any) => {
+    setSelectedUser(user);
+    setDetailOpen(true);
+    setActiveDetailTab('info');
+    // Load user transactions
+    try {
+      const ordersSnap = await get(ref(database, 'orders'));
+      const ordersData = ordersSnap.val() || {};
+      const txns = Object.entries(ordersData)
+        .filter(([, v]: [string, any]) => v.userId === user.id)
+        .map(([key, v]: [string, any]) => ({ id: key, ...v, type: 'order' }))
+        .slice(0, 20);
+      setUserTransactions(txns);
+    } catch { setUserTransactions([]); }
+  };
+
+  const toggleBlock = async (user: any) => {
+    try {
+      await update(ref(database, `users/${user.id}`), { isBlocked: !user.isBlocked });
+      showToast(user.isBlocked ? 'تم فك الحظر' : 'تم حظر المستخدم', 'success');
+    } catch { showToast('حدث خطأ', 'error'); }
+  };
+
+  const adjustBalance = async () => {
+    if (!selectedUser || balanceAmount <= 0) { showToast('أدخل مبلغ صحيح', 'error'); return; }
+    setSaving(true);
     try {
       const balanceKey = `balance${balanceCurrency}`;
       const currentBalance = selectedUser[balanceKey] || 0;
-      const newBalance = balanceAction === 'add' ? currentBalance + amount : Math.max(0, currentBalance - amount);
+      const newBalance = balanceAction === 'add' ? currentBalance + balanceAmount : Math.max(0, currentBalance - balanceAmount);
+      await update(ref(database, `users/${selectedUser.id}`), { [balanceKey]: newBalance });
 
-      await update(ref(database, `users/${selectedUser.uid}`), { [balanceKey]: newBalance });
+      // Log activity
+      await push(ref(database, 'ownerSettings/activityLog'), {
+        id: generateId(), type: 'admin', action: balanceAction === 'add' ? 'إضافة رصيد' : 'خصم رصيد',
+        details: `${balanceAction === 'add' ? 'إضافة' : 'خصم'} ${balanceAmount} ${currencySymbols[balanceCurrency]} ${balanceNote ? `(${balanceNote})` : ''}`,
+        adminId: adminUser?.uid, adminName: adminUser?.displayName,
+        userId: selectedUser.id, timestamp: new Date().toISOString(),
+      });
 
-      // Send FCM push notification + in-app notification to the user
-      try {
-        await sendNotificationToUser(selectedUser.uid, {
-          title: balanceAction === 'add' ? 'إضافة رصيد' : 'خصم رصيد',
-          body: balanceAction === 'add'
-            ? `تم إضافة ${amount} ${currencySymbols[balanceCurrency]} إلى رصيدك`
-            : `تم خصم ${amount} ${currencySymbols[balanceCurrency]} من رصيدك`,
-          type: 'transaction',
-          data: { action: 'balance_adjust', balanceAction, amount, currency: balanceCurrency },
-        });
-      } catch {}
-
-      // Log transaction
-      const logEntry = {
-        id: generateId(),
-        type: 'admin',
-        action: balanceAction === 'add' ? 'إضافة رصيد' : 'خصم رصيد',
-        details: `${balanceAction === 'add' ? 'إضافة' : 'خصم'} ${amount} ${currencySymbols[balanceCurrency]} ${balanceAction === 'add' ? 'إلى' : 'من'} حساب ${selectedUser.name || selectedUser.email}`,
-        adminId: adminUser?.uid,
-        adminName: adminUser?.displayName,
-        timestamp: new Date().toISOString(),
-      };
-      await push(ref(database, 'ownerSettings/activityLog'), logEntry);
-
-      showToast(
-        `تم ${balanceAction === 'add' ? 'إضافة' : 'خصم'} ${amount} ${currencySymbols[balanceCurrency]}`,
-        'success'
-      );
+      showToast(`تم ${balanceAction === 'add' ? 'إضافة' : 'خصم'} ${balanceAmount} ${currencySymbols[balanceCurrency]}`, 'success');
       setBalanceDialog(false);
-      setBalanceAmount('');
-    } catch (e) {
-      showToast('حدث خطأ', 'error');
-    }
+      setBalanceNote('');
+      setBalanceAmount(0);
+    } catch { showToast('حدث خطأ', 'error'); }
+    finally { setSaving(false); }
   };
 
-  const handleChangeRole = async () => {
-    if (!selectedUser || !newRole) return;
-    try {
-      await update(ref(database, `users/${selectedUser.uid}`), { role: newRole });
-
-      // Notify user about role change
-      try {
-        const { sendNotificationToUser } = await import('@/lib/notifications');
-        await sendNotificationToUser(selectedUser.uid, {
-          title: 'تحديث الصلاحيات',
-          body: `تم تحديث صلاحيات حسابك إلى: ${newRole}`,
-          type: 'security',
-          data: { action: 'role_change', role: newRole },
-        });
-      } catch (e) { console.warn('Role change notification failed:', e); }
-
-      showToast('تم تغيير الصلاحية', 'success');
-      setRoleDialog(false);
-      setNewRole('');
-    } catch (e) {
-      showToast('حدث خطأ', 'error');
-    }
-  };
-
-  const handleEditInfo = async () => {
-    if (!selectedUser) return;
-    try {
-      const updates: any = {};
-      if (editName) updates.name = editName;
-      if (editPhone) updates.phone = editPhone;
-      if (editEmail) updates.email = editEmail;
-      if (editGovernorate) updates.governorate = editGovernorate;
-      await update(ref(database, `users/${selectedUser.uid}`), updates);
-      showToast('تم تحديث بيانات المستخدم', 'success');
-      setEditInfoDialog(false);
-    } catch (e) {
-      showToast('حدث خطأ', 'error');
-    }
-  };
-
-  const handleChangeKYC = async () => {
-    if (!selectedUser || !newKycStatus) return;
-    try {
-      await update(ref(database, `users/${selectedUser.uid}`), {
-        kycStatus: newKycStatus,
-        kycUpdatedAt: new Date().toISOString(),
-      });
-
-      // Send push notification to the user about KYC status change
-      try {
-        await notifyKycStatus(selectedUser.uid, newKycStatus);
-      } catch (notifError) {
-        console.warn('Failed to send KYC status notification:', notifError);
-      }
-
-      showToast('تم تغيير حالة التحقق', 'success');
-      setKycDialog(false);
-    } catch (e) {
-      showToast('حدث خطأ', 'error');
-    }
-  };
-
-  const handleChangeCard = async () => {
-    if (!selectedUser) return;
-    try {
-      const updates: any = {};
-      if (cardType) updates.cardType = cardType;
-      if (cardNumber) updates.cardNumber = cardNumber;
-      await update(ref(database, `users/${selectedUser.uid}`), updates);
-      showToast('تم تحديث بيانات البطاقة', 'success');
-      setCardDialog(false);
-    } catch (e) {
-      showToast('حدث خطأ', 'error');
-    }
-  };
-
-  const handleResetPIN = async () => {
-    if (!selectedUser) return;
-    try {
-      await update(ref(database, `users/${selectedUser.uid}`), {
-        pin: null,
-        pinResetAt: new Date().toISOString(),
-      });
-
-      // Notify user about PIN reset
-      try {
-        const { sendNotificationToUser } = await import('@/lib/notifications');
-        await sendNotificationToUser(selectedUser.uid, {
-          title: 'تم إعادة تعيين الرقم السري',
-          body: 'تم إعادة تعيين الرقم السري لحسابك. يرجى تسجيل الدخول وإعداد رقم سري جديد.',
-          type: 'security',
-          data: { action: 'pin_reset' },
-        });
-      } catch (e) { console.warn('PIN reset notification failed:', e); }
-
-      showToast('تم إعادة تعيين رمز PIN', 'success');
-      setPinDialog(false);
-    } catch (e) {
-      showToast('حدث خطأ', 'error');
-    }
-  };
-
-  const handleSendNotification = async () => {
-    if (!selectedUser || !notifTitle || !notifBody) return;
-    try {
-      // Send notification with FCM push
-      await sendNotificationToUser(selectedUser.uid, {
-        title: notifTitle,
-        body: notifBody,
-        type: 'info',
-      });
-      showToast('تم إرسال الإشعار للمستخدم', 'success');
-      setNotifDialog(false);
-      setNotifTitle('');
-      setNotifBody('');
-    } catch (e) {
-      showToast('حدث خطأ', 'error');
-    }
-  };
-
-  const handleExportUser = () => {
-    if (!selectedUser) return;
-    const exportData = {
-      uid: selectedUser.uid,
-      name: selectedUser.name,
-      email: selectedUser.email,
-      phone: selectedUser.phone,
-      userId: selectedUser.userId,
-      balanceYER: selectedUser.balanceYER || 0,
-      balanceSAR: selectedUser.balanceSAR || 0,
-      balanceUSD: selectedUser.balanceUSD || 0,
-      kycStatus: selectedUser.kycStatus,
-      role: selectedUser.role,
-      isBlocked: selectedUser.isBlocked,
-      createdAt: selectedUser.createdAt,
-    };
-    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+  const exportCSV = () => {
+    const headers = ['الاسم', 'الهاتف', 'البريد', 'رصيد YER', 'رصيد SAR', 'رصيد USD', 'حالة KYC', 'الدور', 'الحالة', 'تاريخ التسجيل'];
+    const rows = filtered.map(u => [
+      u.name || u.firstName || '', u.phone || '', u.email || '',
+      u.balanceYER || 0, u.balanceSAR || 0, u.balanceUSD || 0,
+      u.kycStatus || 'none', u.role || 'user', u.isBlocked ? 'محظور' : 'نشط',
+      u.createdAt || '',
+    ]);
+    const csv = [headers, ...rows].map(r => r.join(',')).join('\n');
+    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url;
-    a.download = `user_${selectedUser.uid}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-    showToast('تم تصدير بيانات المستخدم', 'success');
+    a.href = url; a.download = `users_${new Date().toISOString().split('T')[0]}.csv`;
+    a.click(); URL.revokeObjectURL(url);
+    showToast('تم تصدير البيانات', 'success');
+  };
+
+  const kycStatusMap: Record<string, { label: string; color: string }> = {
+    none: { label: 'لم يقدم', color: 'bg-gray-500/15 text-gray-500' },
+    submitted: { label: 'مقدم', color: 'bg-yellow-500/15 text-yellow-600 dark:text-yellow-400' },
+    verified: { label: 'موثق', color: 'bg-green-500/15 text-green-600 dark:text-green-400' },
+    approved: { label: 'معتمد', color: 'bg-green-500/15 text-green-600 dark:text-green-400' },
+    rejected: { label: 'مرفوض', color: 'bg-red-500/15 text-red-600 dark:text-red-400' },
   };
 
   if (loading) {
-    return <div className="flex items-center justify-center min-h-[400px]"><div className="w-8 h-8 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" /></div>;
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="text-center">
+          <div className="w-8 h-8 border-2 border-[#5C1A1B] border-t-transparent rounded-full animate-spin mx-auto mb-3" />
+          <p className="text-muted-foreground text-sm">جاري تحميل المستخدمين...</p>
+        </div>
+      </div>
+    );
   }
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">إدارة المستخدمين</h1>
-        <p className="text-muted-foreground text-sm mt-1">إجمالي {formatNumber(users.length)} مستخدم</p>
-      </div>
-
-      {/* Search & Filter */}
-      <div className="flex gap-3">
-        <div className="relative flex-1">
-          <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-          <Input
-            placeholder="بحث بالاسم، البريد، الهاتف..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="pr-10"
-          />
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-2xl font-bold flex items-center gap-2"><Users className="w-7 h-7 text-[#5C1A1B]" />المستخدمين</h1>
+          <p className="text-muted-foreground text-sm mt-1">إدارة ومراقبة حسابات المستخدمين</p>
         </div>
-        <Select value={filter} onValueChange={setFilter}>
-          <SelectTrigger className="w-40">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">الكل</SelectItem>
-            <SelectItem value="blocked">محظور</SelectItem>
-            <SelectItem value="kyc-submitted">بانتظار التحقق</SelectItem>
-            <SelectItem value="admin">مديرين</SelectItem>
-          </SelectContent>
-        </Select>
+        <Button onClick={exportCSV} variant="outline" className="gap-2">
+          <FileDown className="w-4 h-4" />تصدير CSV
+        </Button>
       </div>
 
-      {/* Users List */}
-      <div className="space-y-3 max-h-[calc(100vh-280px)] overflow-y-auto scrollbar-thin">
-        {filteredUsers.map((user, index) => (
-          <motion.div
-            key={user.uid}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: index * 0.02 }}
-          >
-            <Card className="admin-card border-0 shadow-none cursor-pointer card-press" onClick={() => {
-              setSelectedUser(user);
-              setUserTab('info');
-              setDetailOpen(true);
-              loadUserDetails(user);
-            }}>
-              <CardContent className="p-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 rounded-full bg-purple-500/10 flex items-center justify-center text-purple-600 font-bold text-sm">
-                      {(user.name || user.firstName || '?')[0]}
-                    </div>
-                    <div>
-                      <p className="font-medium text-sm">{user.name || `${user.firstName || ''} ${user.familyName || ''}`}</p>
-                      <p className="text-xs text-muted-foreground">{user.email || user.phone || user.userId}</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {user.isBlocked && <Badge className="bg-red-500/20 text-red-500 text-xs">محظور</Badge>}
-                    {user.role === 'owner' && <Badge className="bg-purple-500/20 text-purple-500 text-xs">مالك</Badge>}
-                    {user.role === 'admin' && <Badge className="bg-blue-500/20 text-blue-500 text-xs">مدير</Badge>}
-                    {user.kycStatus === 'verified' && <Badge className="bg-green-500/20 text-green-500 text-xs">موثق</Badge>}
-                  </div>
-                </div>
-                <div className="flex gap-4 mt-3 text-xs text-muted-foreground">
-                  <span>ر.ي: {formatNumber(user.balanceYER || 0)}</span>
-                  <span>ر.س: {formatNumber(user.balanceSAR || 0)}</span>
-                  <span>$: {formatNumber(user.balanceUSD || 0)}</span>
-                </div>
+      {/* Stats */}
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
+        {[
+          { label: 'الإجمالي', value: stats.total, icon: Users, color: 'text-[#5C1A1B]' },
+          { label: 'نشط', value: stats.active, icon: UserCheck, color: 'text-green-500' },
+          { label: 'محظور', value: stats.blocked, icon: UserX, color: 'text-red-500' },
+          { label: 'موثق', value: stats.verified, icon: Shield, color: 'text-blue-500' },
+          { label: 'KYC معلق', value: stats.pendingKyc, icon: Eye, color: 'text-yellow-500' },
+          { label: 'رصيد YER', value: formatNumber(stats.totalBalanceYER), icon: DollarSign, color: 'text-red-500' },
+          { label: 'رصيد SAR', value: formatNumber(stats.totalBalanceSAR), icon: DollarSign, color: 'text-green-500' },
+          { label: 'رصيد USD', value: formatNumber(stats.totalBalanceUSD), icon: DollarSign, color: 'text-blue-500' },
+        ].map((s, i) => (
+          <motion.div key={i} initial={{ opacity: 0, y: 15 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.03 }}>
+            <Card className="border-0 shadow-sm">
+              <CardContent className="p-3 text-center">
+                <s.icon className={cn('w-4 h-4 mx-auto mb-1', s.color)} />
+                <p className="text-lg font-bold">{s.value}</p>
+                <p className="text-[10px] text-muted-foreground">{s.label}</p>
               </CardContent>
             </Card>
           </motion.div>
         ))}
-        {filteredUsers.length === 0 && (
-          <p className="text-center text-muted-foreground py-8">لا توجد نتائج</p>
-        )}
       </div>
 
-      {/* User Detail Dialog */}
-      <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>تفاصيل المستخدم</DialogTitle>
-          </DialogHeader>
-          {selectedUser && (
-            <Tabs value={userTab} onValueChange={setUserTab}>
-              <TabsList className="w-full">
-                <TabsTrigger value="info" className="flex-1">المعلومات</TabsTrigger>
-                <TabsTrigger value="transactions" className="flex-1">العمليات</TabsTrigger>
-                <TabsTrigger value="investments" className="flex-1">الاستثمارات</TabsTrigger>
-                <TabsTrigger value="activity" className="flex-1">النشاط</TabsTrigger>
-              </TabsList>
-
-              <TabsContent value="info" className="space-y-4">
-                <div className="grid grid-cols-2 gap-3 text-sm">
-                  <div><Label className="text-muted-foreground">الاسم</Label><p className="font-medium">{selectedUser.name || '-'}</p></div>
-                  <div><Label className="text-muted-foreground">البريد</Label><p className="font-medium" dir="ltr">{selectedUser.email || '-'}</p></div>
-                  <div><Label className="text-muted-foreground">الهاتف</Label><p className="font-medium" dir="ltr">{selectedUser.phone || '-'}</p></div>
-                  <div><Label className="text-muted-foreground">رقم الحساب</Label><p className="font-medium">{selectedUser.userId || '-'}</p></div>
-                  <div><Label className="text-muted-foreground">المحافظة</Label><p className="font-medium">{selectedUser.governorate || '-'}</p></div>
-                  <div><Label className="text-muted-foreground">الصلاحية</Label><p className="font-medium">{selectedUser.role === 'owner' ? 'مالك' : selectedUser.role === 'admin' ? 'مدير' : 'مستخدم'}</p></div>
-                  <div><Label className="text-muted-foreground">حالة التحقق</Label><p className="font-medium">{selectedUser.kycStatus === 'verified' ? 'موثق' : selectedUser.kycStatus === 'submitted' ? 'مقدم' : selectedUser.kycStatus === 'rejected' ? 'مرفوض' : 'لم يقدم'}</p></div>
-                  <div><Label className="text-muted-foreground">نوع البطاقة</Label><p className="font-medium">{selectedUser.cardType || '-'}</p></div>
-                  <div><Label className="text-muted-foreground">رقم البطاقة</Label><p className="font-medium" dir="ltr">{selectedUser.cardNumber || '-'}</p></div>
-                  <div><Label className="text-muted-foreground">الحالة</Label>
-                    <Badge className={selectedUser.isBlocked ? 'bg-red-500/20 text-red-500' : 'bg-green-500/20 text-green-500'}>
-                      {selectedUser.isBlocked ? 'محظور' : 'نشط'}
-                    </Badge>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-3 gap-3">
-                  <Card className="admin-card border-0 shadow-none"><CardContent className="p-3 text-center"><p className="text-xs text-muted-foreground">ر.ي</p><p className="font-bold text-lg">{formatNumber(selectedUser.balanceYER || 0)}</p></CardContent></Card>
-                  <Card className="admin-card border-0 shadow-none"><CardContent className="p-3 text-center"><p className="text-xs text-muted-foreground">ر.س</p><p className="font-bold text-lg">{formatNumber(selectedUser.balanceSAR || 0)}</p></CardContent></Card>
-                  <Card className="admin-card border-0 shadow-none"><CardContent className="p-3 text-center"><p className="text-xs text-muted-foreground">$</p><p className="font-bold text-lg">{formatNumber(selectedUser.balanceUSD || 0)}</p></CardContent></Card>
-                </div>
-
-                {/* Action Buttons */}
-                <div className="grid grid-cols-2 gap-2">
-                  <Button onClick={() => { setBalanceDialog(true); setBalanceAction('add'); }} className="bg-green-600 hover:bg-green-700" size="sm">
-                    <DollarSign className="w-4 h-4 ml-1" /> إضافة رصيد
-                  </Button>
-                  <Button onClick={() => { setBalanceDialog(true); setBalanceAction('subtract'); }} className="bg-orange-600 hover:bg-orange-700" size="sm">
-                    <DollarSign className="w-4 h-4 ml-1" /> خصم رصيد
-                  </Button>
-                  <Button onClick={() => {
-                    setEditName(selectedUser.name || '');
-                    setEditPhone(selectedUser.phone || '');
-                    setEditEmail(selectedUser.email || '');
-                    setEditGovernorate(selectedUser.governorate || '');
-                    setEditInfoDialog(true);
-                  }} variant="outline" size="sm">
-                    <Edit className="w-4 h-4 ml-1" /> تعديل البيانات
-                  </Button>
-                  <Button onClick={() => {
-                    setNewKycStatus(selectedUser.kycStatus || 'none');
-                    setKycDialog(true);
-                  }} variant="outline" size="sm">
-                    <Shield className="w-4 h-4 ml-1" /> تغيير التحقق
-                  </Button>
-                  <Button onClick={() => {
-                    setCardType(selectedUser.cardType || '');
-                    setCardNumber(selectedUser.cardNumber || '');
-                    setCardDialog(true);
-                  }} variant="outline" size="sm">
-                    <CreditCard className="w-4 h-4 ml-1" /> بيانات البطاقة
-                  </Button>
-                  <Button onClick={() => setPinDialog(true)} variant="outline" size="sm">
-                    <Key className="w-4 h-4 ml-1" /> إعادة PIN
-                  </Button>
-                  <Button onClick={() => {
-                    setBlockReason(selectedUser.blockReason || '');
-                    setBlockDialog(true);
-                  }} variant={selectedUser.isBlocked ? 'default' : 'destructive'} size="sm">
-                    {selectedUser.isBlocked ? <UserCheck className="w-4 h-4 ml-1" /> : <UserX className="w-4 h-4 ml-1" />}
-                    {selectedUser.isBlocked ? 'إلغاء الحظر' : 'حظر'}
-                  </Button>
-                  <Button onClick={() => setNotifDialog(true)} variant="outline" size="sm">
-                    <Bell className="w-4 h-4 ml-1" /> إرسال إشعار
-                  </Button>
-                  <Button onClick={() => setRoleDialog(true)} variant="outline" size="sm" className={adminUser?.role === 'owner' ? '' : 'opacity-50'}>
-                    <Shield className="w-4 h-4 ml-1" /> تغيير الصلاحية
-                  </Button>
-                  <Button onClick={handleExportUser} variant="outline" size="sm">
-                    <FileDown className="w-4 h-4 ml-1" /> تصدير البيانات
-                  </Button>
-                </div>
-              </TabsContent>
-
-              <TabsContent value="transactions" className="space-y-2">
-                <div className="max-h-[400px] overflow-y-auto scrollbar-thin">
-                  {userTransactions.map((tx: any) => (
-                    <Card key={tx.id} className="admin-card border-0 shadow-none mb-2">
-                      <CardContent className="p-3">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            {tx.type === 'deposit' ? <ArrowDownCircle className="w-4 h-4 text-green-500" /> :
-                             tx.type === 'withdraw' ? <ArrowUpCircle className="w-4 h-4 text-red-500" /> :
-                             <ShoppingCart className="w-4 h-4 text-purple-500" />}
-                            <div>
-                              <p className="text-xs font-medium">{tx.description || tx.type}</p>
-                              <p className="text-xs text-muted-foreground">{tx.createdAt ? formatDateAr(tx.createdAt) : ''}</p>
-                            </div>
-                          </div>
-                          <p className="text-sm font-bold">{formatNumber(tx.amount || 0)} {currencySymbols[tx.currency || 'YER']}</p>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
-                  {userTransactions.length === 0 && <p className="text-center text-muted-foreground py-4">لا توجد عمليات</p>}
-                </div>
-              </TabsContent>
-
-              <TabsContent value="investments" className="space-y-2">
-                <div className="max-h-[400px] overflow-y-auto scrollbar-thin">
-                  {userInvestments.map((inv: any) => (
-                    <Card key={inv.id} className="admin-card border-0 shadow-none mb-2">
-                      <CardContent className="p-3">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <TrendingUp className="w-4 h-4 text-green-500" />
-                            <div>
-                              <p className="text-xs font-medium">{inv.planName || 'استثمار'}</p>
-                              <p className="text-xs text-muted-foreground">{inv.startDate ? formatDateAr(inv.startDate) : ''}</p>
-                            </div>
-                          </div>
-                          <div className="text-left">
-                            <p className="text-sm font-bold">{formatNumber(inv.amount || 0)}</p>
-                            <Badge className={inv.status === 'active' ? 'bg-green-500/20 text-green-500' : inv.status === 'completed' ? 'bg-blue-500/20 text-blue-500' : 'bg-red-500/20 text-red-500'} style={{ fontSize: 10 }}>
-                              {inv.status === 'active' ? 'نشط' : inv.status === 'completed' ? 'مكتمل' : 'ملغي'}
-                            </Badge>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
-                  {userInvestments.length === 0 && <p className="text-center text-muted-foreground py-4">لا توجد استثمارات</p>}
-                </div>
-              </TabsContent>
-
-              <TabsContent value="activity" className="space-y-2">
-                <div className="max-h-[400px] overflow-y-auto scrollbar-thin">
-                  {userActivityLog.map((log: any) => (
-                    <Card key={log.id} className="admin-card border-0 shadow-none mb-2">
-                      <CardContent className="p-3">
-                        <div className="flex items-center gap-2">
-                          <Activity className="w-4 h-4 text-purple-500" />
-                          <div>
-                            <p className="text-xs font-medium">{log.action || log.type}</p>
-                            <p className="text-xs text-muted-foreground">{log.details || ''}</p>
-                            <p className="text-xs text-muted-foreground">{log.timestamp ? formatDateAr(log.timestamp) : ''}</p>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
-                  {userActivityLog.length === 0 && <p className="text-center text-muted-foreground py-4">لا يوجد سجل نشاط</p>}
-                </div>
-              </TabsContent>
-            </Tabs>
-          )}
-        </DialogContent>
-      </Dialog>
-
-      {/* Balance Dialog */}
-      <Dialog open={balanceDialog} onOpenChange={setBalanceDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{balanceAction === 'add' ? 'إضافة رصيد' : 'خصم رصيد'}</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div>
-              <Label>العملة</Label>
-              <Select value={balanceCurrency} onValueChange={setBalanceCurrency}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="YER">ريال يمني</SelectItem>
-                  <SelectItem value="SAR">ريال سعودي</SelectItem>
-                  <SelectItem value="USD">دولار</SelectItem>
-                </SelectContent>
-              </Select>
+      {/* Filters */}
+      <Card className="border-0 shadow-sm">
+        <CardContent className="p-4">
+          <div className="flex flex-wrap gap-3">
+            <div className="flex-1 min-w-[200px]">
+              <div className="relative">
+                <Search className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                <Input placeholder="بحث بالاسم، الهاتف، البريد..." value={search} onChange={e => setSearch(e.target.value)} className="pr-9" />
+              </div>
             </div>
-            <div>
-              <Label>المبلغ</Label>
-              <Input type="number" value={balanceAmount} onChange={(e) => setBalanceAmount(e.target.value)} placeholder="0" dir="ltr" />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setBalanceDialog(false)}>إلغاء</Button>
-            <Button onClick={handleBalanceAdjust} className={balanceAction === 'add' ? 'bg-green-600 hover:bg-green-700' : 'bg-orange-600 hover:bg-orange-700'}>
-              {balanceAction === 'add' ? 'إضافة' : 'خصم'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Role Dialog */}
-      <Dialog open={roleDialog} onOpenChange={setRoleDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>تغيير صلاحية المستخدم</DialogTitle>
-          </DialogHeader>
-          <div>
-            <Label>الصلاحية الجديدة</Label>
-            <Select value={newRole} onValueChange={setNewRole}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
+            <Select value={kycFilter} onValueChange={setKycFilter}>
+              <SelectTrigger className="w-[130px]"><SelectValue placeholder="حالة KYC" /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="user">مستخدم</SelectItem>
-                <SelectItem value="admin">مدير</SelectItem>
-                <SelectItem value="owner">مالك</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setRoleDialog(false)}>إلغاء</Button>
-            <Button onClick={handleChangeRole}>تغيير</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Edit Info Dialog */}
-      <Dialog open={editInfoDialog} onOpenChange={setEditInfoDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>تعديل بيانات المستخدم</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div><Label>الاسم</Label><Input value={editName} onChange={(e) => setEditName(e.target.value)} /></div>
-            <div><Label>الهاتف</Label><Input value={editPhone} onChange={(e) => setEditPhone(e.target.value)} dir="ltr" /></div>
-            <div><Label>البريد الإلكتروني</Label><Input value={editEmail} onChange={(e) => setEditEmail(e.target.value)} dir="ltr" /></div>
-            <div><Label>المحافظة</Label><Input value={editGovernorate} onChange={(e) => setEditGovernorate(e.target.value)} /></div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditInfoDialog(false)}>إلغاء</Button>
-            <Button onClick={handleEditInfo}>حفظ</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Block Dialog */}
-      <Dialog open={blockDialog} onOpenChange={setBlockDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{selectedUser?.isBlocked ? 'إلغاء حظر المستخدم' : 'حظر المستخدم'}</DialogTitle>
-          </DialogHeader>
-          {!selectedUser?.isBlocked && (
-            <div>
-              <Label>سبب الحظر</Label>
-              <Textarea value={blockReason} onChange={(e) => setBlockReason(e.target.value)} placeholder="أدخل سبب الحظر..." />
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setBlockDialog(false)}>إلغاء</Button>
-            <Button
-              variant={selectedUser?.isBlocked ? 'default' : 'destructive'}
-              onClick={() => handleBlockUser(!selectedUser?.isBlocked)}
-            >
-              {selectedUser?.isBlocked ? 'إلغاء الحظر' : 'حظر'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* KYC Dialog */}
-      <Dialog open={kycDialog} onOpenChange={setKycDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>تغيير حالة التحقق</DialogTitle>
-          </DialogHeader>
-          <div>
-            <Label>حالة التحقق الجديدة</Label>
-            <Select value={newKycStatus} onValueChange={setNewKycStatus}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
+                <SelectItem value="all">كل الحالات</SelectItem>
                 <SelectItem value="none">لم يقدم</SelectItem>
                 <SelectItem value="submitted">مقدم</SelectItem>
                 <SelectItem value="verified">موثق</SelectItem>
                 <SelectItem value="rejected">مرفوض</SelectItem>
               </SelectContent>
             </Select>
+            <Select value={roleFilter} onValueChange={setRoleFilter}>
+              <SelectTrigger className="w-[120px]"><SelectValue placeholder="الدور" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">كل الأدوار</SelectItem>
+                <SelectItem value="user">مستخدم</SelectItem>
+                <SelectItem value="admin">مدير</SelectItem>
+                <SelectItem value="owner">مالك</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={statusFilter} onValueChange={setStatusFilter}>
+              <SelectTrigger className="w-[120px]"><SelectValue placeholder="الحالة" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">الكل</SelectItem>
+                <SelectItem value="active">نشط</SelectItem>
+                <SelectItem value="blocked">محظور</SelectItem>
+              </SelectContent>
+            </Select>
+            {(search || kycFilter !== 'all' || roleFilter !== 'all' || statusFilter !== 'all') && (
+              <Button variant="ghost" size="sm" onClick={() => { setSearch(''); setKycFilter('all'); setRoleFilter('all'); setStatusFilter('all'); }}>
+                <X className="w-4 h-4 ml-1" />مسح الفلاتر
+              </Button>
+            )}
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setKycDialog(false)}>إلغاء</Button>
-            <Button onClick={handleChangeKYC}>تغيير</Button>
-          </DialogFooter>
+        </CardContent>
+      </Card>
+
+      {/* Users Table */}
+      <div className="ios-card overflow-hidden">
+        <div className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead className="cursor-pointer select-none" onClick={() => handleSort('name')}><div className="flex items-center gap-1"><SortIcon field="name" />الاسم</div></TableHead>
+                <TableHead>الهاتف</TableHead>
+                <TableHead>البريد</TableHead>
+                <TableHead className="cursor-pointer select-none" onClick={() => handleSort('balanceYER')}><div className="flex items-center gap-1"><SortIcon field="balanceYER" />رصيد YER</div></TableHead>
+                <TableHead className="cursor-pointer select-none" onClick={() => handleSort('balanceSAR')}><div className="flex items-center gap-1"><SortIcon field="balanceSAR" />رصيد SAR</div></TableHead>
+                <TableHead className="cursor-pointer select-none" onClick={() => handleSort('balanceUSD')}><div className="flex items-center gap-1"><SortIcon field="balanceUSD" />رصيد USD</div></TableHead>
+                <TableHead>KYC</TableHead>
+                <TableHead>الدور</TableHead>
+                <TableHead>الحالة</TableHead>
+                <TableHead className="cursor-pointer select-none" onClick={() => handleSort('createdAt')}><div className="flex items-center gap-1"><SortIcon field="createdAt" />التاريخ</div></TableHead>
+                <TableHead>إجراءات</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filtered.slice(0, 50).map((user) => {
+                const kyc = kycStatusMap[user.kycStatus] || kycStatusMap.none;
+                return (
+                  <TableRow key={user.id} className="cursor-pointer hover:bg-muted/30" onClick={() => openDetail(user)}>
+                    <TableCell className="font-medium text-sm">{user.name || user.firstName || 'بدون اسم'}</TableCell>
+                    <TableCell className="text-sm">{user.phone || '-'}</TableCell>
+                    <TableCell className="text-sm">{user.email || '-'}</TableCell>
+                    <TableCell className="text-sm font-mono">{formatNumber(user.balanceYER || 0)}</TableCell>
+                    <TableCell className="text-sm font-mono">{formatNumber(user.balanceSAR || 0)}</TableCell>
+                    <TableCell className="text-sm font-mono">{formatNumber(user.balanceUSD || 0)}</TableCell>
+                    <TableCell><Badge className={cn('text-[10px]', kyc.color)}>{kyc.label}</Badge></TableCell>
+                    <TableCell className="text-sm">{user.role === 'owner' ? 'مالك' : user.role === 'admin' ? 'مدير' : 'مستخدم'}</TableCell>
+                    <TableCell>
+                      <Badge className={cn('text-[10px]', user.isBlocked ? 'bg-red-500/15 text-red-600 dark:text-red-400' : 'bg-green-500/15 text-green-600 dark:text-green-400')}>
+                        {user.isBlocked ? 'محظور' : 'نشط'}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-xs text-muted-foreground">{user.createdAt ? new Date(user.createdAt).toLocaleDateString('ar-SA') : '-'}</TableCell>
+                    <TableCell>
+                      <div className="flex gap-1" onClick={e => e.stopPropagation()}>
+                        <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => openDetail(user)}><Eye className="w-3.5 h-3.5" /></Button>
+                        <Button size="sm" variant="ghost" className={cn('h-7 w-7 p-0', user.isBlocked ? 'text-green-500' : 'text-red-500')} onClick={() => toggleBlock(user)}>
+                          {user.isBlocked ? <Lock className="w-3.5 h-3.5" /> : <UserX className="w-3.5 h-3.5" />}
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+        </div>
+        {filtered.length === 0 && (
+          <div className="py-12 text-center"><Users className="w-12 h-12 mx-auto mb-3 text-muted-foreground/30" /><p className="text-muted-foreground">لا يوجد مستخدمين</p></div>
+        )}
+        {filtered.length > 50 && <p className="text-center text-xs text-muted-foreground py-3">عرض 50 من {filtered.length} مستخدم</p>}
+      </div>
+
+      {/* User Detail Dialog */}
+      <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Users className="w-5 h-5 text-[#5C1A1B]" />
+              تفاصيل المستخدم
+            </DialogTitle>
+          </DialogHeader>
+          {selectedUser && (
+            <Tabs value={activeDetailTab} onValueChange={setActiveDetailTab}>
+              <TabsList className="w-full">
+                <TabsTrigger value="info" className="flex-1">المعلومات</TabsTrigger>
+                <TabsTrigger value="balance" className="flex-1">الأرصدة</TabsTrigger>
+                <TabsTrigger value="transactions" className="flex-1">المعاملات</TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="info" className="mt-4 space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <div><Label className="text-muted-foreground text-xs">الاسم</Label><p className="font-medium text-sm">{selectedUser.name || selectedUser.firstName || '-'}</p></div>
+                  <div><Label className="text-muted-foreground text-xs">الهاتف</Label><p className="font-medium text-sm">{selectedUser.phone || '-'}</p></div>
+                  <div><Label className="text-muted-foreground text-xs">البريد</Label><p className="font-medium text-sm">{selectedUser.email || '-'}</p></div>
+                  <div><Label className="text-muted-foreground text-xs">الدور</Label><p className="font-medium text-sm">{selectedUser.role === 'owner' ? 'مالك' : selectedUser.role === 'admin' ? 'مدير' : 'مستخدم'}</p></div>
+                  <div><Label className="text-muted-foreground text-xs">حالة KYC</Label><Badge className={cn('text-xs', (kycStatusMap[selectedUser.kycStatus] || kycStatusMap.none).color)}>{(kycStatusMap[selectedUser.kycStatus] || kycStatusMap.none).label}</Badge></div>
+                  <div><Label className="text-muted-foreground text-xs">الحالة</Label><Badge className={cn('text-xs', selectedUser.isBlocked ? 'bg-red-500/15 text-red-600' : 'bg-green-500/15 text-green-600')}>{selectedUser.isBlocked ? 'محظور' : 'نشط'}</Badge></div>
+                  <div><Label className="text-muted-foreground text-xs">تاريخ التسجيل</Label><p className="text-sm">{selectedUser.createdAt ? formatDateAr(selectedUser.createdAt) : '-'}</p></div>
+                  <div><Label className="text-muted-foreground text-xs">آخر دخول</Label><p className="text-sm">{selectedUser.lastLogin ? formatDateAr(selectedUser.lastLogin) : '-'}</p></div>
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" className={cn(selectedUser.isBlocked ? 'text-green-500' : 'text-red-500')} onClick={() => toggleBlock(selectedUser)}>
+                    {selectedUser.isBlocked ? <><UserCheck className="w-4 h-4 ml-1" />فك الحظر</> : <><UserX className="w-4 h-4 ml-1" />حظر</>}
+                  </Button>
+                </div>
+              </TabsContent>
+
+              <TabsContent value="balance" className="mt-4 space-y-4">
+                <div className="grid grid-cols-3 gap-3">
+                  {(['YER', 'SAR', 'USD'] as const).map(cur => (
+                    <Card key={cur} className="border border-border/30">
+                      <CardContent className="p-4 text-center">
+                        <p className="text-xs text-muted-foreground">{currencySymbols[cur]}</p>
+                        <p className="text-xl font-bold mt-1">{formatNumber(selectedUser[`balance${cur}`] || 0)}</p>
+                        <p className="text-[10px] text-muted-foreground">{cur}</p>
+                        <Button size="sm" variant="outline" className="mt-2 h-7 text-xs w-full" onClick={() => { setBalanceCurrency(cur); setBalanceDialog(true); }}>
+                          <DollarSign className="w-3 h-3 ml-1" />تعديل
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  ))}
+                </div>
+              </TabsContent>
+
+              <TabsContent value="transactions" className="mt-4 space-y-3">
+                {userTransactions.length === 0 ? (
+                  <p className="text-center text-muted-foreground py-6">لا توجد معاملات</p>
+                ) : (
+                  userTransactions.map((tx: any) => (
+                    <div key={tx.id} className="flex items-center justify-between p-3 rounded-xl bg-muted/20">
+                      <div className="flex items-center gap-2">
+                        <ShoppingCart className="w-4 h-4 text-muted-foreground" />
+                        <div>
+                          <p className="text-sm font-medium">{tx.packageName || tx.providerName || 'طلب'}</p>
+                          <p className="text-[10px] text-muted-foreground">{tx.createdAt ? timeAgo(tx.createdAt) : ''}</p>
+                        </div>
+                      </div>
+                      <div className="text-left">
+                        <p className="text-sm font-bold">{formatNumber(tx.amount || 0)} {currencySymbols[tx.currency || 'YER']}</p>
+                        <Badge className={cn('text-[9px]', tx.status === 'completed' ? 'bg-green-500/15 text-green-600 dark:text-green-400' : tx.status === 'pending' ? 'bg-yellow-500/15 text-yellow-600 dark:text-yellow-400' : 'bg-red-500/15 text-red-600 dark:text-red-400')}>
+                          {tx.status === 'completed' ? 'مكتمل' : tx.status === 'pending' ? 'معلق' : 'ملغي'}
+                        </Badge>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </TabsContent>
+            </Tabs>
+          )}
         </DialogContent>
       </Dialog>
 
-      {/* Card Dialog */}
-      <Dialog open={cardDialog} onOpenChange={setCardDialog}>
+      {/* Balance Adjustment Dialog */}
+      <Dialog open={balanceDialog} onOpenChange={setBalanceDialog}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>بيانات البطاقة</DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
+              <DollarSign className="w-5 h-5 text-[#5C1A1B]" />
+              تعديل الرصيد ({currencySymbols[balanceCurrency]})
+            </DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            <div><Label>نوع البطاقة</Label><Input value={cardType} onChange={(e) => setCardType(e.target.value)} placeholder="مثال: Visa" /></div>
-            <div><Label>رقم البطاقة</Label><Input value={cardNumber} onChange={(e) => setCardNumber(e.target.value)} dir="ltr" placeholder="رقم البطاقة" /></div>
+            <div className="p-3 bg-muted/30 rounded-lg">
+              <p className="text-sm">الرصيد الحالي: <span className="font-bold">{formatNumber(selectedUser?.[`balance${balanceCurrency}`] || 0)} {currencySymbols[balanceCurrency]}</span></p>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <Button variant={balanceAction === 'add' ? 'default' : 'outline'} className={cn(balanceAction === 'add' && 'bg-green-600 hover:bg-green-700')} onClick={() => setBalanceAction('add')}>
+                <Plus className="w-4 h-4 ml-1" />إضافة
+              </Button>
+              <Button variant={balanceAction === 'subtract' ? 'default' : 'outline'} className={cn(balanceAction === 'subtract' && 'bg-red-600 hover:bg-red-700')} onClick={() => setBalanceAction('subtract')}>
+                <Minus className="w-4 h-4 ml-1" />خصم
+              </Button>
+            </div>
+            <div>
+              <Label>المبلغ</Label>
+              <Input type="number" value={balanceAmount || ''} onChange={e => setBalanceAmount(Number(e.target.value))} placeholder="0" min={0} />
+            </div>
+            <div>
+              <Label>ملاحظة (اختياري)</Label>
+              <Textarea value={balanceNote} onChange={e => setBalanceNote(e.target.value)} placeholder="سبب التعديل..." rows={2} />
+            </div>
+            <div className="p-3 bg-muted/30 rounded-lg text-sm">
+              الرصيد بعد التعديل: <span className="font-bold">
+                {formatNumber(balanceAction === 'add'
+                  ? (selectedUser?.[`balance${balanceCurrency}`] || 0) + balanceAmount
+                  : Math.max(0, (selectedUser?.[`balance${balanceCurrency}`] || 0) - balanceAmount)
+                )} {currencySymbols[balanceCurrency]}
+              </span>
+            </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setCardDialog(false)}>إلغاء</Button>
-            <Button onClick={handleChangeCard}>حفظ</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* PIN Reset Dialog */}
-      <Dialog open={pinDialog} onOpenChange={setPinDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>إعادة تعيين رمز PIN</DialogTitle>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground">هل أنت متأكد من إعادة تعيين رمز PIN لهذا المستخدم؟ سيحتاج المستخدم إلى إنشاء رمز PIN جديد عند تسجيل الدخول.</p>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setPinDialog(false)}>إلغاء</Button>
-            <Button variant="destructive" onClick={handleResetPIN}>إعادة تعيين</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Send Notification Dialog */}
-      <Dialog open={notifDialog} onOpenChange={setNotifDialog}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>إرسال إشعار للمستخدم</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div><Label>عنوان الإشعار</Label><Input value={notifTitle} onChange={(e) => setNotifTitle(e.target.value)} /></div>
-            <div><Label>محتوى الإشعار</Label><Textarea value={notifBody} onChange={(e) => setNotifBody(e.target.value)} className="min-h-[100px]" /></div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setNotifDialog(false)}>إلغاء</Button>
-            <Button onClick={handleSendNotification} className="bg-purple-600 hover:bg-purple-700">إرسال</Button>
+            <Button variant="outline" onClick={() => setBalanceDialog(false)}>إلغاء</Button>
+            <Button onClick={adjustBalance} disabled={saving || balanceAmount <= 0} className={cn(balanceAction === 'add' ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700')}>
+              {saving ? <Loader2 className="w-4 h-4 ml-2 animate-spin" /> : null}
+              تأكيد
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

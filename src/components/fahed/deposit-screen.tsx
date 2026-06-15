@@ -769,6 +769,51 @@ export default function DepositScreen() {
             className="px-5 mt-4"
           >
             <div className="space-y-3">
+              {/* Step Indicator */}
+              <div className="flex items-center justify-center gap-2 py-2">
+                {[
+                  { num: 1, label: 'الطريقة' },
+                  { num: 2, label: 'التفاصيل' },
+                  { num: 3, label: 'تأكيد' },
+                ].map((step, i) => {
+                  const isCompleted = (depositMethod !== 'bank_transfer' || selectedBankId) && i === 0;
+                  const isCurrentStep = (i === 0 && !depositAmount) ||
+                    (i === 1 && depositAmount && (!selectedBankId && depositMethod === 'bank_transfer')) ||
+                    (i === 2 && depositAmount && (selectedBankId || depositMethod !== 'bank_transfer'));
+                  return (
+                    <div key={step.num} className="flex items-center gap-2">
+                      <div className="flex flex-col items-center">
+                        <div
+                          className="w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold transition-all duration-300"
+                          style={{
+                            background: isCurrentStep
+                              ? 'linear-gradient(135deg, #5C1A1B, #3D0F10)'
+                              : isCompleted
+                                ? '#10B981'
+                                : (isDark ? '#222' : '#E5E5E5'),
+                            color: isCurrentStep || isCompleted ? '#FFF' : (isDark ? '#555' : '#AAA'),
+                            boxShadow: isCurrentStep ? '0 2px 8px rgba(92,26,27,0.4)' : 'none',
+                          }}
+                        >
+                          {isCompleted ? <Check size={12} strokeWidth={2.5} /> : step.num}
+                        </div>
+                        <span className="text-[9px] mt-1" style={{ color: isCurrentStep ? '#5C1A1B' : (isDark ? '#555' : '#AAA') }}>
+                          {step.label}
+                        </span>
+                      </div>
+                      {i < 2 && (
+                        <div
+                          className="w-8 h-[2px] rounded-full"
+                          style={{
+                            background: isCompleted ? '#10B981' : (isDark ? '#222' : '#E5E5E5'),
+                          }}
+                        />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
               {/* Amount Input */}
               <div
                 className="rounded-2xl p-4"

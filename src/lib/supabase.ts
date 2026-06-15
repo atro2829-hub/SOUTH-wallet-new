@@ -396,6 +396,74 @@ export interface DbAppConfig {
   updated_at: string;
 }
 
+export interface DbEscrowTransaction {
+  id: string;
+  buyer_id: string;
+  seller_id: string;
+  title: string;
+  description: string;
+  amount: number;
+  currency: string;
+  reference_code: string;
+  status: string;
+  buyer_confirmed: boolean;
+  seller_confirmed: boolean;
+  funded_at: string | null;
+  completed_at: string | null;
+  dispute_reason: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface DbBranch {
+  id: string;
+  name: string;
+  name_en: string;
+  address: string;
+  governorate: string;
+  phone: string;
+  email: string;
+  working_hours: string;
+  weekend: string;
+  latitude: number;
+  longitude: number;
+  services: string[];
+  is_active: boolean;
+  sort_order: number;
+}
+
+export interface DbUserReview {
+  id: string;
+  user_id: string;
+  rating: number;
+  comment: string;
+  category: string;
+  status: string;
+  admin_reply: string;
+  is_featured: boolean;
+  created_at: string;
+}
+
+export interface DbPriceOverride {
+  id: string;
+  target_type: string;
+  target_id: string;
+  markup_type: string;
+  markup_value: number;
+  markup_currency: string;
+  is_active: boolean;
+}
+
+export interface DbCommissionConfig {
+  id: string;
+  target_type: string;
+  target_id: string;
+  commission_type: string;
+  commission_value: number;
+  commission_currency: string;
+  is_active: boolean;
+}
+
 // Helper: Check if Supabase is configured
 export function isSupabaseConfigured(): boolean {
   return !!supabaseUrl && supabaseUrl.includes('.supabase.co');
@@ -691,5 +759,131 @@ export const supabaseService = {
     const { data, error } = await supabase.rpc('get_dashboard_stats');
     if (error) throw error;
     return data;
+  },
+
+  // --- Escrow Transactions ---
+  getEscrowTransactions: async (userId: string) => {
+    const { data } = await supabase.from('escrow_transactions').select('*')
+      .or(`buyer_id.eq.${userId},seller_id.eq.${userId}`)
+      .order('created_at', { ascending: false });
+    return data || [];
+  },
+
+  createEscrowTransaction: async (escrow: any) => {
+    const { data } = await supabase.from('escrow_transactions').insert(escrow).select().single();
+    return data;
+  },
+
+  updateEscrowStatus: async (id: string, status: string, updates: any = {}) => {
+    const { data } = await supabase.from('escrow_transactions').update({ status, ...updates })
+      .eq('id', id).select().single();
+    return data;
+  },
+
+  // --- User Reviews ---
+  getUserReviews: async () => {
+    const { data } = await supabase.from('user_reviews').select('*, users(name)').order('created_at', { ascending: false });
+    return data || [];
+  },
+
+  // --- Branches ---
+  getBranches: async () => {
+    const { data } = await supabase.from('branches').select('*').eq('is_active', true).order('sort_order');
+    return data || [];
+  },
+
+  // --- Marketing Content ---
+  getMarketingContent: async () => {
+    const { data } = await supabase.from('marketing_content').select('*').eq('is_active', true);
+    return data || [];
+  },
+
+  // --- Price Overrides ---
+  getPriceOverrides: async () => {
+    const { data } = await supabase.from('price_overrides').select('*').eq('is_active', true);
+    return data || [];
+  },
+
+  calculatePrice: async (basePriceUsd: number, providerId?: string, packageId?: string) => {
+    // Check package-level override first, then provider-level, then global
+    let markup = 0;
+    let markupType = 'percentage';
+
+    if (packageId) {
+      const { data: pkgOverride } = await supabase.from('price_overrides')
+        .select('*').eq('target_type', 'package').eq('target_id', packageId).eq('is_active', true).single();
+      if (pkgOverride) {
+        markup = pkgOverride.markup_value;
+        markupType = pkgOverride.markup_type;
+      }
+    }
+
+    if (!markup && providerId) {
+      const { data: provOverride } = await supabase.from('price_overrides')
+        .select('*').eq('target_type', 'provider').eq('target_id', providerId).eq('is_active', true).single();
+      if (provOverride) {
+        markup = provOverride.markup_value;
+        markupType = provOverride.markup_type;
+      }
+    }
+
+    if (!markup) {
+      const { data: globalOverride } = await supabase.from('price_overrides')
+        .select('*').eq('target_type', 'global').eq('is_active', true).limit(1).single();
+      if (globalOverride) {
+        markup = globalOverride.markup_value;
+        markupType = globalOverride.markup_type;
+      }
+    }
+
+    if (markupType === 'percentage') {
+      return basePriceUsd * (1 + markup / 100);
+    }
+    return basePriceUsd + markup;
+  },
+
+  // --- Commission Config ---
+  getCommissionConfig: async () => {
+    const { data } = await supabase.from('commission_config').select('*').eq('is_active', true);
+    return data || [];
+  },
+
+  calculateCommission: async (amountUsd: number, providerId?: string, packageId?: string) => {
+    let commissionRate = 3; // default 3%
+    let commissionType = 'percentage';
+
+    if (packageId) {
+      const { data: pkgConfig } = await supabase.from('commission_config')
+        .select('*').eq('target_type', 'package').eq('target_id', packageId).eq('is_active', true).single();
+      if (pkgConfig) {
+        commissionRate = pkgConfig.commission_value;
+        commissionType = pkgConfig.commission_type;
+      }
+    }
+
+    if (commissionRate === 3 && providerId) {
+      const { data: provConfig } = await supabase.from('commission_config')
+        .select('*').eq('target_type', 'provider').eq('target_id', providerId).eq('is_active', true).single();
+      if (provConfig) {
+        commissionRate = provConfig.commission_value;
+        commissionType = provConfig.commission_type;
+      }
+    }
+
+    if (commissionType === 'percentage') {
+      return amountUsd * (commissionRate / 100);
+    }
+    return commissionRate;
+  },
+
+  // --- Data Exports ---
+  createDataExport: async (exportData: any) => {
+    const { data } = await supabase.from('data_exports').insert(exportData).select().single();
+    return data;
+  },
+
+  getDataExports: async () => {
+    const { data } = await supabase.from('data_exports').select('*').order('created_at', { ascending: false }).limit(50);
+    return data || [];
   },
 };

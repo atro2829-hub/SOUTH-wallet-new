@@ -1009,6 +1009,55 @@ export default function ServicesScreen() {
         </div>
       </motion.div>
 
+      {/* Recently Used Services */}
+      {!searchQuery.trim() && recentServices && recentServices.length > 0 && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="px-4 mt-4"
+        >
+          <h3 className="text-xs font-bold mb-2" style={{ color: isDark ? '#888' : '#999' }}>الأخيرة</h3>
+          <div className="flex gap-3 overflow-x-auto pb-1" style={{ scrollbarWidth: 'none' }}>
+            {recentServices.slice(0, 6).map((service: any, index: number) => {
+              const iconSrc = service.icon ? (service.icon.startsWith('data:') || service.icon.startsWith('http') ? service.icon : undefined) : undefined;
+              return (
+                <motion.button
+                  key={service.id || index}
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: 0.03 * index }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={() => {
+                    if (service.id) {
+                      useAppStore.getState().setSelectedCategory(service.id);
+                      useAppStore.getState().setActiveScreen('category-detail');
+                    }
+                  }}
+                  className="flex flex-col items-center gap-1.5 min-w-[60px]"
+                >
+                  <div
+                    className="w-12 h-12 rounded-2xl overflow-hidden flex items-center justify-center"
+                    style={{
+                      background: iconSrc ? 'transparent' : `${service.color || '#5C1A1B'}15`,
+                      border: `1px solid ${isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.05)'}`,
+                    }}
+                  >
+                    {iconSrc ? (
+                      <img src={iconSrc} alt={service.name || ''} className="w-full h-full object-contain" />
+                    ) : (
+                      <Zap size={18} strokeWidth={1.5} color={service.color || '#5C1A1B'} />
+                    )}
+                  </div>
+                  <span className="text-[9px] font-medium truncate max-w-[60px]" style={{ color: isDark ? '#999' : '#666' }}>
+                    {service.name || 'خدمة'}
+                  </span>
+                </motion.button>
+              );
+            })}
+          </div>
+        </motion.div>
+      )}
+
       {/* ─── Section Cards ───────────────────────────────────────── */}
       {filteredSections.map((section, sectionIndex) => {
         const isExpanded =
